@@ -1,0 +1,25 @@
+sudo: required
+language: node_js
+node_js:
+  #- "node"
+  - "12"
+  - "11"
+  - "10"
+  - "8"
+  # node 6 is not compatible with tfjs-node
+  # - "6"
+services:
+  - xvfb
+env:
+  global:
+    - BACKEND_CPU=true EXCLUDE_UNCOMPRESSED=true
+  matrix:
+    - ENV=browser
+    - ENV=node
+addons:
+  chrome: stable
+install: npm install
+script:
+  - if [ $ENV == 'browser' ]; then npm run test-browser; fi
+  - if [ $ENV == 'node' ]; then npm run test-node; fi
+  - npm run build

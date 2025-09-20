@@ -1,0 +1,58 @@
+{
+  "name": "face-api.js",
+  "version": "0.22.2",
+  "description": "JavaScript API for face detection and face recognition in the browser with tensorflow.js",
+  "module": "./build/es6/index.js",
+  "main": "./build/commonjs/index.js",
+  "typings": "./build/commonjs/index.d.ts",
+  "scripts": {
+    "rollup-min": "rollup -c rollup.config.js --environment minify:true",
+    "rollup": "rollup -c rollup.config.js",
+    "tsc": "tsc",
+    "tsc-es6": "tsc --p tsconfig.es6.json",
+    "build": "rm -rf ./build && rm -rf ./dist && npm run rollup && npm run rollup-min && npm run tsc && npm run tsc-es6",
+    "test": "npm run test-browser && npm run test-node",
+    "test-browser": "karma start --single-run",
+    "test-node": "ts-node -r ./test/env.node.ts node_modules/jasmine/bin/jasmine --config=jasmine-node.js",
+    "test-facelandmarknets": "set UUT=faceLandmarkNet&& karma start",
+    "test-facerecognitionnet": "set UUT=faceRecognitionNet&& karma start",
+    "test-agegendernet": "set UUT=ageGenderNet&& karma start",
+    "test-ssdmobilenetv1": "set UUT=ssdMobilenetv1&& karma start",
+    "test-tinyfacedetector": "set UUT=tinyFaceDetector&& karma start",
+    "test-globalapi": "set UUT=globalApi&& karma start",
+    "test-cpu": "set BACKEND_CPU=true&& karma start",
+    "docs": "typedoc --options ./typedoc.config.js ./src"
+  },
+  "keywords": [
+    "face",
+    "detection",
+    "recognition",
+    "tensorflow",
+    "tf"
+  ],
+  "author": "justadudewhohacks",
+  "license": "MIT",
+  "dependencies": {
+    "@tensorflow/tfjs-core": "1.7.0",
+    "tslib": "^1.11.1"
+  },
+  "devDependencies": {
+    "@tensorflow/tfjs-node": "1.7.0",
+    "@types/jasmine": "^3.5.9",
+    "@types/node": "^13.9.2",
+    "canvas": "2.6.1",
+    "jasmine": "^3.5.0",
+    "jasmine-core": "^3.5.0",
+    "karma": "^4.4.1",
+    "karma-chrome-launcher": "^3.1.0",
+    "karma-jasmine": "^3.1.1",
+    "karma-typescript": "^5.0.1",
+    "rollup": "^2.1.0",
+    "rollup-plugin-commonjs": "^10.1.0",
+    "rollup-plugin-node-resolve": "^5.2.0",
+    "rollup-plugin-typescript2": "^0.26.0",
+    "rollup-plugin-uglify": "^6.0.4",
+    "ts-node": "^8.7.0",
+    "typescript": "^3.8.3"
+  }
+}

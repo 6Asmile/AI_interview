@@ -1,0 +1,27 @@
+# Python / Django
+__pycache__/
+*.pyc
+/venv/
+/.env
+db.sqlite3
+/media/
+/static_root/
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Frontend / Node.js
+/ai-interview-frontend/node_modules/
+/ai-interview-frontend/dist/
+/ai-interview-frontend/.env*
+!/ai-interview-frontend/.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS generated files
+.DS_Store
+Thumbs.db

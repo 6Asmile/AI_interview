@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "composite": true, /* 【关键】添加这一行 */
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["vite.config.ts"]
+}
