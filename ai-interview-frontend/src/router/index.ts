@@ -55,6 +55,11 @@ const routes: Array<RouteRecordRaw> = [
       name: 'ReportDetail',
       component: () => import('@/views/ReportDetail.vue'),
        },
+        {
+          path: 'profile', // 路径为 /dashboard/profile
+          name: 'Profile',
+          component: () => import('@/views/Profile.vue'),
+      },
       // 以后可以在这里添加更多需要布局的页面
       // {
       //   path: 'profile',

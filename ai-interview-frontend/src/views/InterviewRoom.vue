@@ -76,7 +76,7 @@
   </div>
 </template>
 
-<script setup lang="ts">
+// src/views/InterviewRoom.vue -> <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, Ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
@@ -158,13 +158,20 @@ const startFaceDetection = () => {
   }, 500);
 };
 
+// 【核心修正】
 const fetchSessionDetails = async (sessionId: string) => {
   loading.value = true;
   try {
     const data = await getInterviewSessionApi(sessionId);
     sessionInfo.value = data;
     allQuestions.value = data.questions.sort((a, b) => a.sequence - b.sequence);
-    currentQuestion.value = allQuestions.value[0] || null;
+    
+    // 找到最后一个问题作为当前问题，实现进度恢复！
+    if (allQuestions.value.length > 0) {
+      currentQuestion.value = allQuestions.value[allQuestions.value.length - 1];
+    } else {
+      currentQuestion.value = null; // 理论上不会发生，因为至少有一个问题
+    }
   } catch (error) { console.error('获取面试详情失败', error); ElMessage.error('无法加载面试信息，即将返回首页'); router.push('/dashboard'); } 
   finally { loading.value = false; }
 };
@@ -187,12 +194,12 @@ const handleNextQuestion = async () => {
     lastFeedback.value = res.feedback;
     
     if (res.interview_finished) {
-      currentQuestion.value = null; // 清空当前问题，表示结束
+      currentQuestion.value = null;
       ElMessageBox.alert('您已完成所有问题！现在可以点击右下角的“结束面试”按钮来生成您的专属面试报告。', '答题结束', {
         confirmButtonText: '好的',
         type: 'success',
       });
-      // 可以在这里禁用回答区
+      userAnswerText.value = '（所有问题已完成）';
     } else if (res.next_question) {
       allQuestions.value.push(res.next_question);
       currentQuestion.value = res.next_question;

@@ -1,27 +1,77 @@
-# Python / Django
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.pyc
-/venv/
-/.env
+*.pyo
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
 db.sqlite3
-/media/
-/static_root/
+db.sqlite3-journal
 
-# VS Code
-.vscode/
-
-# PyCharm
+# 【核心】我们自己的文件
+.env
+media/
 .idea/
+venv/
 
-# Frontend / Node.js
-/ai-interview-frontend/node_modules/
-/ai-interview-frontend/dist/
-/ai-interview-frontend/.env*
-!/ai-interview-frontend/.env.example
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
-# OS generated files
-.DS_Store
-Thumbs.db
+# IDE settings
+.idea/
+.vscode/

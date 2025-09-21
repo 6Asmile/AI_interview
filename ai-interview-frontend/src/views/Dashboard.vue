@@ -4,41 +4,22 @@
       <h1 class="title">选择面试岗位</h1>
       <p class="subtitle">请选择您的目标岗位，开启与专属AI面试官的对话</p>
     </div>
-
     <div class="job-grid">
-      <div
-        v-for="job in jobPositions"
-        :key="job.title"
-        class="job-card"
-        @click="handleSelectJob(job.title)"
-      >
+      <div v-for="job in jobPositions" :key="job.title" class="job-card" @click="handleSelectJob(job.title)">
         <el-icon :size="40" class="job-icon"><component :is="job.icon" /></el-icon>
         <h3 class="job-title">{{ job.title }}</h3>
         <p class="job-description">{{ job.description }}</p>
       </div>
     </div>
-
-    <!-- 改造：简历选择对话框 -->
     <el-dialog v-model="dialogVisible" title="开始面试前设置" width="600px">
       <div class="resume-selector">
         <p>为本次 **{{ selectedJob }}** 岗位面试选择一份简历：</p>
-        <el-table
-          :data="resumeList"
-          v-loading="resumesLoading"
-          highlight-current-row
-          @current-change="handleResumeSelectionChange"
-          style="width: 100%; margin-top: 20px"
-          empty-text="您还没有上传简历，请先前往简历中心上传"
-        >
+        <el-table :data="resumeList" v-loading="resumesLoading" highlight-current-row @current-change="handleResumeSelectionChange" style="width: 100%; margin-top: 20px" empty-text="您还没有上传简历，请先前往简历中心上传">
           <el-table-column prop="title" label="简历标题" />
           <el-table-column prop="created_at" label="上传时间" width="180">
-             <template #default="scope">
-              {{ new Date(scope.row.created_at).toLocaleString() }}
-            </template>
+             <template #default="scope">{{ new Date(scope.row.created_at).toLocaleString() }}</template>
           </el-table-column>
         </el-table>
-        
-        <!-- 新增：问题数量设置 -->
         <div class="question-count-setter">
           <p>设置面试问题数量:</p>
           <el-input-number v-model="questionCount" :min="3" :max="10" />
@@ -47,9 +28,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleStartInterview" :disabled="!selectedResumeId">
-            开始面试
-          </el-button>
+          <el-button type="primary" @click="handleStartInterview(false)" :disabled="!selectedResumeId">开始面试</el-button>
         </span>
       </template>
     </el-dialog>
@@ -57,30 +36,48 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage, ElLoading } from 'element-plus';
-import { startInterviewApi } from '@/api/modules/interview';
+import { ElMessage, ElLoading, ElMessageBox } from 'element-plus';
+import { startInterviewApi, checkUnfinishedInterviewApi, abandonUnfinishedInterviewApi } from '@/api/modules/interview';
 import { getResumeListApi, type ResumeItem } from '@/api/modules/resume';
-import {
-  Monitor,
-  Platform,
-  Opportunity,
-  Aim,
-  TrendCharts,
-  DataAnalysis,
-  Operation,
-  Suitcase,
-} from '@element-plus/icons-vue';
+import { Monitor, Platform, Opportunity, Aim, TrendCharts, DataAnalysis, Operation, Suitcase, } from '@element-plus/icons-vue';
 
 const router = useRouter();
-
 const dialogVisible = ref(false);
 const resumesLoading = ref(false);
 const selectedJob = ref('');
 const resumeList = ref<ResumeItem[]>([]);
 const selectedResumeId = ref<number | null>(null);
-const questionCount = ref(5); // 新增：问题数量，默认值为5
+const questionCount = ref(5);
+
+onMounted(() => {
+  checkAndResumeInterview();
+});
+
+const checkAndResumeInterview = async () => {
+  try {
+    const res = await checkUnfinishedInterviewApi();
+    if (res.has_unfinished && res.session_id) {
+      ElMessageBox.confirm(`我们发现您有一个正在进行的 <strong>${res.job_position}</strong> 面试，是否要继续？`, '欢迎回来！', {
+        confirmButtonText: '继续面试', cancelButtonText: '放弃', type: 'info', dangerouslyUseHTMLString: true,
+      }).then(() => {
+        router.push({ name: 'InterviewRoom', params: { id: res.session_id } });
+      }).catch(async () => {
+        // 【核心改造】用户选择放弃
+        const loading = ElLoading.service({ text: '正在放弃面试...' });
+        try {
+          await abandonUnfinishedInterviewApi();
+          ElMessage.success('之前的面试已放弃，您可以开始新的面试了。');
+        } catch (abandonError) {
+          ElMessage.error('放弃面试失败，请稍后再试。');
+        } finally {
+          loading.close();
+        }
+      });
+    }
+  } catch (error) { console.error("检查未完成面试失败", error); }
+};
 
 const handleSelectJob = async (jobTitle: string) => {
   selectedJob.value = jobTitle;
@@ -92,42 +89,42 @@ const handleSelectJob = async (jobTitle: string) => {
     if (resumeList.value.length === 0) {
       ElMessage.warning('您还没有已成功解析的简历，请先上传并确保解析成功。');
     }
-  } catch (error) {
-    console.error('获取简历列表失败', error);
-  } finally {
-    resumesLoading.value = false;
-  }
+  } catch (error) { console.error('获取简历列表失败', error); } 
+  finally { resumesLoading.value = false; }
 };
 
 const handleResumeSelectionChange = (currentRow: ResumeItem | undefined) => {
-  if (currentRow) {
-    selectedResumeId.value = currentRow.id;
-  } else {
-    selectedResumeId.value = null;
-  }
+  if (currentRow) { selectedResumeId.value = currentRow.id; } 
+  else { selectedResumeId.value = null; }
 };
 
-const handleStartInterview = async () => {
-  if (!selectedResumeId.value) {
-    ElMessage.warning('请选择一份简历');
-    return;
-  }
-  const loadingInstance = ElLoading.service({
-    lock: true,
-    text: 'AI面试官正在阅读您的简历并准备问题...',
-    background: 'rgba(0, 0, 0, 0.7)',
-  });
+const handleStartInterview = async (force: boolean = false) => {
+  if (!selectedResumeId.value) { ElMessage.warning('请选择一份简历'); return; }
+  const loadingInstance = ElLoading.service({ lock: true, text: 'AI面试官正在准备问题...', background: 'rgba(0, 0, 0, 0.7)' });
   try {
     const sessionData = await startInterviewApi({
       job_position: selectedJob.value,
       resume_id: selectedResumeId.value,
-      question_count: questionCount.value, // 附带问题数量
-    });
+      question_count: questionCount.value,
+    }, force);
     dialogVisible.value = false;
     await router.push({ name: 'InterviewRoom', params: { id: sessionData.id } });
   } catch (error) {
-    console.error('开始面试失败', error);
-    ElMessage.error('创建面试失败，请稍后再试');
+    const axiosError = error as any;
+    if (axiosError.response && axiosError.response.status === 409) {
+      // 【核心改造】处理冲突，给用户选择
+      ElMessageBox.confirm('您当前已有正在进行的面试。是否要放弃旧的面试，开始一场全新的面试？', '提示', {
+        confirmButtonText: '开始新的', cancelButtonText: '取消', type: 'warning',
+      }).then(() => {
+        // 用户选择强制开始新的
+        handleStartInterview(true);
+      }).catch(() => {
+        ElMessage.info('已取消操作。');
+      });
+    } else {
+      console.error('开始面试失败', error);
+      ElMessage.error('创建面试失败，请稍后再试');
+    }
   } finally {
     loadingInstance.close();
   }
@@ -146,7 +143,7 @@ const jobPositions = ref([
 </script>
 
 <style scoped>
-/* --- 样式保持不变，只为新元素追加样式 --- */
+/* --- 样式保持不变 --- */
 .dashboard-container { padding: 40px; text-align: center; }
 .hero-section { margin-bottom: 60px; }
 .title { font-size: 3rem; font-weight: 700; color: #333; margin-bottom: 1rem; }
@@ -157,13 +154,5 @@ const jobPositions = ref([
 .job-icon { margin-bottom: 1rem; color: #409EFF; }
 .job-title { font-size: 1.5rem; font-weight: 600; color: #333; margin-bottom: 0.5rem; }
 .job-description { font-size: 1rem; color: #777; line-height: 1.5; }
-/* 新增样式 */
-.question-count-setter {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #eee;
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
+.question-count-setter { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; display: flex; align-items: center; gap: 15px; }
 </style>

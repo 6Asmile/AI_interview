@@ -45,7 +45,7 @@ export interface SubmitAnswerResponse {
 }
 
 // --- API 函数 ---
-export const startInterviewApi = (data: StartInterviewData): Promise<InterviewSessionItem> => {
+export const startInterviewApi = (data: StartInterviewData, _force: boolean): Promise<InterviewSessionItem> => {
   return request({ url: '/interviews/start/', method: 'post', data });
 };
 
@@ -55,4 +55,23 @@ export const getInterviewSessionApi = (sessionId: string): Promise<InterviewSess
 
 export const submitAnswerApi = (sessionId: string, data: SubmitAnswerData): Promise<SubmitAnswerResponse> => {
   return request({ url: `/interviews/${sessionId}/submit-answer/`, method: 'post', data });
+};
+// 定义检查中断接口的响应类型
+export interface UnfinishedCheckResponse {
+  has_unfinished: boolean;
+  session_id?: string;
+  job_position?: string;
+}
+
+// API: 检查是否有未完成的面试
+export const checkUnfinishedInterviewApi = (): Promise<UnfinishedCheckResponse> => {
+  return request({
+    url: '/interviews/check-unfinished/',
+    method: 'get',
+  });
+};
+
+// 【新增】放弃未完成面试的 API
+export const abandonUnfinishedInterviewApi = (): Promise<{ message: string }> => {
+  return request({ url: '/interviews/abandon-unfinished/', method: 'post' });
 };

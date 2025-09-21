@@ -43,7 +43,13 @@ INSTALLED_APPS = [
     'corsheaders',
     # 3rd party apps
     'rest_framework',
-
+    'django.contrib.sites',  # allauth 需要这个
+    'allauth',  # allauth 核心
+    'allauth.account',  # allauth 账户管理
+    'allauth.socialaccount',  # allauth 第三方账户
+    'allauth.socialaccount.providers.github',  # GitHub 提供商
+    'dj_rest_auth',  # 新增
+    'dj_rest_auth.registration',  # 新增
     # Local apps
     'users',
     'resumes',
@@ -62,6 +68,9 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # 【核心修正】添加 allauth 的中间件
+    # 官方建议将它放在 AuthenticationMiddleware 之后
+    'allauth.account.middleware.AccountMiddleware',
 ]
 
 ROOT_URLCONF = 'ai_interview_backend.urls'
@@ -203,10 +212,23 @@ SIMPLE_JWT = {
 }
 
 # CORS 配置
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # 您Vite前端的地址
-    "http://127.0.0.1:5173", # 有时浏览器会解析成这个地址，一起加上更保险
+# --- CORS CONFIGURATION (Final Version) ---
+#
+# 允许所有来源（开发时方便，生产环境请使用下面的白名单）
+CORS_ALLOW_ALL_ORIGINS = True
+
+# 或者使用更安全的白名单模式
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:5173",
+#     "http://127.0.0.1:5173",
+# ]
+
+# 确保 CSRF 信任我们的前端来源
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
 ]
+
 
 # ---------------- MEDIA FILES CONFIGURATION ----------------
 #
@@ -217,3 +239,57 @@ MEDIA_URL = '/media/'
 # MEDIA_ROOT: 上传文件在服务器上存储的物理根目录
 # os.path.join(BASE_DIR, 'media') 会在你的项目根目录下创建一个名为 'media' 的文件夹
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+
+# ---------------- CACHES CONFIGURATION ----------------
+#
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1", # 使用 Redis 的 1 号数据库
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+        "TIMEOUT": 3600 # 默认缓存超时时间 (1小时)
+    }
+}
+
+# --- EMAIL SETTINGS ---
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False').lower() in ('true', '1', 't')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
+# 默认发件人地址
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# --- ALLAUTH CONFIGURATION (Final SPA Version) ---
+AUTH_USER_MODEL = 'users.User'
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
+SITE_ID = 1
+# 【核心修正】指定使用我们自定义的 SocialAccountAdapter
+SOCIALACCOUNT_ADAPTER = 'users.adapter.CustomSocialAccountAdapter'
+ACCOUNT_ADAPTER = 'allauth.account.adapter.DefaultAccountAdapter'
+ACCOUNT_LOGIN_METHOD = "email"
+ACCOUNT_SIGNUP_METHODS = ["email"]
+ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_UNIQUE_EMAIL = True
+ACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_LOGIN_ON_GET = True
+
+SOCIALACCOUNT_PROVIDERS = {
+    'github': { 'SCOPE': [ 'user:email' ] }
+}
+
+# --- DJ-REST-AUTH CONFIGURATION (保持不变) ---
+REST_AUTH = {
+    'USE_JWT': True,
+    'JWT_AUTH_HTTPONLY': False,
+    'TOKEN_MODEL': None,
+}

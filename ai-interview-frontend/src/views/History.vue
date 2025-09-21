@@ -1,4 +1,3 @@
-<!-- src/views/History.vue -->
 <template>
   <div class="page-container">
     <el-card>
@@ -19,13 +18,22 @@
         </el-table-column>
         <el-table-column label="操作" width="150">
           <template #default="scope">
+            <!-- 【核心改造】根据状态动态显示按钮 -->
             <el-button 
+              v-if="scope.row.status === 'finished'"
               size="small" 
               type="primary"
-              :disabled="scope.row.status !== 'finished'"
               @click="viewReport(scope.row.id)"
             >
               查看报告
+            </el-button>
+            <el-button 
+              v-if="scope.row.status === 'running'"
+              size="small" 
+              type="warning"
+              @click="resumeInterview(scope.row.id)"
+            >
+              继续面试
             </el-button>
           </template>
         </el-table-column>
@@ -61,6 +69,15 @@ const viewReport = (sessionId: string) => {
   router.push({ name: 'ReportDetail', params: { id: sessionId } });
 };
 
+// 【新增】继续面试的函数
+const resumeInterview = (sessionId: string) => {
+  router.push({ name: 'InterviewRoom', params: { id: sessionId } });
+};
+
 const statusText = (status: string) => ({ pending: '待开始', running: '进行中', finished: '已完成', canceled: '已取消' }[status] || '未知');
 const statusTagType = (status: string) => ({ pending: 'info', running: 'primary', finished: 'success', canceled: 'warning' }[status] || 'info');
 </script>
+
+<style scoped>
+/* 样式无需改动 */
+</style>

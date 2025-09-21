@@ -24,7 +24,9 @@ class User(AbstractUser):
 
     # 额外添加的字段
     phone = models.CharField(max_length=20, unique=True, null=True, blank=True, verbose_name='手机号')
-    avatar = models.CharField(max_length=255, blank=True, verbose_name='头像 URL')
+    # 使用 ImageField 来处理图片上传
+    # upload_to='avatars/' 指定了图片将被上传到 MEDIA_ROOT/avatars/ 目录下
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True, verbose_name='头像')
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CANDIDATE, verbose_name='角色')
     status = models.IntegerField(choices=Status.choices, default=Status.NORMAL, verbose_name='状态')
 
