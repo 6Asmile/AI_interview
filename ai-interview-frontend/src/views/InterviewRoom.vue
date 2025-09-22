@@ -29,6 +29,7 @@
           </div>
         </div>
       </el-col>
+
       <!-- 右侧：面试官与交互区域 -->
       <el-col :span="10">
         <div class="interaction-wrapper">
@@ -57,7 +58,12 @@
           </div>
           <div class="answer-panel">
             <div class="answer-area">
-              <VoiceRecorder v-if="!userAnswerText" @recognition-finished="handleRecognitionFinished"/>
+              <VoiceRecorder
+                v-if="!userAnswerText"
+                @recognition-finished="handleRecognitionFinished"
+                @recording-started="handleRecordingStarted"
+                @recording-ended="handleRecordingEnded"
+              />
               <div v-if="userAnswerText" class="transcript-area">
                 <p class="transcript-title">您的回答 (语音识别结果):</p>
                 <el-input v-model="userAnswerText" type="textarea" :rows="6" placeholder="您可以在这里对识别结果进行微调"/>
@@ -76,16 +82,24 @@
   </div>
 </template>
 
-// src/views/InterviewRoom.vue -> <script setup lang="ts">
+<script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, Ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 import { SwitchButton, Loading } from '@element-plus/icons-vue';
 import VoiceRecorder from '@/components/common/VoiceRecorder.vue';
-import { getInterviewSessionApi, submitAnswerApi, type InterviewSessionItem, type InterviewQuestionItem, type SubmitAnswerData } from '@/api/modules/interview';
+import { 
+  getInterviewSessionApi, 
+  submitAnswerApi, 
+  type InterviewSessionItem, 
+  type InterviewQuestionItem, 
+  type SubmitAnswerData,
+  type AnalysisFrame
+} from '@/api/modules/interview';
 import { getInterviewReportApi } from '@/api/modules/report';
 import { useTTS } from '@/composables/useTTS';
 import { useFaceApi, emotionMap } from '@/composables/useFaceApi';
+import { FaceExpressions } from 'face-api.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -106,6 +120,9 @@ const statusMap: Record<string, string> = {
   pending: '待开始', running: '进行中', finished: '已完成', canceled: '已取消',
 };
 let detectionInterval: number | null = null;
+const isCollectingData = ref(false);
+const analysisDataCollector = ref<AnalysisFrame[]>([]);
+let answerStartTime = 0;
 
 const emotionBars = computed(() => {
   if (!emotions.value) return [];
@@ -151,29 +168,60 @@ const stopCamera = () => {
   if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); mediaStream = null; }
 };
 
+// 【核心修正】
 const startFaceDetection = () => {
   if (detectionInterval) clearInterval(detectionInterval);
   detectionInterval = window.setInterval(async () => {
-    if (videoPlayer.value && !videoPlayer.value.paused) { await detectFace(videoPlayer.value); }
+    if (videoPlayer.value && !videoPlayer.value.paused) {
+      await detectFace(videoPlayer.value);
+      if (isCollectingData.value && emotions.value) {
+        // 创建一个纯净的情绪数据对象，不包含 asSortedArray 方法
+        const pureEmotions: Record<string, number> = {
+          neutral: emotions.value.neutral,
+          happy: emotions.value.happy,
+          sad: emotions.value.sad,
+          angry: emotions.value.angry,
+          fearful: emotions.value.fearful,
+          disgusted: emotions.value.disgusted,
+          surprised: emotions.value.surprised,
+        };
+        
+        analysisDataCollector.value.push({
+          timestamp: Date.now() - answerStartTime,
+          emotions: pureEmotions, // 存储纯净的对象
+          action: getActionState(headPose.value),
+        });
+      }
+    }
   }, 500);
 };
 
-// 【核心修正】
 const fetchSessionDetails = async (sessionId: string) => {
   loading.value = true;
   try {
     const data = await getInterviewSessionApi(sessionId);
     sessionInfo.value = data;
     allQuestions.value = data.questions.sort((a, b) => a.sequence - b.sequence);
-    
-    // 找到最后一个问题作为当前问题，实现进度恢复！
     if (allQuestions.value.length > 0) {
       currentQuestion.value = allQuestions.value[allQuestions.value.length - 1];
     } else {
-      currentQuestion.value = null; // 理论上不会发生，因为至少有一个问题
+      currentQuestion.value = null;
     }
   } catch (error) { console.error('获取面试详情失败', error); ElMessage.error('无法加载面试信息，即将返回首页'); router.push('/dashboard'); } 
   finally { loading.value = false; }
+};
+
+const handleRecordingStarted = () => {
+  console.log("录音开始，启动数据收集...");
+  analysisDataCollector.value = [];
+  answerStartTime = Date.now();
+  isCollectingData.value = true;
+};
+
+const handleRecordingEnded = () => {
+  console.log("录音结束，停止数据收集。");
+  isCollectingData.value = false;
+  console.log("本轮收集到的分析数据:", analysisDataCollector.value);
 };
 
 const handleRecognitionFinished = (transcript: string) => {
@@ -188,7 +236,11 @@ const handleNextQuestion = async () => {
   ElMessage.info('正在提交回答...');
   try {
     const sessionId = route.params.id as string;
-    const data: SubmitAnswerData = { question_id: currentQuestion.value.id, answer_text: userAnswerText.value };
+    const data: SubmitAnswerData = {
+      question_id: currentQuestion.value.id,
+      answer_text: userAnswerText.value,
+      analysis_data: analysisDataCollector.value,
+    };
     const res = await submitAnswerApi(sessionId, data);
     
     lastFeedback.value = res.feedback;
@@ -230,7 +282,7 @@ const handleEndInterview = () => {
 </script>
 
 <style scoped>
-/* --- 样式保持不变 --- */
+/* 所有样式保持不变 */
 .interview-room-container { width: 100%; height: 100vh; padding: 20px; box-sizing: border-box; position: relative; overflow: hidden; }
 .main-content { height: 100%; }
 .el-col { height: 100%; }

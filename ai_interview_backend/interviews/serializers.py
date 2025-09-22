@@ -44,5 +44,8 @@ class SubmitAnswerSerializer(serializers.Serializer):
     question_id = serializers.IntegerField(required=True, help_text="当前回答的问题ID")
     answer_text = serializers.CharField(required=True, allow_blank=False, help_text="用户的回答文本")
 
+    # 新增：接收一个 JSON 格式的数据，设为非必需
+    analysis_data = serializers.JSONField(required=False)
+
     class Meta:
-        fields = ['question_id', 'answer_text']
+        fields = ['question_id', 'answer_text', 'analysis_data']

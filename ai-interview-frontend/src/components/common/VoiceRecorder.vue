@@ -9,29 +9,27 @@
   </div>
 </template>
 
-<script setup lang="ts">
+// src/components/common/VoiceRecorder.vue -> <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import { Microphone, VideoPause } from '@element-plus/icons-vue';
 
-// 检查浏览器是否支持 Web Speech API
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const isSupported = !!SpeechRecognition;
 
 type RecorderStatus = 'idle' | 'recording';
 
 const status = ref<RecorderStatus>('idle');
-const recognition = ref<any>(null); // 使用 any 类型以兼容不同浏览器实现
+const recognition = ref<any>(null);
 const finalTranscript = ref('');
 
-const emit = defineEmits(['recognition-finished']);
+// 【核心改造】定义新的 emit 事件
+const emit = defineEmits(['recognition-finished', 'recording-started', 'recording-ended']);
 
-// --- UI 相关的计算属性 ---
 const statusText = computed(() => (status.value === 'recording' ? '正在聆听...' : '准备就绪'));
 const iconComponent = computed(() => (status.value === 'recording' ? VideoPause : Microphone));
 const tipText = computed(() => (status.value === 'recording' ? '点击按钮结束' : '点击按钮开始回答'));
 
-// --- 核心语音识别逻辑 ---
 const startRecognition = () => {
   if (!isSupported) {
     ElMessage.error('抱歉，您的浏览器不支持实时语音识别功能。');
@@ -39,13 +37,14 @@ const startRecognition = () => {
   }
   
   recognition.value = new SpeechRecognition();
-  recognition.value.lang = 'zh-CN'; // 设置语言为中文
-  recognition.value.continuous = true; // 持续识别
-  recognition.value.interimResults = true; // 返回临时结果
+  recognition.value.lang = 'zh-CN';
+  recognition.value.continuous = true;
+  recognition.value.interimResults = true;
 
   recognition.value.onstart = () => {
     status.value = 'recording';
     finalTranscript.value = '';
+    emit('recording-started'); // 【核心改造】发出开始事件
   };
 
   recognition.value.onresult = (event: any) => {
@@ -57,19 +56,19 @@ const startRecognition = () => {
         interimTranscript += event.results[i][0].transcript;
       }
     }
-    // 可以在这里 emit 临时结果，实现实时显示，但为简化，我们只在最后发送
   };
 
   recognition.value.onerror = (event: any) => {
     console.error('语音识别错误:', event.error);
     ElMessage.error(`语音识别出错: ${event.error}`);
     status.value = 'idle';
+    emit('recording-ended'); // 【核心改造】出错时也要发出结束事件
   };
 
   recognition.value.onend = () => {
     status.value = 'idle';
+    emit('recording-ended'); // 【核心改造】正常结束时发出结束事件
     if (finalTranscript.value) {
-      // 识别结束，将最终文本发送给父组件
       emit('recognition-finished', finalTranscript.value);
     }
   };
@@ -91,7 +90,6 @@ const toggleRecording = () => {
   }
 };
 
-// 组件卸载时确保停止识别
 onUnmounted(() => {
   stopRecognition();
 });

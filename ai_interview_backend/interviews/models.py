@@ -57,6 +57,8 @@ class InterviewQuestion(models.Model):
     answer_text = models.TextField(blank=True, verbose_name='用户回答文本')
     audio_url = models.CharField(max_length=255, blank=True, verbose_name='回答音频 URL')
 
+    # 新增：用于存储前端发送的情绪/动作时间序列数据
+    analysis_data = models.JSONField(null=True, blank=True, verbose_name='实时分析数据')
     # AI 评估相关字段
     score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, verbose_name='得分')
     ai_feedback = models.JSONField(null=True, blank=True, verbose_name='AI 反馈内容')

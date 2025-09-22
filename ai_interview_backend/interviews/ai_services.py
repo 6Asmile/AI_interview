@@ -126,30 +126,30 @@ def analyze_and_generate_next(job_position: str, interview_history: list, user: 
 
 def generate_final_report(job_position: str, interview_history: list, user: User) -> dict:
     """
-    根据完整的面试历史，生成一份包含多维度能力评分的综合报告。
+    【终极版】
+    根据完整的面试历史，生成一份包含多维度能力评分、关键词分析和STAR法则分析的综合报告。
     """
-    # ... (获取 api_key 和 model_name 的逻辑保持不变) ...
     api_key, model_name = _get_user_ai_config(user)
     if not api_key:
         return {"error": "AI服务未配置。"}
 
     history_prompt_part = ""
     for i, turn in enumerate(interview_history):
-        history_prompt_part += f"问题 {i + 1}: {turn['question']}\n"
-        history_prompt_part += f"候选人回答 {i + 1}: {turn['answer']}\n\n"
+        history_prompt_part += f"--- 问题 {i + 1} ---\n"
+        history_prompt_part += f"面试官提问: {turn['question']}\n"
+        history_prompt_part += f"我的回答: {turn['answer']}\n\n"
 
     system_prompt = (
-        "你是一位顶级的职业规划师和面试分析专家。"
-        "你的任务是基于一场完整的面试记录，为候选人生成一份专业、数据驱动、富有洞察力的面试报告。"
+        "你是一位顶级的职业规划师和面试分析专家，尤其擅长结构化思维分析和关键词提取。"
+        "你的任务是基于一场完整的面试记录，生成一份专业、数据驱动、富有洞察力的面试报告。"
     )
     user_prompt = (
         f"我刚刚完成了一场关于 '{job_position}' 岗位的模拟面试。完整的问答记录如下：\n\n"
         f"--- 面试记录开始 ---\n{history_prompt_part}--- 面试记录结束 ---\n\n"
-        "请你对我本次面试的整体表现进行综合评估，并严格按照下面的 JSON 格式返回你的分析报告。"
-        "所有评分都为0-5分，可以有小数。所有文本内容需客观、专业且有建设性。\n"
+        "请对我本次面试进行综合评估，并严格按照下面的 JSON 格式返回你的分析报告。"
+        "所有评分都是0-5分，可以有1位小数。所有文本内容需客观、专业且有建设性。\n"
         "{\n"
         "  \"overall_score\": \"(一个0到100的整数，代表综合得分)\",\n"
-        "  \"overall_comment\": \"(一段100字左右的总体评价)\",\n"
         "  \"ability_scores\": [\n"
         "    {\"name\": \"专业知识\", \"score\": (0-5分)},\n"
         "    {\"name\": \"项目经验\", \"score\": (0-5分)},\n"
@@ -157,11 +157,25 @@ def generate_final_report(job_position: str, interview_history: list, user: User
         "    {\"name\": \"沟通表达\", \"score\": (0-5分)},\n"
         "    {\"name\": \"求职动机\", \"score\": (0-5分)}\n"
         "  ],\n"
+        "  \"overall_comment\": \"(一段100字左右的总体评价)\",\n"
         "  \"strength_analysis\": \"(关于本次面试亮点的分析)\",\n"
         "  \"weakness_analysis\": \"(关于本次面试不足之处的分析)\",\n"
         "  \"improvement_suggestions\": [\n"
         "    \"(第一条具体的改进建议)\",\n"
         "    \"(第二条具体的改进建议)\"\n"
+        "  ],\n"
+        "  \"keyword_analysis\": {\n"
+        "    \"matched_keywords\": [\"(从我的回答中提取出的、与岗位要求高度相关的关键词1)\", \"(关键词2)\", \"(关键词3)\"],\n"
+        "    \"missing_keywords\": [\"(根据岗位要求，我应该提及但未提及的核心关键词1)\", \"(关键词2)\", \"(关键词3)\"],\n"
+        "    \"analysis_comment\": \"(一段关于我关键词使用情况的简短分析)\"\n"
+        "  },\n"
+        "  \"star_analysis\": [\n"
+        "    {\n"
+        "      \"question_sequence\": (问题序号，例如 1),\n"
+        "      \"is_behavioral_question\": (判断这个问题是否是行为面试题，true/false),\n"
+        "      \"conforms_to_star\": (判断我的回答是否符合STAR法则，true/false),\n"
+        "      \"star_feedback\": \"(如果是不符合，请给出具体的改进建议，例如'Situation描述不清'或'缺少量化的Result'；如果符合，则表扬)\"\n"
+        "    }\n"
         "  ]\n"
         "}"
     )
@@ -175,13 +189,15 @@ def generate_final_report(job_position: str, interview_history: list, user: User
                 {"role": "user", "content": user_prompt},
             ],
             stream=False,
-            max_tokens=2500,
-            temperature=0.6,
+            max_tokens=3500,  # 进一步增加 token 限制
+            temperature=0.5,  # 降低温度，让分析更客观
             response_format={"type": "json_object"},
         )
+
         import json
         report_data = json.loads(response.choices[0].message.content)
-        # 安全地转换分数为数字
+
+        # --- 安全地转换分数为数字 (保持不变) ---
         if 'overall_score' in report_data and isinstance(report_data.get('overall_score'), str):
             try:
                 report_data['overall_score'] = int(report_data['overall_score'])
@@ -189,12 +205,14 @@ def generate_final_report(job_position: str, interview_history: list, user: User
                 report_data['overall_score'] = 0
         if 'ability_scores' in report_data and isinstance(report_data.get('ability_scores'), list):
             for item in report_data['ability_scores']:
-                if 'score' in item and isinstance(item.get('score'), (str, int)):
+                if 'score' in item and isinstance(item.get('score'), (str, int, float)):
                     try:
                         item['score'] = float(item['score'])
                     except:
                         item['score'] = 0
+
         return report_data
+
     except Exception as e:
         print(f"调用 AI 生成最终报告时发生错误: {e}")
         return {"error": f"生成报告失败: {e}"}

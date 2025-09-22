@@ -3,8 +3,21 @@
     <el-header class="app-header">
       <div class="header-left">
         <div class="logo">AI 模拟面试平台</div>
-        <el-menu :default-active="activeIndex" class="app-menu" mode="horizontal" :router="true" background-color="#fff" text-color="#303133" active-text-color="#409EFF">
-          <el-menu-item index="/dashboard">仪表盘</el-menu-item>
+        <!-- 【核心改造】 -->
+        <el-menu :default-active="activeIndex" class="app-menu" mode="horizontal" :router="true">
+          <!-- 仪表盘现在是一个带下拉的子菜单 -->
+          <el-sub-menu index="/dashboard">
+            <template #title>仪表盘</template>
+            <el-menu-item index="/dashboard" @click="handleIndustrySelect('all')">所有行业</el-menu-item>
+            <el-menu-item 
+              v-for="industry in jobStore.industriesWithJobs" 
+              :key="industry.id" 
+              :index="`/dashboard?industry=${industry.id}`"
+              @click="handleIndustrySelect(String(industry.id))"
+            >
+              {{ industry.name }}
+            </el-menu-item>
+          </el-sub-menu>
           <el-menu-item index="/dashboard/resumes">简历中心</el-menu-item>
           <el-menu-item index="/dashboard/history">我的面试</el-menu-item>
         </el-menu>
@@ -13,8 +26,7 @@
         <el-avatar :size="32" :src="authStore.avatar || defaultAvatar" />
         <el-dropdown>
           <span class="el-dropdown-link">
-            {{ authStore.username || '用户' }}
-            <el-icon class="el-icon--right"><arrow-down /></el-icon>
+            {{ authStore.username || '用户' }}<el-icon class="el-icon--right"><arrow-down /></el-icon>
           </span>
           <template #dropdown>
             <el-dropdown-menu>
@@ -35,8 +47,8 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-// 【核心修正】从 store 目录导入 useAuthStore
 import { useAuthStore } from '@/store/modules/auth';
+import { useJobStore } from '@/store/modules/job'; // 导入 job store
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { ArrowDown } from '@element-plus/icons-vue';
 import defaultAvatar from '@/assets/images/default_avatar.png';
@@ -44,17 +56,26 @@ import defaultAvatar from '@/assets/images/default_avatar.png';
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const jobStore = useJobStore(); // 初始化 job store
+
 const activeIndex = ref(route.path);
 
 onMounted(() => {
   if (authStore.isAuthenticated && !authStore.user) {
     authStore.fetchUser();
   }
+  // 在布局加载时，就去获取行业数据
+  jobStore.fetchIndustries();
 });
 
 watch(() => route.path, (newPath) => {
   activeIndex.value = newPath;
 });
+
+// 点击行业子菜单时，调用 store action 更新状态
+const handleIndustrySelect = (industryId: string) => {
+  jobStore.selectIndustry(industryId);
+};
 
 const goToProfile = () => { router.push('/dashboard/profile'); };
 const goToSettings = () => { router.push('/dashboard/settings'); };
@@ -79,5 +100,5 @@ const handleLogout = () => {
 .user-info { display: flex; align-items: center; }
 .user-info .el-avatar { margin-right: 10px; }
 .el-dropdown-link { cursor: pointer; display: flex; align-items: center; }
-.app-main { background-color: #fafaf4; }
+.app-main { background-color: #f4f7fa; }
 </style>

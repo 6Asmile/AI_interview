@@ -94,7 +94,8 @@ const handleGitHubLogin = () => {
     ElMessage.error('GitHub 登录未配置，请联系管理员。');
     return;
   }
-  const redirectUri = "http://localhost:5173/login";
+  const redirectUri = "http://localhost:5173/oauth/callback"; // 指向统一回调页
+  localStorage.setItem('oauth_flow', 'login'); // 设置登录标记
   const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${redirectUri}&scope=user:email`;
   window.location.href = githubAuthUrl;
 };

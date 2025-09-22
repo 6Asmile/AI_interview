@@ -1,7 +1,7 @@
 # system/views.py
 from rest_framework import generics, permissions
-from .models import AISetting
-from .serializers import AISettingSerializer
+from .models import AISetting,  Industry  # 导入
+from .serializers import AISettingSerializer,  IndustryWithJobsSerializer  # 导入
 
 class AISettingRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     """
@@ -20,3 +20,14 @@ class AISettingRetrieveUpdateView(generics.RetrieveUpdateAPIView):
         # get_or_create 返回一个 (object, created) 的元组
         obj, created = AISetting.objects.get_or_create(user=self.request.user)
         return obj
+
+class IndustryWithJobsListView(generics.ListAPIView):
+    """
+    获取所有已启用的行业及其下的岗位列表。
+    """
+    # 我们查询的是 Industry，而不是 JobPosition
+    queryset = Industry.objects.filter(is_active=True).prefetch_related(
+        'job_positions' # 优化查询，一次性获取所有关联的岗位
+    )
+    serializer_class = IndustryWithJobsSerializer
+    permission_classes = [permissions.AllowAny]

@@ -250,7 +250,7 @@ CACHES = {
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
-        "TIMEOUT": 3600 # 默认缓存超时时间 (1小时)
+        "TIMEOUT": 1800 # 默认缓存超时时间 (1小时)
     }
 }
 

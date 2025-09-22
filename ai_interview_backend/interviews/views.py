@@ -107,50 +107,67 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='submit-answer')
     def submit_answer(self, request, pk=None):
+        """
+        接收用户对特定问题的回答，保存分析数据，并返回下一个问题或结束信号。
+        """
         session = self.get_object()
         cache_key = get_user_cache_key(request.user)
 
-        # 【核心修正】在提交回答时不再强制校验缓存，因为用户可能通过历史页面重新进入
-        # 只要会话状态是 RUNNING，就允许提交
         if session.status != InterviewSession.Status.RUNNING:
             return Response({"error": "面试已结束或已取消，无法提交回答。"}, status=status.HTTP_400_BAD_REQUEST)
 
-        cache.set(cache_key, str(session.id), timeout=7200)  # 重新进入时，为他续上缓存
+        cache.set(cache_key, str(session.id), timeout=7200)
         print(f"用户 {request.user.id} 的面试 {session.id} 缓存已刷新/重建。")
 
         serializer = SubmitAnswerSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         question_id = serializer.validated_data['question_id']
         answer_text = serializer.validated_data['answer_text']
+        analysis_data = serializer.validated_data.get('analysis_data', None)
+
         try:
             current_question = session.questions.get(id=question_id)
             current_question.answer_text = answer_text
             current_question.answered_at = datetime.now()
+            if analysis_data:
+                current_question.analysis_data = analysis_data
         except InterviewQuestion.DoesNotExist:
             return Response({"error": "问题不存在"}, status=status.HTTP_404_NOT_FOUND)
 
         history = []
         answered_questions_before_this = session.questions.filter(answered_at__isnull=False).exclude(
             id=question_id).order_by('sequence')
-        for q in answered_questions_before_this: history.append({'question': q.question_text, 'answer': q.answer_text})
+        for q in answered_questions_before_this:
+            history.append({'question': q.question_text, 'answer': q.answer_text})
+
         history.append({'question': current_question.question_text, 'answer': answer_text})
 
-        ai_response = analyze_and_generate_next(job_position=session.job_position, interview_history=history,
-                                                user=request.user)
+        ai_response = analyze_and_generate_next(
+            job_position=session.job_position,
+            interview_history=history,
+            user=request.user
+        )
+
         current_question.ai_feedback = {"feedback": ai_response.get("feedback")}
         current_question.save()
+
         answered_count = answered_questions_before_this.count() + 1
 
         if answered_count >= session.question_count:
-            return Response({"feedback": ai_response.get("feedback"), "interview_finished": True},
-                            status=status.HTTP_200_OK)
+            return Response({
+                "feedback": ai_response.get("feedback"),
+                "interview_finished": True,
+            }, status=status.HTTP_200_OK)
         else:
-            next_question = InterviewQuestion.objects.create(session=session,
-                                                             question_text=ai_response.get("next_question"),
-                                                             sequence=answered_count + 1)
-            return Response({"feedback": ai_response.get("feedback"),
-                             "next_question": InterviewQuestionSerializer(next_question).data},
-                            status=status.HTTP_201_CREATED)
+            next_question = InterviewQuestion.objects.create(
+                session=session,
+                question_text=ai_response.get("next_question"),
+                sequence=answered_count + 1
+            )
+            return Response({
+                "feedback": ai_response.get("feedback"),
+                "next_question": InterviewQuestionSerializer(next_question).data
+            }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='finish')
     def finish_interview(self, request, pk=None):
@@ -161,8 +178,14 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         if session.report:
             return Response(session.report, status=status.HTTP_200_OK)
 
-        history = [{'question': q.question_text, 'answer': q.answer_text} for q in
-                   session.questions.filter(answered_at__isnull=False).order_by('sequence')]
+        history = []
+        answered_questions = session.questions.filter(answered_at__isnull=False).order_by('sequence')
+        for q in answered_questions:
+            history.append({
+                'question': q.question_text,
+                'answer': q.answer_text,
+                'analysis_data': q.analysis_data  # <-- 就是这一行！
+            })
         if not history:
             return Response({"error": "没有有效的问答记录，无法生成报告"}, status=status.HTTP_400_BAD_REQUEST)
 

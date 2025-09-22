@@ -24,14 +24,14 @@
       
       <div class="section">
         <h2>能力维度分析</h2>
-        <el-row :gutter="20">
+        <el-row :gutter="40">
           <el-col :span="12">
             <div ref="radarChart" style="width: 100%; height: 400px;"></div>
           </el-col>
           <el-col :span="12" class="ability-bars">
              <div v-for="ability in reportData.ability_scores" :key="ability.name" class="ability-item">
                <span>{{ ability.name }}</span>
-               <el-progress :percentage="ability.score * 20" :format="() => `${ability.score} 分`" />
+               <el-progress :percentage="ability.score * 20" :format="() => `${ability.score} / 5`" />
              </div>
           </el-col>
         </el-row>
@@ -63,6 +63,43 @@
           <p>{{ suggestion }}</p>
         </div>
       </div>
+      
+      <!-- 新增：关键词分析模块 -->
+      <div class="section">
+        <h2>关键词分析</h2>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <p class="analysis-subtitle">匹配的关键词</p>
+            <el-tag v-for="kw in reportData.keyword_analysis.matched_keywords" :key="kw" type="success" class="keyword-tag">{{ kw }}</el-tag>
+            <el-empty v-if="!reportData.keyword_analysis.matched_keywords?.length" description="无" :image-size="50" />
+          </el-col>
+          <el-col :span="12">
+            <p class="analysis-subtitle">建议补充的关键词</p>
+            <el-tag v-for="kw in reportData.keyword_analysis.missing_keywords" :key="kw" type="warning" class="keyword-tag">{{ kw }}</el-tag>
+            <el-empty v-if="!reportData.keyword_analysis.missing_keywords?.length" description="无" :image-size="50" />
+          </el-col>
+        </el-row>
+        <div class="analysis-comment">
+          <p>{{ reportData.keyword_analysis.analysis_comment }}</p>
+        </div>
+      </div>
+      
+      <!-- 新增：STAR 法则分析模块 -->
+      <div class="section">
+        <h2>STAR 法则分析</h2>
+        <el-table :data="starAnalysisData" style="width: 100%">
+          <el-table-column prop="question" label="行为问题" />
+          <el-table-column prop="conforms_to_star" label="STAR 符合度" width="150" align="center">
+            <template #default="scope">
+              <el-tag :type="scope.row.conforms_to_star ? 'success' : 'danger'">
+                {{ scope.row.conforms_to_star ? '符合' : '待改进' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="star_feedback" label="AI 反馈" />
+        </el-table>
+        <el-empty v-if="!starAnalysisData.length" description="本次面试未涉及需 STAR 法则作答的行为问题" />
+      </div>
     </el-card>
     
     <el-card v-if="sessionInfo && !loading" class="review-card">
@@ -84,6 +121,10 @@
             <p v-if="qa.ai_feedback?.feedback" class="feedback-text">
               <strong>AI 简评:</strong> {{ qa.ai_feedback.feedback }}
             </p>
+            <div v-if="qa.analysis_data && qa.analysis_data.length > 0" class="emotion-chart-container">
+              <p class="chart-title">回答期间情绪波动</p>
+              <div :ref="el => setChartRef(qa.id, el)" class="emotion-chart"></div>
+            </div>
           </el-card>
         </el-timeline-item>
       </el-timeline>
@@ -94,19 +135,40 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import * as echarts from 'echarts';
 import { getInterviewReportApi, type InterviewReport } from '@/api/modules/report';
-import { getInterviewSessionApi, type InterviewSessionItem } from '@/api/modules/interview';
+import { getInterviewSessionApi, type InterviewSessionItem, type AnalysisFrame } from '@/api/modules/interview';
 import { Document, Opportunity } from '@element-plus/icons-vue';
+import { emotionMap } from '@/composables/useFaceApi';
 
 const route = useRoute();
 const loading = ref(true);
 const reportData = ref<InterviewReport | null>(null);
 const sessionInfo = ref<InterviewSessionItem | null>(null);
 const radarChart = ref<HTMLElement | null>(null);
-let chartInstance: echarts.ECharts | null = null; // 用于存储 ECharts 实例
+
+const chartRefs = ref<Map<number, HTMLElement>>(new Map());
+const chartInstances = new Map<number, echarts.ECharts>();
+let radarChartInstance: echarts.ECharts | null = null;
+
+const starAnalysisData = computed(() => {
+  if (!reportData.value || !sessionInfo.value || !reportData.value.star_analysis) return [];
+  return reportData.value.star_analysis
+    .filter(sa => sa.is_behavioral_question)
+    .map(sa => {
+      const question = sessionInfo.value?.questions.find(q => q.sequence === sa.question_sequence);
+      return {
+        ...sa,
+        question: question ? `Q${sa.question_sequence}: ${question.question_text}` : `问题 ${sa.question_sequence}`
+      }
+    });
+});
+
+const setChartRef = (id: number, el: any) => {
+  if (el) { chartRefs.value.set(id, el); }
+};
 
 const fetchData = async (sessionId: string) => {
   loading.value = true;
@@ -118,11 +180,10 @@ const fetchData = async (sessionId: string) => {
     reportData.value = report;
     sessionInfo.value = session;
     
-    // 【核心修正 #1】使用 setTimeout 延迟初始化
     setTimeout(() => {
       initRadarChart();
-    }, 100); // 延迟 100 毫秒，足以让 DOM 完成布局
-
+      initEmotionCharts();
+    }, 200);
   } catch (error) {
     console.error("获取报告失败", error);
   } finally {
@@ -136,64 +197,69 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  // 组件卸载时销毁图表实例，防止内存泄漏
-  if (chartInstance) {
-    chartInstance.dispose();
-  }
+  radarChartInstance?.dispose();
+  chartInstances.forEach(chart => chart.dispose());
 });
 
 const initRadarChart = () => {
-  // 【核心修正 #2】增强数据校验
   if (!radarChart.value || !reportData.value || !reportData.value.ability_scores || reportData.value.ability_scores.length === 0) {
-    console.warn("无法初始化雷达图，缺少 ability_scores 数据。");
     if(radarChart.value) radarChart.value.innerHTML = '<div class="chart-error">AI 未返回能力维度评分数据</div>';
     return;
   }
   
-  chartInstance = echarts.init(radarChart.value);
+  if (!radarChartInstance) {
+    radarChartInstance = echarts.init(radarChart.value);
+  }
   
-  const indicatorData = reportData.value.ability_scores.map(item => ({
-    name: item.name,
-    max: 5,
-  }));
-  
-  const seriesData = reportData.value.ability_scores.map(item => {
-    const score = Number(item.score);
-    return isNaN(score) ? 0 : score;
-  });
+  const indicatorData = reportData.value.ability_scores.map(item => ({ name: item.name, max: 5 }));
+  const seriesData = reportData.value.ability_scores.map(item => Number(item.score) || 0);
 
   const option = {
     tooltip: { trigger: 'item' },
-    radar: {
-      indicator: indicatorData,
-      radius: '65%',
-      center: ['50%', '55%'],
-    },
-    series: [
-      {
-        type: 'radar',
-        data: [
-          {
-            value: seriesData,
-            name: '能力评估',
-            areaStyle: { color: 'rgba(64, 158, 255, 0.4)' }
-          }
-        ]
-      }
-    ]
+    radar: { indicator: indicatorData, radius: '65%', center: ['50%', '55%'] },
+    series: [{ type: 'radar', data: [{ value: seriesData, name: '能力评估', areaStyle: { color: 'rgba(64, 158, 255, 0.4)' }}] }]
   };
-  chartInstance.setOption(option);
+  radarChartInstance.setOption(option);
+};
 
-  // 【核心修正 #3】增加 resize 监听
-  const resizeObserver = new ResizeObserver(() => {
-    chartInstance?.resize();
+const initEmotionCharts = () => {
+  if (!sessionInfo.value || !sessionInfo.value.questions) return;
+  sessionInfo.value.questions.forEach(qa => {
+    if (!qa.analysis_data || qa.analysis_data.length === 0) return;
+    
+    const chartDom = chartRefs.value.get(qa.id);
+    if (chartDom) {
+      let chart = chartInstances.get(qa.id);
+      if (!chart) {
+        chart = echarts.init(chartDom);
+        chartInstances.set(qa.id, chart);
+      }
+      const timestamps = qa.analysis_data.map((d: AnalysisFrame) => (d.timestamp / 1000).toFixed(1) + 's');
+      const series = Object.keys(emotionMap).map(key => ({
+        name: emotionMap[key],
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: qa.analysis_data!.map((d: AnalysisFrame) => {
+          const emotionValue = d.emotions ? d.emotions[key] : 0;
+          return ((emotionValue || 0) * 100).toFixed(2);
+        })
+      }));
+      const option = {
+        tooltip: { trigger: 'axis' },
+        legend: { data: Object.values(emotionMap), top: 'bottom', type: 'scroll' },
+        grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
+        xAxis: { type: 'category', boundaryGap: false, data: timestamps },
+        yAxis: { type: 'value', max: 100, name: '置信度 (%)' },
+        series: series
+      };
+      chart.setOption(option);
+    }
   });
-  resizeObserver.observe(radarChart.value);
 };
 </script>
 
 <style scoped>
-/* --- 样式保持不变，只为新元素追加样式 --- */
 .report-container { max-width: 1000px; margin: 20px auto; display: flex; flex-direction: column; gap: 20px;}
 .report-header { align-items: center; }
 .header-left { display: flex; align-items: center; gap: 10px; }
@@ -216,13 +282,11 @@ const initRadarChart = () => {
 .answer-text, .feedback-text { margin-top: 10px; padding: 10px; border-radius: 4px; line-height: 1.6; }
 .answer-text { background-color: #f4f4f5; }
 .feedback-text { background-color: #d9ecff; }
-/* 新增样式 */
-.chart-error {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100%;
-  color: #909399;
-  font-size: 14px;
-}
+.emotion-chart-container { margin-top: 20px; border-top: 1px solid #f0f0f0; padding-top: 20px; }
+.chart-title { font-weight: 500; color: #303133; margin-bottom: 10px; }
+.emotion-chart { width: 100%; height: 300px; }
+.chart-error { display: flex; justify-content: center; align-items: center; height: 100%; color: #909399; font-size: 14px; }
+.analysis-subtitle { font-weight: bold; color: #606266; margin-bottom: 10px; }
+.keyword-tag { margin: 5px; }
+.analysis-comment { margin-top: 20px; padding: 15px; background-color: #f4f4f5; border-radius: 4px; font-size: 0.9rem; line-height: 1.6; }
 </style>

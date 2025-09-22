@@ -1,77 +1,24 @@
-# Byte-compiled / optimized / DLL files
+# Python / Django
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
+/venv/
+/.idea/
+/db.sqlite3
+/.env
 
-# C extensions
-*.so
+# Node.js / Vue
+/node_modules/
+/dist/
+/.vscode/
+/npm-debug.log*
+/yarn-error.log*
+/pnpm-lock.yaml
+/.DS_Store
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Frontend build files
+ai_interview-frontend/dist
+ai_interview-frontend/.vite
+ai_interview-frontend/.npm
 
-# PyInstaller
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# 【核心】我们自己的文件
-.env
-media/
-.idea/
-venv/
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# IDE settings
-.idea/
-.vscode/
+# Backend media files
+ai_interview_backend/media/
