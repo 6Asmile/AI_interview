@@ -27,6 +27,12 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 
+# 【核心修正】设置 Admin 站点的标题
+admin.site.site_header = "IFaceOff 管理后台"
+admin.site.site_title = "IFaceOff Admin Portal"
+admin.site.index_title = "欢迎来到 IFaceOff 管理后台"
+
+
 urlpatterns = [
     path('admin/', admin.site.urls),
 

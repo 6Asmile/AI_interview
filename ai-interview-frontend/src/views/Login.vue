@@ -7,7 +7,7 @@
     <el-card class="auth-card" v-show="!isAuthenticating">
       <template #header>
         <div class="card-header">
-          <h2>AI 模拟面试平台 - 登录</h2>
+          <h2>IFaceOff - 登录</h2>
         </div>
       </template>
       <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-width="80px" @keyup.enter="handleLogin">

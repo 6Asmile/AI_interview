@@ -1,7 +1,6 @@
 <template>
   <div class="interview-room-container">
     <el-row :gutter="20" class="main-content">
-      <!-- 左侧：用户实时视频区域 -->
       <el-col :span="14">
         <div class="video-wrapper">
           <video ref="videoPlayer" class="video-player" autoplay playsinline muted></video>
@@ -29,8 +28,6 @@
           </div>
         </div>
       </el-col>
-
-      <!-- 右侧：面试官与交互区域 -->
       <el-col :span="10">
         <div class="interaction-wrapper">
           <div class="interviewer-panel">
@@ -46,7 +43,7 @@
               <div class="question-feedback-area">
                 <div class="question-header">
                   <span class="question-sequence">问题 {{ currentQuestion?.sequence }} / {{ sessionInfo.question_count }}</span>
-                  <p class="question-text">{{ currentQuestion?.question_text }}</p>
+                  <p class="question-text">{{ streamedQuestionText || currentQuestion?.question_text }}</p>
                 </div>
                 <el-divider v-if="lastFeedback" />
                 <div v-if="lastFeedback" class="feedback-header">
@@ -58,12 +55,7 @@
           </div>
           <div class="answer-panel">
             <div class="answer-area">
-              <VoiceRecorder
-                v-if="!userAnswerText"
-                @recognition-finished="handleRecognitionFinished"
-                @recording-started="handleRecordingStarted"
-                @recording-ended="handleRecordingEnded"
-              />
+              <VoiceRecorder v-if="!userAnswerText" @recognition-finished="handleRecognitionFinished" @recording-started="handleRecordingStarted" @recording-ended="handleRecordingEnded" />
               <div v-if="userAnswerText" class="transcript-area">
                 <p class="transcript-title">您的回答 (语音识别结果):</p>
                 <el-input v-model="userAnswerText" type="textarea" :rows="6" placeholder="您可以在这里对识别结果进行微调"/>
@@ -83,23 +75,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed, Ref } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
 import { SwitchButton, Loading } from '@element-plus/icons-vue';
 import VoiceRecorder from '@/components/common/VoiceRecorder.vue';
 import { 
   getInterviewSessionApi, 
-  submitAnswerApi, 
+  submitAnswerStreamApi, 
   type InterviewSessionItem, 
   type InterviewQuestionItem, 
   type SubmitAnswerData,
-  type AnalysisFrame
+  type AnalysisFrame 
 } from '@/api/modules/interview';
 import { getInterviewReportApi } from '@/api/modules/report';
 import { useTTS } from '@/composables/useTTS';
 import { useFaceApi, emotionMap } from '@/composables/useFaceApi';
-import { FaceExpressions } from 'face-api.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -108,7 +99,7 @@ const { modelsLoaded, emotions, headPose, loadModels, detectFace, getActionState
 
 const loading = ref(true);
 const submitting = ref(false);
-const sessionInfo: Ref<Partial<InterviewSessionItem>> = ref({ job_position: '加载中...', question_count: 5 });
+const sessionInfo = ref<Partial<InterviewSessionItem>>({});
 const allQuestions = ref<InterviewQuestionItem[]>([]);
 const currentQuestion = ref<InterviewQuestionItem | null>(null);
 const userAnswerText = ref('');
@@ -116,34 +107,52 @@ const lastFeedback = ref('');
 const videoPlayer = ref<HTMLVideoElement | null>(null);
 const cameraReady = ref(false);
 let mediaStream: MediaStream | null = null;
-const statusMap: Record<string, string> = {
-  pending: '待开始', running: '进行中', finished: '已完成', canceled: '已取消',
-};
 let detectionInterval: number | null = null;
 const isCollectingData = ref(false);
 const analysisDataCollector = ref<AnalysisFrame[]>([]);
 let answerStartTime = 0;
+const streamedQuestionText = ref('');
 
 const emotionBars = computed(() => {
   if (!emotions.value) return [];
   return Object.entries(emotions.value).map(([key, value]) => {
     const numericValue = value as number;
-    return { name: emotionMap[key] || key, percentage: Math.round(numericValue * 100), color: numericValue > 0.6 ? '#67C23A' : (numericValue > 0.3 ? '#E6A23C' : '#909399'),};
+    return { 
+      name: emotionMap[key] || key, 
+      percentage: Math.round(numericValue * 100), 
+      color: numericValue > 0.6 ? '#67C23A' : (numericValue > 0.3 ? '#E6A23C' : '#909399'),
+    };
   }).filter(item => item.percentage > 1).sort((a, b) => b.percentage - a.percentage);
 });
+
 const actionState = computed(() => getActionState(headPose.value));
 
-watch(currentQuestion, (newQuestion, oldQuestion) => {
-  if (newQuestion && newQuestion.id !== oldQuestion?.id) {
-    setTimeout(() => { speak(newQuestion.question_text); }, 500);
+watch(streamedQuestionText, (newValue, oldValue) => {
+  // 仅在流式文本第一次完整接收后（通过比较新旧值是否相等判断流式结束）朗读
+  // 并且当前没有在说话
+  if (newValue && newValue !== oldValue && !isSpeaking.value) {
+    // 这是一个简化的判断，更好的方法是API返回流结束标志
+    // 此处我们假设流结束后一次性朗读
+    const fullText = newValue;
+    // 延迟以确保文本渲染
+    setTimeout(() => {
+      if (streamedQuestionText.value === fullText) {
+          speak(fullText);
+      }
+    }, 300);
   }
 });
 
+
 onMounted(async () => {
   await Promise.all([loadModels(), startCamera()]);
-  const sessionId = route.params.id as string;
-  if (sessionId) { await fetchSessionDetails(sessionId); } 
-  else { ElMessage.error('无效的面试会话，即将返回首页'); router.push('/dashboard'); }
+  const { id } = route.params;
+  if (id) {
+    fetchSessionDetails(id as string);
+  } else {
+    ElMessage.error('无效的面试入口，即将返回首页');
+    router.push('/dashboard');
+  }
 });
 
 onUnmounted(() => {
@@ -158,37 +167,39 @@ const startCamera = async () => {
       mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       if (videoPlayer.value) {
         videoPlayer.value.srcObject = mediaStream;
-        videoPlayer.value.onloadedmetadata = () => { cameraReady.value = true; startFaceDetection(); };
+        videoPlayer.value.onloadedmetadata = () => {
+          cameraReady.value = true;
+          startFaceDetection(); 
+        };
       }
     }
-  } catch (error) { console.error("无法访问摄像头:", error); ElMessage.error("无法访问摄像头，请检查您的设备和浏览器权限。"); }
+  } catch (error) {
+    console.error("无法访问摄像头:", error);
+    ElMessage.error("无法访问摄像头，请检查您的设备和浏览器权限。");
+  }
 };
 
 const stopCamera = () => {
-  if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); mediaStream = null; }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+  }
 };
 
-// 【核心修正】
 const startFaceDetection = () => {
   if (detectionInterval) clearInterval(detectionInterval);
   detectionInterval = window.setInterval(async () => {
     if (videoPlayer.value && !videoPlayer.value.paused) {
       await detectFace(videoPlayer.value);
       if (isCollectingData.value && emotions.value) {
-        // 创建一个纯净的情绪数据对象，不包含 asSortedArray 方法
         const pureEmotions: Record<string, number> = {
-          neutral: emotions.value.neutral,
-          happy: emotions.value.happy,
-          sad: emotions.value.sad,
-          angry: emotions.value.angry,
-          fearful: emotions.value.fearful,
-          disgusted: emotions.value.disgusted,
-          surprised: emotions.value.surprised,
+          neutral: emotions.value.neutral, happy: emotions.value.happy, sad: emotions.value.sad,
+          angry: emotions.value.angry, fearful: emotions.value.fearful,
+          disgusted: emotions.value.disgusted, surprised: emotions.value.surprised,
         };
-        
         analysisDataCollector.value.push({
           timestamp: Date.now() - answerStartTime,
-          emotions: pureEmotions, // 存储纯净的对象
+          emotions: pureEmotions,
           action: getActionState(headPose.value),
         });
       }
@@ -198,17 +209,26 @@ const startFaceDetection = () => {
 
 const fetchSessionDetails = async (sessionId: string) => {
   loading.value = true;
+  streamedQuestionText.value = '';
   try {
     const data = await getInterviewSessionApi(sessionId);
     sessionInfo.value = data;
     allQuestions.value = data.questions.sort((a, b) => a.sequence - b.sequence);
     if (allQuestions.value.length > 0) {
       currentQuestion.value = allQuestions.value[allQuestions.value.length - 1];
-    } else {
-      currentQuestion.value = null;
+      // 第一次加载问题时，也朗读
+      if(currentQuestion.value?.question_text){
+         speak(currentQuestion.value.question_text);
+      }
     }
-  } catch (error) { console.error('获取面试详情失败', error); ElMessage.error('无法加载面试信息，即将返回首页'); router.push('/dashboard'); } 
-  finally { loading.value = false; }
+  } catch (error) {
+    console.error('获取面试详情失败', error);
+    ElMessage.error('无法加载面试信息');
+    router.push('/dashboard');
+  } 
+  finally {
+    loading.value = false;
+  }
 };
 
 const handleRecordingStarted = () => {
@@ -225,64 +245,78 @@ const handleRecordingEnded = () => {
 };
 
 const handleRecognitionFinished = (transcript: string) => {
-  if (!transcript) { ElMessage.warning('未能识别到有效的语音内容'); return; }
+  if (!transcript) {
+    ElMessage.warning('未能识别到有效的语音内容');
+    return;
+  }
   userAnswerText.value = transcript;
   ElMessage.success('语音识别完成！您可以在文本框中进行修改。');
 };
 
 const handleNextQuestion = async () => {
-  if (!currentQuestion.value || !userAnswerText.value) { ElMessage.warning('回答内容不能为空'); return; }
+  if (!currentQuestion.value || !userAnswerText.value) {
+    ElMessage.warning('回答内容不能为空');
+    return;
+  }
   submitting.value = true;
-  ElMessage.info('正在提交回答...');
+  streamedQuestionText.value = '';
+  lastFeedback.value = '';
   try {
-    const sessionId = route.params.id as string;
+    const sessionId = sessionInfo.value!.id!;
     const data: SubmitAnswerData = {
       question_id: currentQuestion.value.id,
       answer_text: userAnswerText.value,
       analysis_data: analysisDataCollector.value,
     };
-    const res = await submitAnswerApi(sessionId, data);
     
-    lastFeedback.value = res.feedback;
+    const result = await submitAnswerStreamApi(sessionId, data, (chunk) => {
+      streamedQuestionText.value += chunk;
+    });
     
-    if (res.interview_finished) {
+    lastFeedback.value = result.feedback;
+    userAnswerText.value = '';
+
+    if (result.interview_finished) {
       currentQuestion.value = null;
       ElMessageBox.alert('您已完成所有问题！现在可以点击右下角的“结束面试”按钮来生成您的专属面试报告。', '答题结束', {
         confirmButtonText: '好的',
         type: 'success',
       });
-      userAnswerText.value = '（所有问题已完成）';
-    } else if (res.next_question) {
-      allQuestions.value.push(res.next_question);
-      currentQuestion.value = res.next_question;
-      userAnswerText.value = '';
-      ElMessage.success('收到简评，请看下一个问题');
+    } else {
+      await fetchSessionDetails(sessionId);
     }
-  } catch (error) { console.error('提交回答失败', error); ElMessage.error('提交回答失败，请稍后再试'); } 
-  finally { submitting.value = false; }
+  } catch (error) {
+    console.error('提交回答失败', error);
+  } 
+  finally {
+    submitting.value = false;
+  }
 };
 
 const handleEndInterview = () => {
-  ElMessageBox.confirm('您确定要结束面试并生成最终报告吗？', '确认', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' })
-    .then(async () => {
-      const loading = ElLoading.service({ text: '正在汇总分析并生成报告...' });
-      try {
-        const sessionId = route.params.id as string;
-        await getInterviewReportApi(sessionId);
-        loading.close();
-        ElMessage.success('面试报告已生成！');
-        router.push({ name: 'ReportDetail', params: { id: sessionId } });
-      } catch (error) {
-        loading.close();
-        console.error('生成报告失败', error);
-        ElMessage.error('生成报告失败，请稍后在历史记录中重试。');
-      }
-    });
+  ElMessageBox.confirm('您确定要结束面试并生成最终报告吗？', '确认', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning',
+  }).then(async () => {
+    const loading = ElLoading.service({ text: '正在汇总分析并生成报告...' });
+    try {
+      const sessionId = route.params.id as string;
+      await getInterviewReportApi(sessionId);
+      loading.close();
+      ElMessage.success('面试报告已生成！');
+      router.push({ name: 'ReportDetail', params: { id: sessionId } });
+    } catch (error) {
+      loading.close();
+      console.error('生成报告失败', error);
+      ElMessage.error('生成报告失败，请稍后在历史记录中重试。');
+    }
+  });
 };
 </script>
 
 <style scoped>
-/* 所有样式保持不变 */
+/* 样式保持不变 */
 .interview-room-container { width: 100%; height: 100vh; padding: 20px; box-sizing: border-box; position: relative; overflow: hidden; }
 .main-content { height: 100%; }
 .el-col { height: 100%; }
@@ -308,7 +342,7 @@ const handleEndInterview = () => {
 .question-feedback-area { margin-top: 15px; flex-grow: 1; overflow-y: auto; }
 .question-header { margin-top: 0; }
 .question-sequence { font-size: 1rem; color: #909399; }
-.question-text { font-size: 1.25rem; font-weight: 500; color: #303133; margin-top: 8px; line-height: 1.6; }
+.question-text { font-size: 1.25rem; font-weight: 500; color: #303133; margin-top: 8px; line-height: 1.6; white-space: pre-wrap; }
 .feedback-header { margin-top: 10px; }
 .feedback-title { font-weight: bold; color: #409EFF; }
 .feedback-text { font-size: 0.9rem; color: #606266; margin-top: 5px; line-height: 1.5; }

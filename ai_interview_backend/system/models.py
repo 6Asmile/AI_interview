@@ -3,26 +3,35 @@ from django.db import models
 from users.models import User
 
 
+# 1. AIModel 模型
+class AIModel(models.Model):
+    name = models.CharField(max_length=100, verbose_name='模型显示名称')
+    model_slug = models.CharField(max_length=100, unique=True, verbose_name='模型调用标识')
+    base_url = models.URLField(max_length=255, verbose_name='API Base URL')
+    description = models.TextField(blank=True, verbose_name='模型描述')
+    is_active = models.BooleanField(default=True, verbose_name='是否启用')
 
+    class Meta:
+        verbose_name = 'AI 模型'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return self.name
+
+
+# 2. AISetting 模型
 class AISetting(models.Model):
-    # 使用 OneToOneField 确保一个用户只有一套AI配置
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='ai_setting', verbose_name='所属用户')
 
-    # 为了未来的扩展性，我们使用 choices
-    class AIModel(models.TextChoices):
-        DEEPSEEK_CHAT = 'deepseek-chat', 'DeepSeek Chat'
-        # 以后可以添加 GPT_4, QWEN_MAX 等
-
-    ai_model = models.CharField(
-        max_length=50,
-        choices=AIModel.choices,
-        default=AIModel.DEEPSEEK_CHAT,
+    ai_model = models.ForeignKey(
+        AIModel,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         verbose_name='AI 模型'
     )
+
     api_key = models.CharField(max_length=255, blank=True, verbose_name='API Key')
-
-    # 以后可以添加 base_url, temperature 等更多自定义设置
-
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -34,7 +43,7 @@ class AISetting(models.Model):
         return f"{self.user.username} 的 AI 设置"
 
 
-# 1. 新增 Industry 模型
+# 3. Industry 模型
 class Industry(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name='行业名称')
     description = models.TextField(blank=True, verbose_name='行业描述')
@@ -49,11 +58,12 @@ class Industry(models.Model):
     def __str__(self):
         return self.name
 
+
+# 4. JobPosition 模型
 class JobPosition(models.Model):
-    # 2. 新增一个外键字段来关联 Industry
     industry = models.ForeignKey(
         Industry,
-        on_delete=models.SET_NULL, # 如果行业被删除，岗位不删除，只是关联变为空
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='job_positions',
@@ -68,7 +78,7 @@ class JobPosition(models.Model):
     class Meta:
         verbose_name = '面试岗位'
         verbose_name_plural = verbose_name
-        ordering = ['industry__order', 'order', 'name'] # 优先按行业排序
+        ordering = ['industry__order', 'order', 'name']
 
     def __str__(self):
         return self.name

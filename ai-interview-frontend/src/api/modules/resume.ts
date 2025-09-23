@@ -1,11 +1,11 @@
-// src/api/modules/resume.ts
 import request from '@/api/request';
 
+// --- 类型定义 ---
 export interface ResumeItem {
   id: number;
   user: number;
   title: string;
-  file: string; // 后端 FileField 会返回文件的 URL 字符串
+  file: string | null;
   file_type: string;
   file_size: number;
   is_default: boolean;
@@ -13,9 +13,18 @@ export interface ResumeItem {
   created_at: string;
   updated_at: string;
   parsed_content: string;
+  // 在线简历字段
+  full_name?: string;
+  phone?: string;
+  email?: string;
+  job_title?: string;
+  city?: string;
+  summary?: string;
 }
 
-// API: 获取简历列表
+// --- API 函数 ---
+
+// 获取简历列表
 export const getResumeListApi = (): Promise<ResumeItem[]> => {
   return request({
     url: '/resumes/',
@@ -23,21 +32,37 @@ export const getResumeListApi = (): Promise<ResumeItem[]> => {
   });
 };
 
-// 【核心改造】
-// API: 创建简历 (现在接收一个 FormData 对象)
-export const createResumeApi = (formData: FormData): Promise<ResumeItem> => {
-  return request({
-    url: '/resumes/',
-    method: 'post',
-    data: formData,
-    // 必须重写 headers 为 multipart/form-data
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
+// 创建简历 (同时支持在线创建和文件上传创建)
+export const createResumeApi = (formData: FormData | { title: string, status: string }): Promise<ResumeItem> => {
+  if (formData instanceof FormData) {
+    // 文件上传
+    return request({
+      url: '/resumes/',
+      method: 'post',
+      data: formData,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  } else {
+    // 在线创建
+    return request({
+      url: '/resumes/',
+      method: 'post',
+      data: formData,
+    });
+  }
 };
 
-// API: 删除简历
+// 【核心修正】新增更新简历主信息的 API
+export const updateResumeApi = (id: number, data: Partial<ResumeItem>): Promise<ResumeItem> => {
+    return request({
+        url: `/resumes/${id}/`,
+        method: 'patch', // 使用 patch 更新部分字段
+        data,
+    });
+};
+
+
+// 删除简历
 export const deleteResumeApi = (id: number) => {
   return request({
     url: `/resumes/${id}/`,

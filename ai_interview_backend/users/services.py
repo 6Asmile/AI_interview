@@ -20,8 +20,9 @@ def send_verification_code(email: str) -> bool:
     # 将验证码存入 Redis，有效期 5 分钟 (300 秒)
     cache.set(cache_key, code, timeout=300)
 
-    subject = '【AI模拟面试平台】您的注册验证码'
-    message = f'您好！\n\n您的注册验证码是：{code}\n\n该验证码5分钟内有效，请勿泄露给他人。\n\n感谢您使用AI模拟面试平台！'
+    # 【核心修正】
+    subject = '【IFaceOff】您的注册验证码'
+    message = f'您好！\n\n您的注册验证码是：{code}\n\n该验证码5分钟内有效，请勿泄露给他人。\n\n感谢您使用 IFaceOff 智能面试平台！'
 
     try:
         send_mail(

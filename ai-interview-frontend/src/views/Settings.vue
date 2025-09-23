@@ -1,4 +1,3 @@
-<!-- src/views/Settings.vue -->
 <template>
   <div class="page-container">
     <el-card>
@@ -7,80 +6,109 @@
           <span>AI 模型设置</span>
         </div>
       </template>
-
-      <el-form 
-        v-if="!loading"
-        ref="settingsFormRef" 
-        :model="settingsForm" 
-        label-width="120px" 
-        style="max-width: 600px"
-      >
-        <el-form-item label="选择模型">
-          <el-select v-model="settingsForm.ai_model" placeholder="请选择AI模型">
-            <el-option label="DeepSeek Chat" value="deepseek-chat" />
-            <!-- 未来可以添加更多模型选项 -->
-          </el-select>
-        </el-form-item>
-        <el-form-item label="API Key">
-          <el-input 
-            v-model="settingsForm.api_key" 
-            type="password"
-            show-password
-            placeholder="填写您的 API Key (将安全存储)" 
-          />
-          <div class="form-tip">
-            如果您填写了自己的 API Key，面试将使用您的 Key。如果留空，将使用系统默认配置。
-          </div>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSave" :loading="saving">保存设置</el-button>
-        </el-form-item>
-      </el-form>
+    
+      <div v-if="!loading" style="max-width: 600px">
+        <el-form 
+          ref="settingsFormRef" 
+          :model="settingsForm" 
+          label-width="120px" 
+        >
+          <el-form-item label="选择模型">
+            <!-- 下拉框现在是动态生成的 -->
+            <el-select v-model="settingsForm.ai_model_id" placeholder="请选择AI模型" clearable>
+              <el-option 
+                v-for="model in aiModelList"
+                :key="model.id"
+                :label="model.name"
+                :value="model.id"
+              >
+                <span style="float: left">{{ model.name }}</span>
+                <span style="float: right; color: #8492a6; font-size: 13px">{{ model.model_slug }}</span>
+              </el-option>
+            </el-select>
+             <div class="form-tip">
+                选择您偏好的对话模型。如果留空，将使用系统默认模型。
+              </div>
+          </el-form-item>
+          <el-form-item label="API Key">
+            <el-input 
+              v-model="settingsForm.api_key" 
+              type="password"
+              show-password
+              placeholder="填写您的 API Key (将安全存储)" 
+            />
+            <div class="form-tip">
+              如果您填写了自己的 API Key，面试将优先使用您的 Key。如果留空，将使用系统默认配置。
+            </div>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleSave" :loading="saving">保存设置</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
       <el-skeleton :rows="5" animated v-if="loading" />
     </el-card>
   </div>
 </template>
 
-// src/views/Settings.vue -> <script setup lang="ts">
+<script setup lang="ts">
 import { ref, onMounted, reactive } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { FormInstance } from 'element-plus';
-// 1. 导入 API 函数
-import { getAISettingsApi, updateAISettingsApi, type AISettingsData } from '@/api/modules/system';
+import { 
+  getAISettingsApi, 
+  updateAISettingsApi, 
+  getAIModelsApi, // 导入新 API
+  type UpdateAISettingsData,
+  type AIModelItem
+} from '@/api/modules/system';
 
 const loading = ref(true);
 const saving = ref(false);
 const settingsFormRef = ref<FormInstance>();
-const settingsForm = reactive<AISettingsData>({
-  ai_model: 'deepseek-chat',
+
+// 存储从后端获取的所有可用 AI 模型
+const aiModelList = ref<AIModelItem[]>([]);
+
+// 表单数据现在只包含需要提交的字段
+const settingsForm = reactive<UpdateAISettingsData>({
+  ai_model_id: null,
   api_key: '',
 });
 
-// 2. 实现获取设置的逻辑
-const fetchSettings = async () => {
+// 获取所有数据
+const fetchData = async () => {
   loading.value = true;
   try {
-    const remoteSettings = await getAISettingsApi();
-    Object.assign(settingsForm, remoteSettings);
+    // 并行获取用户当前的设置和系统可用的模型列表
+    const [settings, models] = await Promise.all([
+      getAISettingsApi(),
+      getAIModelsApi(),
+    ]);
+    
+    // 填充表单
+    settingsForm.api_key = settings.api_key;
+    settingsForm.ai_model_id = settings.ai_model?.id || null;
+    
+    // 填充模型列表
+    aiModelList.value = models;
   } catch (error) {
-    console.error('获取AI设置失败', error);
+    console.error('获取AI设置或模型列表失败', error);
+    ElMessage.error('数据加载失败');
   } finally {
     loading.value = false;
   }
 };
 
-onMounted(() => {
-  fetchSettings();
-});
+onMounted(fetchData);
 
-// 3. 实现保存设置的逻辑
 const handleSave = async () => {
   saving.value = true;
   try {
     await updateAISettingsApi(settingsForm);
     ElMessage.success('设置已成功保存！');
-    // 可选：保存后可以重新获取一次数据
-    await fetchSettings();
+    // 保存后重新获取一次数据，以确保显示正确
+    await fetchData(); 
   } catch (error) {
     console.error('保存AI设置失败', error);
   } finally {
@@ -94,5 +122,6 @@ const handleSave = async () => {
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
+  margin-top: 5px;
 }
 </style>

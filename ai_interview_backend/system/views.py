@@ -1,8 +1,15 @@
 # system/views.py
 from rest_framework import generics, permissions
-from .models import AISetting,  Industry  # 导入
-from .serializers import AISettingSerializer,  IndustryWithJobsSerializer  # 导入
+from .models import AISetting, Industry, AIModel  # 导入
+from .serializers import AISettingSerializer, IndustryWithJobsSerializer, AIModelSerializer  # 导入
 
+class AIModelListView(generics.ListAPIView):
+    """
+    获取所有已启用的 AI 模型列表。
+    """
+    queryset = AIModel.objects.filter(is_active=True)
+    serializer_class = AIModelSerializer
+    permission_classes = [permissions.AllowAny] # 公开给所有用户看
 class AISettingRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     """
     获取和更新当前用户的 AI 设置。

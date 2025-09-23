@@ -1,16 +1,22 @@
-# resumes/urls.py
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import ResumeViewSet
-from .views_upload import FileUploadView
-# 创建一个 router 实例
-router = DefaultRouter()
-# 注册 ResumeViewSet，DRF 会自动生成所有必要的 URL
-# 'resumes' 是 URL 的前缀，如 /api/v1/resumes/
+from rest_framework_nested import routers
+from .views import (
+    ResumeViewSet, 
+    EducationViewSet, 
+    WorkExperienceViewSet, 
+    ProjectExperienceViewSet, 
+    SkillViewSet
+)
+
+# 1. 创建主路由
+router = routers.SimpleRouter()
 router.register(r'resumes', ResumeViewSet, basename='resume')
 
-urlpatterns = [
-    # 将 router 生成的 URL 包含进来
-    path('', include(router.urls)),
-    path('upload/resume/', FileUploadView.as_view(), name='resume-upload'),
-]
+# 2. 创建嵌套路由
+resumes_router = routers.NestedSimpleRouter(router, r'resumes', lookup='resume')
+resumes_router.register(r'educations', EducationViewSet, basename='resume-educations')
+resumes_router.register(r'work_experiences', WorkExperienceViewSet, basename='resume-work_experiences')
+resumes_router.register(r'project_experiences', ProjectExperienceViewSet, basename='resume-project_experiences')
+resumes_router.register(r'skills', SkillViewSet, basename='resume-skills')
+
+# 3. 合并所有 URL
+urlpatterns = router.urls + resumes_router.urls
