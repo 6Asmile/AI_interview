@@ -5,61 +5,80 @@
         <div class="page-card-header">
           <span>我的简历</span>
           <div>
-            <el-button type="primary" @click="handleCreateOnline">在线创建新简历</el-button>
-            <el-button @click="handleOpenUploadDialog">上传简历文件</el-button>
+            <el-dropdown @command="handleCreateCommand">
+              <el-button type="primary">
+                新建简历 <el-icon class="el-icon--right"><arrow-down /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="online">在线创建新简历</el-dropdown-item>
+                  <el-dropdown-item command="upload">上传简历文件</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
       </template>
 
-      <el-table :data="resumeList" v-loading="loading" style="width: 100%" empty-text="您还没有创建或上传任何简历">
+      <el-table :data="resumeList" v-loading="isLoading">
         <el-table-column prop="title" label="简历标题" />
-        <el-table-column prop="status" label="状态" width="150" align="center">
+        <el-table-column prop="status" label="状态">
           <template #default="scope">
-            <el-tag :type="statusTagType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
+            <el-tag :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="updated_at" label="最后更新" width="200">
-          <template #default="scope">
-            {{ formatTime(scope.row.updated_at) }}
+        <el-table-column prop="updated_at" label="最后更新时间">
+           <template #default="scope">
+            {{ formatDate(scope.row.updated_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="250" align="center">
+        <el-table-column label="操作" width="220">
           <template #default="scope">
-            <el-button size="small" type="primary" v-if="isOnlineResume(scope.row)" @click="handleEdit(scope.row)">编辑</el-button>
-            <el-button size="small" v-if="scope.row.file" @click="handleView(scope.row)">查看文件</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
+            <el-button
+              v-if="isOnlineResume(scope.row.status)"
+              type="primary"
+              size="small"
+              @click="handleEdit(scope.row)"
+            >
+              编辑
+            </el-button>
+            <el-button size="small" @click="handlePreview(scope.row)">预览</el-button>
+            <el-button type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <!-- 上传简历文件的对话框 -->
-    <el-dialog v-model="dialogVisible" title="上传简历文件" width="500" @close="handleDialogClose">
-      <el-form ref="uploadFormRef" :model="uploadForm" :rules="uploadRules" label-width="100px">
+    <el-dialog v-model="uploadDialogVisible" title="上传简历文件" width="500px" @close="resetUploadForm">
+      <el-form :model="uploadForm" ref="uploadFormRef" label-width="80px">
         <el-form-item label="简历标题" prop="title">
-          <el-input v-model="uploadForm.title" placeholder="如果留空，将使用文件名作为标题" />
+          <el-input v-model="uploadForm.title" placeholder="可选，默认为文件名"></el-input>
         </el-form-item>
-        <el-form-item label="选择文件" prop="file">
+        <el-form-item label="选择文件" prop="file" required>
           <el-upload
             ref="uploadRef"
             :auto-upload="false"
             :limit="1"
-            :on-change="handleFileChange"
             :on-exceed="handleExceed"
+            :on-change="handleFileChange"
             accept=".pdf,.doc,.docx"
           >
-            <el-button type="primary">选择文件</el-button>
+            <template #trigger>
+              <el-button type="primary">选择文件</el-button>
+            </template>
             <template #tip>
-              <div class="el-upload__tip">仅支持 PDF, DOC, DOCX 格式，且文件大小不超过 5MB.</div>
+              <div class="el-upload__tip">
+                仅支持 PDF, DOC, DOCX 格式，且文件大小不超过 5MB.
+              </div>
             </template>
           </el-upload>
         </el-form-item>
       </el-form>
       <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleConfirmUpload" :loading="uploading">确定上传</el-button>
-        </div>
+        <el-button @click="uploadDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleConfirmUpload" :loading="isUploading">
+          {{ isUploading ? '解析中...' : '确定上传' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -68,182 +87,150 @@
 <script setup lang="ts">
 import { ref, onMounted, reactive } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
-import type { FormInstance, FormRules, UploadFile, UploadInstance, UploadRawFile } from 'element-plus';
-import { getResumeListApi, createResumeApi, deleteResumeApi, type ResumeItem } from '@/api/modules/resume';
+import { getResumeListApi, deleteResumeApi, createResumeApi } from '@/api/modules/resume';
+import type { ResumeItem } from '@/api/modules/resume';
+import { ElMessage, ElMessageBox, type UploadFile, type UploadInstance } from 'element-plus';
+import { ArrowDown } from '@element-plus/icons-vue';
+import { formatDate } from '@/utils/format';
 
 const router = useRouter();
-const loading = ref(true);
-const uploading = ref(false);
-const dialogVisible = ref(false);
 const resumeList = ref<ResumeItem[]>([]);
+const isLoading = ref(false);
 
-const uploadFormRef = ref<FormInstance>();
+const uploadDialogVisible = ref(false);
+const isUploading = ref(false);
 const uploadRef = ref<UploadInstance>();
-
 const uploadForm = reactive({
   title: '',
   file: null as File | null,
 });
 
-const uploadRules = reactive<FormRules>({
-  file: [{ required: true, message: '请选择要上传的简历文件' }],
-});
+const statusText = (status: string) => {
+  const map: Record<string, string> = {
+    draft: '草稿',
+    published: '已发布',
+    parsed: '已解析',
+    failed: '解析失败'
+  };
+  return map[status] || '未知';
+};
+
+const statusType = (status: string) => {
+  const map: Record<string, any> = {
+    draft: 'info',
+    published: 'success',
+    parsed: 'success',
+    failed: 'danger'
+  };
+  return map[status] || '';
+};
+
+const isOnlineResume = (status: string) => {
+  return status === 'draft' || status === 'published';
+};
 
 const fetchResumes = async () => {
-  loading.value = true;
+  isLoading.value = true;
   try {
-    const res = await getResumeListApi();
-    resumeList.value = res;
+    resumeList.value = await getResumeListApi();
   } catch (error) {
-    console.error('获取简历列表失败', error);
+    ElMessage.error('获取简历列表失败');
   } finally {
-    loading.value = false;
+    isLoading.value = false;
   }
 };
 
-onMounted(() => {
-  fetchResumes();
-});
-
-const handleFileChange = (uploadFile: UploadFile) => {
-  const rawFile = uploadFile.raw;
-  if (!rawFile) return;
-
-  const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-  if (!allowedTypes.includes(rawFile.type)) {
-    ElMessage.error('仅支持 PDF, DOC, DOCX 格式!');
-    uploadRef.value?.clearFiles();
-    return;
-  }
-  if (rawFile.size / 1024 / 1024 > 5) {
-    ElMessage.error('文件大小不能超过 5MB!');
-    uploadRef.value?.clearFiles();
-    return;
-  }
-  
-  uploadForm.file = rawFile;
-  uploadFormRef.value?.validateField('file');
-};
-
-const handleExceed = () => {
-  ElMessage.warning('只能上传一个文件');
-};
-
-const handleConfirmUpload = async () => {
-  if (!uploadFormRef.value) return;
-  await uploadFormRef.value.validate(async (valid) => {
-    if (valid && uploadForm.file) {
-      uploading.value = true;
-      const formData = new FormData();
-      formData.append('file', uploadForm.file);
-      if (uploadForm.title) {
-        formData.append('title', uploadForm.title);
-      }
-      try {
-        await createResumeApi(formData);
-        ElMessage.success('简历上传并解析成功！');
-        dialogVisible.value = false;
-        await fetchResumes();
-      } catch (error) {
-        console.error('上传简历失败', error);
-        ElMessage.error('上传简历失败，请稍后再试');
-      } finally {
-        uploading.value = false;
-      }
-    }
-  });
-};
-
-const handleDialogClose = () => {
-  uploadFormRef.value?.resetFields();
-  uploadRef.value?.clearFiles();
-  uploadForm.file = null;
-};
-
-const handleOpenUploadDialog = () => {
-  dialogVisible.value = true;
-};
-
-const handleCreateOnline = async () => {
-  ElMessageBox.prompt('请输入新简历的标题', '创建在线简历', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    inputPattern: /.+/,
-    inputErrorMessage: '标题不能为空',
-  }).then(async ({ value }) => {
-    const loading = ElLoading.service({ text: '正在创建...' });
+const handleCreateCommand = async (command: 'online' | 'upload') => {
+  if (command === 'online') {
     try {
-      // @ts-ignore
-      const newResume = await createResumeApi({ title: value, status: 'draft' });
-      loading.close();
-      ElMessage.success('创建成功，即将进入编辑器');
+      const title = `我的在线简历-${new Date().toLocaleDateString()}`;
+      const newResume = await createResumeApi({ title, status: 'draft' });
+      ElMessage.success('在线简历创建成功，即将进入编辑模式...');
       router.push({ name: 'ResumeEditor', params: { id: newResume.id } });
     } catch (error) {
-      loading.close();
-      ElMessage.error('创建失败');
+      ElMessage.error('创建在线简历失败');
     }
-  }).catch(() => {
-    ElMessage.info('已取消创建');
-  });
+  } else {
+    uploadDialogVisible.value = true;
+  }
 };
 
 const handleEdit = (row: ResumeItem) => {
   router.push({ name: 'ResumeEditor', params: { id: row.id } });
 };
 
-const formatTime = (timeStr: string) => {
-  if (!timeStr) return '';
-  return new Date(timeStr).toLocaleString();
-};
-
-const handleView = (row: ResumeItem) => {
-  if (row.file) {
-    window.open(row.file, '_blank');
-  } else {
-    ElMessage.warning('该简历没有可查看的文件。');
+const handleDelete = async (row: ResumeItem) => {
+  await ElMessageBox.confirm(`确定要删除简历 "${row.title}" 吗？`, '提示', {
+    type: 'warning',
+  });
+  try {
+    await deleteResumeApi(row.id);
+    ElMessage.success('删除成功');
+    fetchResumes();
+  } catch (error) {
+    ElMessage.error('删除失败');
   }
 };
 
-const handleDelete = async (row: ResumeItem) => {
-  ElMessageBox.confirm(`您确定要删除简历 "${row.title}" 吗？`, '警告', {
-    confirmButtonText: '确定删除',
-    cancelButtonText: '取消',
-    type: 'warning',
-  }).then(async () => {
-    try {
-      await deleteResumeApi(row.id);
-      ElMessage.success('删除成功');
-      await fetchResumes();
-    } catch (error) {
-      console.error('删除失败', error);
+const handlePreview = (row: ResumeItem) => {
+  const isUploadedFile = row.status === 'parsed' || row.status === 'failed';
+  
+  if (isUploadedFile && row.file_url) {
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+    const domain = baseUrl.replace('/api/v1', '');
+    window.open(`${domain}${row.file_url}`, '_blank');
+  } else if (isOnlineResume(row.status)) {
+    const routeData = router.resolve({ name: 'ResumePreview', params: { id: row.id } });
+    window.open(routeData.href, '_blank');
+  } else {
+    ElMessage.info('该简历没有可预览的内容。');
+  }
+};
+
+const resetUploadForm = () => {
+  uploadForm.title = '';
+  uploadForm.file = null;
+  uploadRef.value?.clearFiles();
+};
+
+const handleExceed = () => {
+  ElMessage.warning('只能选择一个文件，请先移除已有文件');
+};
+
+const handleFileChange = (file: UploadFile) => {
+  if (file.raw) {
+    uploadForm.file = file.raw;
+  }
+};
+
+const handleConfirmUpload = async () => {
+  if (!uploadForm.file) {
+    ElMessage.error('请选择要上传的文件');
+    return;
+  }
+  isUploading.value = true;
+  try {
+    const formData = new FormData();
+    formData.append('file', uploadForm.file);
+    if (uploadForm.title) {
+      formData.append('title', uploadForm.title);
     }
-  }).catch(() => {
-    ElMessage.info('已取消删除');
-  });
+    await createResumeApi(formData);
+    ElMessage.success('上传成功，简历正在后台解析...');
+    uploadDialogVisible.value = false;
+    fetchResumes();
+  } catch (error) {
+    ElMessage.error('上传或解析失败，请检查文件格式或联系管理员');
+  } finally {
+    isUploading.value = false;
+  }
 };
 
-const isOnlineResume = (row: ResumeItem) => {
-  return ['draft', 'published'].includes(row.status);
-};
-
-const statusText = (status: string) => ({
-  draft: '草稿',
-  published: '已发布',
-  parsed: '文件已解析',
-  failed: '文件解析失败',
-}[status] || '未知');
-
-const statusTagType = (status: string) => ({
-  draft: 'info',
-  published: 'success',
-  parsed: 'success',
-  failed: 'danger',
-}[status] || 'info');
+onMounted(() => {
+  fetchResumes();
+});
 </script>
 
 <style scoped>
-.resume-uploader {
-  width: 100%;
-}
+/* 样式保持不变 */
 </style>

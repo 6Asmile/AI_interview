@@ -1,3 +1,4 @@
+// src/router/index.ts
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '@/store/modules/auth';
 import { checkUnfinishedInterviewApi, abandonUnfinishedInterviewApi } from '@/api/modules/interview';
@@ -20,12 +21,20 @@ const routes: Array<RouteRecordRaw> = [
       { path: 'report/:id', name: 'ReportDetail', component: () => import('@/views/ReportDetail.vue') },
       { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') },
       { path: 'profile', name: 'Profile', component: () => import('@/views/Profile.vue') },
-      // 新增：简历编辑器路由
-    {
-      path: 'resume/edit/:id',
-      name: 'ResumeEditor',
-      component: () => import('@/views/ResumeEditor.vue'),
-    },
+      // 【核心修改】激活并完善简历编辑器路由
+      {
+        path: 'resume/edit/:id',
+        name: 'ResumeEditor',
+        component: () => import('@/views/ResumeEditor.vue'),
+        props: true, // 将 URL 中的 :id 参数作为 props 传递给组件
+      },
+          // 【新增】简历预览的独立页面路由
+      {
+        path: 'resume/preview/:id',
+        name: 'ResumePreview',
+        component: () => import('@/views/ResumePreview.vue'),
+        props: true,
+      },
     ],
   },
 ];

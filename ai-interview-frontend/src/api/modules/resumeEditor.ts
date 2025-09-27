@@ -1,19 +1,11 @@
+// src/api/modules/resumeEditor.ts
 import request from '@/api/request';
-import type { ResumeItem } from './resume'; // 我们将复用并扩展这个类型
+// 【核心修改】从 resume.ts 导入类型
+import type { StructuredResume, EducationItem, WorkExperienceItem, ProjectExperienceItem, SkillItem } from './resume';
 
-// --- 类型定义 ---
-export interface EducationItem { id?: number; school: string; degree: string; major: string; start_date: string; end_date: string; }
-export interface WorkExperienceItem { id?: number; company: string; position: string; start_date: string; end_date: string | null; description: string; }
-export interface ProjectExperienceItem { id?: number; project_name: string; role: string; start_date: string; end_date: string | null; description: string; }
-export interface SkillItem { id?: number; skill_name: string; proficiency: string; }
+// 【核心修改】导出从 resume.ts 导入的类型，方便 store 使用
+export type { StructuredResume, EducationItem, WorkExperienceItem, ProjectExperienceItem, SkillItem };
 
-// 扩展 ResumeItem，使其包含结构化数据
-export interface StructuredResume extends ResumeItem {
-    educations: EducationItem[];
-    work_experiences: WorkExperienceItem[];
-    project_experiences: ProjectExperienceItem[];
-    skills: SkillItem[];
-}
 
 // --- 统一的 CRUD API 辅助函数 ---
 const createApiEndpoints = <T>(resource: string) => ({

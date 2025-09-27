@@ -33,6 +33,13 @@ class Resume(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
+    # 【新增】一个属性方法，用于生成文件的完整 URL
+    @property
+    def file_url(self):
+        if self.file:
+            return self.file.url
+        return None
+
     class Meta:
         verbose_name = '简历'
         verbose_name_plural = verbose_name

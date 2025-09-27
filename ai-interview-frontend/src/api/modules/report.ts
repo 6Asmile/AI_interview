@@ -1,12 +1,25 @@
 import request from '@/api/request';
-import type { InterviewSessionItem } from './interview';
-
+import type { InterviewSessionItem, AnalysisFrame } from './interview'; // 【新增】导入 AnalysisFrame
 // --- 类型定义 ---
 export interface AbilityScore {
   name: string;
   score: number;
 }
 
+
+// 【核心改造】在报告类型中加入情绪分析数据
+export interface InterviewReport {
+  overall_score: number;
+  overall_comment: string;
+  ability_scores: AbilityScore[];
+  strength_analysis: string;
+  weakness_analysis: string;
+  improvement_suggestions: string[];
+  keyword_analysis: KeywordAnalysis;
+  star_analysis: StarAnalysisItem[];
+  // 【新增】情绪分析的时间序列数据
+  emotion_analysis: AnalysisFrame[];
+}
 // 新增：关键词分析的类型
 export interface KeywordAnalysis {
   matched_keywords: string[];

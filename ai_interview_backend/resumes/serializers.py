@@ -1,51 +1,89 @@
+# resumes/serializers.py
 from rest_framework import serializers
 from .models import Resume, Education, WorkExperience, ProjectExperience, Skill
 
+
+class ResumeCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Resume
+        fields = ['title', 'status']
+
 # --- 子模型序列化器 ---
-
-class EducationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Education
-        exclude = ['resume'] # 在嵌套时，不需要重复返回 resume ID
-
-class WorkExperienceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = WorkExperience
-        exclude = ['resume']
-
-class ProjectExperienceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ProjectExperience
-        exclude = ['resume']
-
 class SkillSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
     class Meta:
         model = Skill
-        exclude = ['resume']
+        fields = ['id', 'skill_name', 'proficiency']
+
+class EducationSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+    class Meta:
+        model = Education
+        fields = ['id', 'school', 'degree', 'major', 'start_date', 'end_date']
+
+class WorkExperienceSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+    # 【核心修正】让 end_date 可以为 null
+    end_date = serializers.DateField(required=False, allow_null=True)
+    class Meta:
+        model = WorkExperience
+        fields = ['id', 'company', 'position', 'start_date', 'end_date', 'description']
+
+class ProjectExperienceSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(required=False)
+    # 【核心修正】让 end_date 可以为 null
+    end_date = serializers.DateField(required=False, allow_null=True)
+    class Meta:
+        model = ProjectExperience
+        fields = ['id', 'project_name', 'role', 'start_date', 'end_date', 'description']
 
 
-# --- 主 Resume 序列化器 ---
-
-class ResumeSerializer(serializers.ModelSerializer):
-    """
-    用于展示完整的、包含所有详情的简历。
-    """
-    # 使用嵌套序列化器，并指定为只读
-    educations = EducationSerializer(many=True, read_only=True)
-    work_experiences = WorkExperienceSerializer(many=True, read_only=True)
-    project_experiences = ProjectExperienceSerializer(many=True, read_only=True)
-    skills = SkillSerializer(many=True, read_only=True)
+# --- 支持深度嵌套更新的主序列化器 ---
+class ResumeDetailSerializer(serializers.ModelSerializer):
+    skills = SkillSerializer(many=True, required=False) # 【修正】设为非必需
+    educations = EducationSerializer(many=True, required=False)
+    work_experiences = WorkExperienceSerializer(many=True, required=False)
+    project_experiences = ProjectExperienceSerializer(many=True, required=False)
 
     class Meta:
         model = Resume
-        # 包含所有 Resume 模型自身的字段，以及我们上面定义的嵌套字段
+        # 【核心修正】在 fields 中添加 file_url
         fields = [
-            'id', 'user', 'title', 'full_name', 'phone', 'email', 
-            'job_title', 'city', 'summary', 'is_default', 'status',
-            'created_at', 'updated_at',
-            # 嵌套的详情
-            'educations', 'work_experiences', 'project_experiences', 'skills',
-            # 文件相关字段
-            'file', 'parsed_content', 
+            'id', 'title', 'full_name', 'phone', 'email', 'job_title',
+            'city', 'summary', 'status', 'parsed_content', 'file_url',
+            'skills', 'educations', 'work_experiences', 'project_experiences'
         ]
-        read_only_fields = ['user']
+
+    def update(self, instance, validated_data):
+        # 【终极核心修正】确保 project_experiences 和 skills 被正确处理
+        nested_fields = {
+            'skills': (Skill, validated_data.pop('skills', None)),
+            'educations': (Education, validated_data.pop('educations', None)),
+            'work_experiences': (WorkExperience, validated_data.pop('work_experiences', None)),
+            'project_experiences': (ProjectExperience, validated_data.pop('project_experiences', None))
+        }
+
+        # 更新主 Resume 实例的字段
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # 处理嵌套字段
+        for field_name, (model_class, data_list) in nested_fields.items():
+            # 如果前端没有传递这个字段 (例如只更新了个人信息)，则 data_list 会是 None，此时我们跳过处理
+            if data_list is None:
+                continue
+
+            current_ids = []
+            for item_data in data_list:
+                item_id = item_data.get('id')
+                if item_id:
+                    model_class.objects.filter(id=item_id, resume=instance).update(**item_data)
+                    current_ids.append(item_id)
+                else:
+                    new_item = model_class.objects.create(resume=instance, **item_data)
+                    current_ids.append(new_item.id)
+
+            getattr(instance, field_name).exclude(id__in=current_ids).delete()
+
+        return instance

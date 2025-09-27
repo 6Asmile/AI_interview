@@ -1,5 +1,7 @@
+// src/api/modules/interview.ts
 import { useAuthStore } from '@/store/modules/auth';
 import request from '@/api/request';
+import { getInterviewReportApi as getReportApi } from './report';
 
 // --- 类型定义 ---
 export interface UserInfo { id: number; username: string; email: string; }
@@ -15,62 +17,57 @@ export interface UnfinishedCheckResponse { has_unfinished: boolean; session_id?:
 export const getInterviewSessionApi = (sessionId: string): Promise<InterviewSessionItem> => { return request({ url: `/interviews/${sessionId}/`, method: 'get' }); };
 export const checkUnfinishedInterviewApi = (): Promise<UnfinishedCheckResponse> => { return request({ url: '/interviews/check-unfinished/', method: 'get' }); };
 export const abandonUnfinishedInterviewApi = (): Promise<{ message: string }> => { return request({ url: '/interviews/abandon-unfinished/', method: 'post' }); };
-// 【终极核心】这个非流式接口现在是我们的主力
 export const startInterviewApi = (data: StartInterviewData, force: boolean = false): Promise<InterviewSessionItem> => {
   return request({ url: `/interviews/start/?force=${force}`, method: 'post', data });
 };
+export const getInterviewReportApi = getReportApi;
+
 // --- 流式 API ---
-// export const startInterviewStreamApi = async (data: StartInterviewData, onDelta: (chunk: string) => void): Promise<{ sessionId: string }> => {
-//   const authStore = useAuthStore();
-//   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/interviews/start-stream/`, {
-//     method: 'POST',
-//     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authStore.token}` },
-//     body: JSON.stringify(data),
-//   });
-
-//   // 【核心修正】在使用前检查 response.body 是否为 null
-//   if (!response.ok || !response.body) {
-//     throw new Error('开启流式面试失败');
-//   }
-
-//   const sessionId = response.headers.get('X-Session-Id') || '';
-//   if (!sessionId) { throw new Error('未在响应头中找到 Session ID'); }
-
-//   const reader = response.body.getReader();
-//   const decoder = new TextDecoder();
-//   while (true) {
-//     const { done, value } = await reader.read();
-//     if (done) break;
-//     onDelta(decoder.decode(value));
-//   }
-//   return { sessionId };
-// };
-
-export const submitAnswerStreamApi = async (sessionId: string, data: SubmitAnswerData, onDelta: (chunk: string) => void): Promise<{ feedback: string; interview_finished: boolean; }> => {
+// 【终极核心修正】改造函数，使其返回一个包含最终结果的 Promise
+export const submitAnswerStreamApi = async (
+  sessionId: string,
+  data: SubmitAnswerData,
+  onDelta: (chunk: string) => void // 回调函数现在只负责传递文本块
+): Promise<{ feedback: string; isFinished: boolean; }> => {
   const authStore = useAuthStore();
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/interviews/${sessionId}/submit-answer-stream/`, {
+  
+  const baseUrl = import.meta.env.VITE_API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+  const finalUrl = `${baseUrl}/api/v1/interviews/${sessionId}/submit-answer-stream/`;
+  
+  const response = await fetch(finalUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authStore.token}` },
     body: JSON.stringify(data),
   });
 
+  if (!response.ok) {
+    throw new Error('服务器响应错误');
+  }
+
+  // 情况一：面试结束，返回JSON
   if (response.headers.get('Content-Type')?.includes('application/json')) {
     const result = await response.json();
-    return { feedback: result.feedback || '', interview_finished: result.interview_finished || false };
+    if (result.interview_finished) {
+      return { feedback: result.feedback || '', isFinished: true };
+    }
   }
-  
-  // 【核心修正】在使用前检查 response.body 是否为 null
-  if (!response.ok || !response.body) {
-    throw new Error('提交回答失败');
+
+  // 情况二：正常流式响应
+  if (!response.body) {
+    throw new Error('响应体为空');
   }
 
   const feedback = response.headers.get('X-Feedback') || '';
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    onDelta(decoder.decode(value));
+    const chunk = decoder.decode(value, { stream: true });
+    onDelta(chunk); // 只传递文本块
   }
-  return { feedback, interview_finished: false };
+
+  // 流结束后，返回最终的反馈和未结束状态
+  return { feedback, isFinished: false };
 };

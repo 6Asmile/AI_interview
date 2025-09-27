@@ -1,10 +1,6 @@
-<!-- src/components/common/SectionCard.vue -->
 <template>
-  <div class="resume-section">
-    <div class="section-header">
-      <h3>{{ title }}</h3>
-      <el-button type="primary" :icon="Plus" circle @click="$emit('add')" />
-    </div>
+  <div class="section-card">
+    <h3 class="section-title">{{ title }}</h3>
     <div class="section-content">
       <slot></slot>
     </div>
@@ -12,26 +8,20 @@
 </template>
 
 <script setup lang="ts">
-import { Plus } from '@element-plus/icons-vue';
 defineProps<{
   title: string;
 }>();
-defineEmits(['add']);
 </script>
 
 <style scoped>
-.resume-section {
-  margin-top: 30px;
-  padding-top: 20px;
-  border-top: 1px solid #eee;
-}
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.section-card {
   margin-bottom: 20px;
 }
-h3 {
-  margin: 0;
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 15px 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0;
 }
 </style>
