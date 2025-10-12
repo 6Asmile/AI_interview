@@ -17,14 +17,17 @@
     "jspdf": "^3.0.3",
     "monaco-editor": "^0.53.0",
     "pinia": "^3.0.3",
+    "uuid": "^13.0.0",
     "vee-validate": "^4.15.1",
     "vue": "^3.5.18",
     "vue-router": "^4.5.1",
+    "vuedraggable": "^4.1.0",
     "yup": "^1.7.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^24.5.2",
+    "@types/uuid": "^10.0.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.7.0",
     "autoprefixer": "^10.4.21",

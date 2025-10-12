@@ -3,59 +3,76 @@ from rest_framework import serializers
 from .models import Resume, Education, WorkExperience, ProjectExperience, Skill
 
 
-class ResumeCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Resume
-        fields = ['title', 'status']
-
-# --- 子模型序列化器 ---
+# --- 子模型序列化器 (保持不变，确保它们存在) ---
 class SkillSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
+
     class Meta:
         model = Skill
         fields = ['id', 'skill_name', 'proficiency']
 
+
 class EducationSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
+
     class Meta:
         model = Education
         fields = ['id', 'school', 'degree', 'major', 'start_date', 'end_date']
 
+
 class WorkExperienceSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
-    # 【核心修正】让 end_date 可以为 null
     end_date = serializers.DateField(required=False, allow_null=True)
+
     class Meta:
         model = WorkExperience
         fields = ['id', 'company', 'position', 'start_date', 'end_date', 'description']
 
+
 class ProjectExperienceSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(required=False)
-    # 【核心修正】让 end_date 可以为 null
     end_date = serializers.DateField(required=False, allow_null=True)
+
     class Meta:
         model = ProjectExperience
         fields = ['id', 'project_name', 'role', 'start_date', 'end_date', 'description']
 
 
-# --- 支持深度嵌套更新的主序列化器 ---
+# --- 用于在线创建的简单序列化器 ---
+class ResumeCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Resume
+        fields = ['title', 'status']
+
+
+# --- 【核心修复】支持深度嵌套读写的主序列化器 ---
 class ResumeDetailSerializer(serializers.ModelSerializer):
-    skills = SkillSerializer(many=True, required=False) # 【修正】设为非必需
+    # 【修复#1】为所有嵌套/关联字段恢复或添加正确的序列化器定义
+    skills = SkillSerializer(many=True, required=False)
     educations = EducationSerializer(many=True, required=False)
     work_experiences = WorkExperienceSerializer(many=True, required=False)
     project_experiences = ProjectExperienceSerializer(many=True, required=False)
 
     class Meta:
         model = Resume
-        # 【核心修正】在 fields 中添加 file_url
+        # 【修复#2】确保 fields 列表中的所有字段都在模型中定义，或者在序列化器中显式定义
         fields = [
-            'id', 'title', 'full_name', 'phone', 'email', 'job_title',
-            'city', 'summary', 'status', 'parsed_content', 'file_url',
+            'id', 'title', 'status', 'parsed_content', 'file_url',
+            'template_name',  # <-- 【核心新增】
+            'content_json',  # 新增的JSON字段
+
+            # 模型中存在的、需要被序列化的简单字段
+            'full_name', 'phone', 'email', 'job_title',
+            'city', 'summary',
+
+            # 在上面显式定义的嵌套字段
             'skills', 'educations', 'work_experiences', 'project_experiences'
         ]
+        read_only_fields = ('file_url',)  # file_url 是只读属性
 
     def update(self, instance, validated_data):
-        # 【终极核心修正】确保 project_experiences 和 skills 被正确处理
+        # 【提醒】这个复杂的 update 方法是为了兼容旧的结构化数据编辑，暂时保留。
+        # 如果只使用新的 JSON 编辑器，这个方法可以被简化或移除。
         nested_fields = {
             'skills': (Skill, validated_data.pop('skills', None)),
             'educations': (Education, validated_data.pop('educations', None)),
@@ -63,14 +80,11 @@ class ResumeDetailSerializer(serializers.ModelSerializer):
             'project_experiences': (ProjectExperience, validated_data.pop('project_experiences', None))
         }
 
-        # 更新主 Resume 实例的字段
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # 处理嵌套字段
         for field_name, (model_class, data_list) in nested_fields.items():
-            # 如果前端没有传递这个字段 (例如只更新了个人信息)，则 data_list 会是 None，此时我们跳过处理
             if data_list is None:
                 continue
 

@@ -250,7 +250,7 @@ CACHES = {
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
-        "TIMEOUT": 1800 # 默认缓存超时时间 (1小时)
+        "TIMEOUT": 3600 # 默认缓存超时时间 (1小时)
     }
 }
 
@@ -292,4 +292,32 @@ REST_AUTH = {
     'USE_JWT': True,
     'JWT_AUTH_HTTPONLY': False,
     'TOKEN_MODEL': None,
+}
+
+# --- CELERY SETTINGS ---
+# 指定消息中间件(Broker)的地址，我们使用 Redis 的 2 号数据库
+# 避免与缓存使用的 1 号数据库冲突
+CELERY_BROKER_URL = 'redis://127.0.0.1:6379/2'
+# 指定结果后端(Result Backend)的地址，用于存储任务执行结果
+CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/2'
+# 接受的内容类型
+CELERY_ACCEPT_CONTENT = ['json']
+# 任务序列化方式
+CELERY_TASK_SERIALIZER = 'json'
+# 结果序列化方式
+CELERY_RESULT_SERIALIZER = 'json'
+# Celery 使用的时区
+CELERY_TIMEZONE = 'UTC' # 与 Django 的 TIME_ZONE 保持一致
+
+# --- CELERY BEAT SETTINGS (定时任务调度器) ---
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    # 任务名称，可以任意取
+    'cleanup-stale-interviews-every-30-minutes': {
+        # 指向我们刚刚创建的任务，格式为: 'app_name.tasks.task_function_name'
+        'task': 'interviews.tasks.cleanup_stale_interviews',
+        # 'schedule': crontab(minute='*/30'), # 每30分钟执行一次
+        'schedule': 1800.0, # 为简单起见，我们也可以设置为每 1800 秒执行一次
+    },
 }

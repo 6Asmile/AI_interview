@@ -14,24 +14,30 @@ export interface ResumeItem {
   user: number;
   title: string;
   file: string | null;
-  file_type: string;
-  file_size: number;
+  // file_type: string; // 根据后端序列化器，这些字段可能不再需要
+  // file_size: number;
   is_default: boolean;
   status: string;
   created_at: string;
   updated_at: string;
   parsed_content: string;
-  // 在线简历字段
+  file_url?: string;
+  
+  // 【核心新增】添加 content_json 字段，并允许其为 null
+  content_json: any[] | null;
+
+    // 【核心修复】新增 template_name 字段
+  template_name?: string;
+  // 在线简历字段 (暂时保留用于兼容)
   full_name?: string;
   phone?: string;
   email?: string;
   job_title?: string;
   city?: string;
   summary?: string;
-   file_url?: string; // 【新增】添加 file_url 字段
 }
 
-// 扩展后的结构化简历类型
+// 扩展后的结构化简历类型 (现在继承自更新后的 ResumeItem)
 export interface StructuredResume extends ResumeItem {
     educations: EducationItem[];
     work_experiences: WorkExperienceItem[];
@@ -70,8 +76,9 @@ export const createResumeApi = (formData: FormData | { title: string, status: st
   }
 };
 
-// 【核心修改】更新简历 API，使其接受并返回完整的结构化简历类型
-export const updateResumeApi = (id: number, data: Partial<StructuredResume>): Promise<StructuredResume> => {
+// 【核心修改】更新简历 API，使其接受并返回完整的简历类型
+// 注意：现在我们用 ResumeItem 因为它包含了所有字段
+export const updateResumeApi = (id: number, data: Partial<ResumeItem>): Promise<ResumeItem> => {
     return request({
         url: `/resumes/${id}/`,
         method: 'patch', // 使用 patch 更新部分字段

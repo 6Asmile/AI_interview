@@ -109,6 +109,7 @@ let detectionInterval: any = null;
 
 const analysisFrames = ref<AnalysisFrame[]>([]);
 
+
 const formattedEmotions = computed(() => {
   if (!emotions.value) return [];
   return Object.entries(emotions.value)

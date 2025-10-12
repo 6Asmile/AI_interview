@@ -1,4 +1,5 @@
-from datetime import datetime
+# 【新增】从 Django 导入 timezone
+from django.utils import timezone
 from django.http import StreamingHttpResponse
 from django.core.cache import cache
 from rest_framework import viewsets, permissions, status
@@ -40,6 +41,39 @@ def format_online_resume_to_text(resume: Resume) -> str:
     # 您可以继续添加项目经历、技能等
 
     return "\n".join(parts)
+
+
+# 【辅助函数2：核心新增，用于解析新版JSON简历】
+def format_json_resume_to_text(resume_content_json: list) -> str:
+    """从 resume-design 的 JSON 结构中提取所有有意义的文本内容。"""
+    if not resume_content_json or not isinstance(resume_content_json, list):
+        return ""
+
+    all_text = []
+
+    # 遍历JSON中的每一个模块 (component)
+    for component in resume_content_json:
+        # dataSource 包含了该模块的用户输入数据
+        data_source = component.get('dataSource', {})
+        if not data_source:
+            continue
+
+        # 遍历模块中的每一个数据项 (如姓名、年龄、公司名等)
+        for key, item in data_source.items():
+            # 我们只关心有 value 字段的项，并且 value 是字符串
+            if 'value' in item and isinstance(item['value'], str) and item['value'].strip():
+                # 可以选择性地添加标签，让AI更好地理解
+                label = item.get('label', key)
+                all_text.append(f"{label}: {item['value']}")
+            # 【扩展】对于复杂的列表型数据（如工作经历），可能需要更深层的解析
+            elif 'value' in item and isinstance(item['value'], list):
+                for sub_item in item['value']:
+                    desc = sub_item.get('description', '')
+                    if desc:
+                        all_text.append(desc)
+
+    return "\n".join(all_text)
+
 
 class InterviewSessionViewSet(viewsets.ModelViewSet):
     queryset = InterviewSession.objects.all()
@@ -107,21 +141,26 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             try:
                 resume_instance = Resume.objects.get(id=resume_id, user=request.user)
 
-                # 【核心修正】智能判断简历类型并准备文本
-                if resume_instance.status in [Resume.Status.DRAFT, Resume.Status.PUBLISHED]:
-                    # 如果是在线简历，格式化其内容为文本
+                # --- 【核心修改】智能判断使用哪种方式提取简历文本 ---
+                if resume_instance.content_json:
+                    # 优先使用新版 JSON 简历内容
+                    resume_text = format_json_resume_to_text(resume_instance.content_json)
+                    print("正在使用新版JSON简历内容...")
+                elif resume_instance.status in [Resume.Status.DRAFT, Resume.Status.PUBLISHED]:
+                    # 其次，兼容旧版在线简历
                     resume_text = format_online_resume_to_text(resume_instance)
+                    print("正在使用旧版结构化简历内容...")
                 elif resume_instance.status == Resume.Status.PARSED:
-                    # 如果是文件简历，使用解析后的内容
+                    # 最后，使用文件简历的解析内容
                     resume_text = resume_instance.parsed_content
-                # 其他状态的简历不提供文本内容
+                    print("正在使用文件解析简历内容...")
 
             except Resume.DoesNotExist:
                 return Response({"error": "简历不存在"}, status=status.HTTP_404_NOT_FOUND)
 
         session = InterviewSession.objects.create(
             user=request.user, job_position=job_position, resume=resume_instance,
-            question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=datetime.now()
+            question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now()
         )
 
         # 调用非流式的 AI 服务
@@ -148,7 +187,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         try:
             current_question = session.questions.get(id=question_id)
             current_question.answer_text = answer_text
-            current_question.answered_at = datetime.now()
+            current_question.answered_at = timezone.now()
             if analysis_data: current_question.analysis_data = analysis_data
         except InterviewQuestion.DoesNotExist:
             return Response({"error": "问题不存在"}, status=status.HTTP_404_NOT_FOUND)
@@ -212,6 +251,6 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                                             user=request.user)
         session.report = report_data
         session.status = InterviewSession.Status.FINISHED
-        session.finished_at = datetime.now()
+        session.finished_at = timezone.now()
         session.save()
         return Response(report_data, status=status.HTTP_200_OK)

@@ -2,30 +2,87 @@ from django.db import models
 from users.models import User
 
 
+# class Resume(models.Model):
+#     class Status(models.TextChoices):
+#         DRAFT = 'draft', '草稿'  # 新增：在线编辑状态
+#         PUBLISHED = 'published', '已发布'  # 新增：完成编辑
+#         PARSED = 'parsed', '（文件）已解析'
+#         FAILED = 'failed', '（文件）解析失败'
+#
+#     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resumes', verbose_name='所属用户')
+#     title = models.CharField(max_length=200, verbose_name='简历标题')
+#
+#     # --- 文件上传相关字段 (保留，但设为可选) ---
+#     file = models.FileField(upload_to='resumes/', null=True, blank=True, verbose_name='上传的简历文件')
+#     parsed_content = models.TextField(blank=True, verbose_name='解析后的文本内容')
+#
+#     # --- 在线编辑相关字段 ---
+#     # 个人信息
+#     full_name = models.CharField(max_length=100, blank=True, verbose_name='姓名')
+#     phone = models.CharField(max_length=20, blank=True, verbose_name='电话')
+#     email = models.EmailField(blank=True, verbose_name='邮箱')
+#     job_title = models.CharField(max_length=100, blank=True, verbose_name='期望职位')
+#     city = models.CharField(max_length=50, blank=True, verbose_name='城市')
+#     summary = models.TextField(blank=True, verbose_name='个人总结')
+#
+#     # --- AI 优化与状态 ---
+#     is_default = models.BooleanField(default=False, verbose_name='是否默认简历')
+#     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, verbose_name='状态')
+#     optimization_suggestions = models.JSONField(null=True, blank=True, verbose_name='优化建议')
+#
+#     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+#     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+#
+#     # 【新增】一个属性方法，用于生成文件的完整 URL
+#     @property
+#     def file_url(self):
+#         if self.file:
+#             return self.file.url
+#         return None
+#
+#     class Meta:
+#         verbose_name = '简历'
+#         verbose_name_plural = verbose_name
+#         ordering = ['-updated_at']
+#
+#     def __str__(self):
+#         return f'{self.user.username} - {self.title}'
+
+
+# --- 新增的结构化数据模型 ---
+# ai_interview_backend/resumes/models.py
+
+from django.db import models
+from users.models import User
+
+
 class Resume(models.Model):
     class Status(models.TextChoices):
-        DRAFT = 'draft', '草稿'  # 新增：在线编辑状态
-        PUBLISHED = 'published', '已发布'  # 新增：完成编辑
+        DRAFT = 'draft', '草稿'
+        PUBLISHED = 'published', '已发布'
         PARSED = 'parsed', '（文件）已解析'
         FAILED = 'failed', '（文件）解析失败'
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resumes', verbose_name='所属用户')
     title = models.CharField(max_length=200, verbose_name='简历标题')
 
-    # --- 文件上传相关字段 (保留，但设为可选) ---
+    # --- 文件上传相关字段 (保留) ---
     file = models.FileField(upload_to='resumes/', null=True, blank=True, verbose_name='上传的简历文件')
     parsed_content = models.TextField(blank=True, verbose_name='解析后的文本内容')
 
-    # --- 在线编辑相关字段 ---
-    # 个人信息
+    # --- 【核心新增】用于存储 resume-design 的 JSON 数据 ---
+    content_json = models.JSONField(null=True, blank=True, verbose_name='在线简历JSON内容')
+    # 【核心新增】用于存储模板标识符
+    template_name = models.CharField(max_length=50, blank=True, default='default', verbose_name='模板名称')
+    # --- 【提醒】原有的结构化字段可以暂时保留，用于兼容旧数据，未来可以移除 ---
     full_name = models.CharField(max_length=100, blank=True, verbose_name='姓名')
-    phone = models.CharField(max_length=20, blank=True, verbose_name='电话')
+    phone = models.CharField(max_length=20, blank=True, verbose_name='电话')  # <--- 确认 phone 字段存在
     email = models.EmailField(blank=True, verbose_name='邮箱')
     job_title = models.CharField(max_length=100, blank=True, verbose_name='期望职位')
     city = models.CharField(max_length=50, blank=True, verbose_name='城市')
     summary = models.TextField(blank=True, verbose_name='个人总结')
+    # ... phone, email, summary 等字段 ...
 
-    # --- AI 优化与状态 ---
     is_default = models.BooleanField(default=False, verbose_name='是否默认简历')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, verbose_name='状态')
     optimization_suggestions = models.JSONField(null=True, blank=True, verbose_name='优化建议')
@@ -33,7 +90,6 @@ class Resume(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
-    # 【新增】一个属性方法，用于生成文件的完整 URL
     @property
     def file_url(self):
         if self.file:
@@ -49,8 +105,8 @@ class Resume(models.Model):
         return f'{self.user.username} - {self.title}'
 
 
-# --- 新增的结构化数据模型 ---
-
+# 【提醒】Education, WorkExperience 等子模型现在与新编辑器不再直接关联，
+# 但为了兼容旧数据和文件简历的结构化展示，可以暂时保留。
 class Education(models.Model):
     resume = models.ForeignKey(Resume, on_delete=models.CASCADE, related_name='educations', verbose_name='所属简历')
     school = models.CharField(max_length=100, verbose_name='学校名称')
