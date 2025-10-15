@@ -1,7 +1,7 @@
 <!-- src/components/resume/modules/EducationModule.vue -->
 <template>
-  <div class="education-module section-module">
-    <h3 class="section-title">{{ title }}</h3>
+  <div class="education-module">
+    <SectionTitle :text="title" />
     <div v-for="edu in educations" :key="edu.id" class="item">
       <div class="item-header">
         <span class="main-info">{{ edu.school }}</span>
@@ -14,6 +14,8 @@
 </template>
 
 <script setup lang="ts">
+import SectionTitle from './common/SectionTitle.vue';
+
 interface Education {
   id: string;
   school: string;
@@ -29,9 +31,8 @@ defineProps({
 </script>
 
 <style scoped>
-.section-title { font-size: 18px; font-weight: 600; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 12px; }
 .item { margin-bottom: 12px; }
-.item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
 .main-info { font-weight: 600; }
 .sub-info { color: #555; }
 .date-range { font-style: italic; color: #888; }

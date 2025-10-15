@@ -1,7 +1,7 @@
 <!-- src/components/resume/modules/SkillsModule.vue -->
 <template>
-  <div class="skills-module section-module">
-    <h3 class="section-title">{{ title }}</h3>
+  <div class="skills-module">
+    <SectionTitle :text="title" />
     <ul class="skills-list">
       <li v-for="skill in skills" :key="skill.id">
         <span class="skill-name">{{ skill.name }}:</span>
@@ -12,6 +12,8 @@
 </template>
 
 <script setup lang="ts">
+import SectionTitle from './common/SectionTitle.vue';
+
 interface Skill {
   id: string;
   name: string;
@@ -24,13 +26,13 @@ defineProps({
 </script>
 
 <style scoped>
-.section-title { font-size: 18px; font-weight: 600; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 12px; }
 .skills-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 8px 24px;
   list-style: none;
   padding: 0;
+  font-size: 14px;
 }
 .skill-name { font-weight: 500; }
 .skill-proficiency { color: #555; }

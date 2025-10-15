@@ -1,7 +1,7 @@
 <!-- src/components/resume/modules/WorkExpModule.vue -->
 <template>
-  <div class="work-exp-module section-module">
-    <h3 class="section-title">{{ title }}</h3>
+  <div class="work-exp-module">
+    <SectionTitle :text="title" />
     <div v-for="exp in experiences" :key="exp.id" class="item">
       <div class="item-header">
         <span class="main-info">{{ exp.company }}</span>
@@ -14,6 +14,8 @@
 </template>
 
 <script setup lang="ts">
+import SectionTitle from './common/SectionTitle.vue';
+
 interface Experience {
   id: string;
   company: string;
@@ -28,10 +30,8 @@ defineProps({
 </script>
 
 <style scoped>
-/* 使用与教育背景类似的样式 */
-.section-title { font-size: 18px; font-weight: 600; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 12px; }
 .item { margin-bottom: 12px; }
-.item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
 .main-info { font-weight: 600; }
 .sub-info { color: #555; }
 .date-range { font-style: italic; color: #888; }

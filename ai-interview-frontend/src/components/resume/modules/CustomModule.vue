@@ -1,8 +1,8 @@
-<!-- src/components/resume/modules/SummaryModule.vue -->
+<!-- src/components/resume/modules/CustomModule.vue -->
 <template>
-  <div class="summary-module">
+  <div class="custom-module">
     <SectionTitle :text="title" />
-    <pre class="section-content">{{ summary }}</pre>
+    <pre class="section-content">{{ content }}</pre>
   </div>
 </template>
 
@@ -10,13 +10,12 @@
 import SectionTitle from './common/SectionTitle.vue';
 
 defineProps({
-  title: { type: String, default: '自我评价' },
-  summary: { type: String, default: '' }
+  title: { type: String, default: '自定义标题' },
+  content: { type: String, default: '' }
 });
 </script>
 
 <style scoped>
-/* 移除 .section-title 样式 */
 .section-content {
   font-size: 14px;
   color: #555;

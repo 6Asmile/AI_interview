@@ -7,6 +7,8 @@ from django.conf import settings
 from django.conf.urls.static import static # 确保导入 static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from resumes.views_upload import FileUploadView
+
 admin.site.site_header = "IFaceOff 管理后台"
 admin.site.site_title = "IFaceOff Admin Portal"
 admin.site.index_title = "欢迎来到 IFaceOff 管理后台"
@@ -22,6 +24,8 @@ urlpatterns = [
         path('', include('resumes.urls')),
         path('', include('interviews.urls')),
         path('', include('system.urls')),
+        # 【新增】添加通用的文件上传路由
+        path('upload/', FileUploadView.as_view(), name='file-upload'),
     ])),
 ]
 
