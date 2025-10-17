@@ -75,7 +75,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import draggable from 'vuedraggable';
 import { Rank, Delete, Plus } from '@element-plus/icons-vue';
@@ -89,7 +89,6 @@ const editorStore = useResumeEditorStore();
 const activeCollapseNames = ref<string[]>([]);
 const dialogVisible = ref(false);
 
-// --- 【核心修复#1】恢复 computed 属性，确保与 Store 的双向绑定 ---
 const resumeJson = computed({
   get: () => editorStore.resumeJson,
   set: (value) => editorStore.updateResumeJson(value),
@@ -103,13 +102,12 @@ const availableTemplates = computed(() => {
 const addModule = (template: ModuleTemplate) => {
   editorStore.addComponent(template.moduleType);
   dialogVisible.value = false;
-  // 【核心修复#2】恢复自动展开新模块的逻辑
-  // a'd'd'Component 是同步的，所以此时 resumeJson 已经更新
-  const newModule = resumeJson.value[resumeJson.value.length - 1];
-  if (newModule && !activeCollapseNames.value.includes(newModule.id)) {
-      // 展开最新添加的模块
-      activeCollapseNames.value.push(newModule.id);
-  }
+  nextTick(() => {
+    const newModule = resumeJson.value[resumeJson.value.length - 1];
+    if (newModule && !activeCollapseNames.value.includes(newModule.id)) {
+        activeCollapseNames.value.push(newModule.id);
+    }
+  });
 };
 
 const handleSimpleModuleInput = (module: any, value: string) => {

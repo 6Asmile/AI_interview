@@ -1,19 +1,16 @@
 // src/store/modules/resumeEditor.ts
 import { defineStore } from 'pinia';
 import { v4 as uuidv4 } from 'uuid';
-// 【修复#1】修正 API 函数的导入来源
 import { updateResumeApi, type ResumeItem } from '@/api/modules/resume';
 import { getStructuredResumeApi } from '@/api/modules/resumeEditor';
 import { ElMessage } from 'element-plus';
 import { templates } from '@/resume-templates';
-// 【修复#2】从我们新创建的文件中导入模块定义
 import { allTemplates } from '@/resume-templates/template-definitions';
 
-// 接口定义...
 export interface ResumeComponent {
   id: string;
   componentName: string;
-  moduleType: string; // 【新增】
+  moduleType: string;
   title: string;
   props: Record<string, any>;
   styles: Record<string, any>;
@@ -40,10 +37,7 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
     isSaving: false,
   }),
 
-  // getters 保持不变
-
   actions: {
-    // fetchResume, saveResume, resetState 保持不变
     async fetchResume(resumeId: number) {
       this.isLoading = true;
       this.resetState();
@@ -55,8 +49,12 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
       } catch (error) { console.error(error); ElMessage.error("加载简历数据失败"); } 
       finally { this.isLoading = false; }
     },
+
     async saveResume() {
-      if (!this.resumeMeta?.id) return;
+      if (!this.resumeMeta?.id) {
+        ElMessage.error("无法保存，简历ID不存在。");
+        return;
+      }
       this.isSaving = true;
       try {
         const payload: Partial<FullResumeItem> = {
@@ -69,6 +67,7 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
       } catch (error) { console.error(error); ElMessage.error("保存失败"); } 
       finally { this.isSaving = false; }
     },
+
     resetState() {
       this.resumeMeta = null;
       this.resumeJson = [];
@@ -89,22 +88,29 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
     },
 
     addComponent(moduleType: string) {
-      // 【修复#3】因为 allTemplates 现在有明确类型，所以 't' 不再是 any
-      const template = allTemplates.find(t => t.componentName === moduleType);
-      if (!template) return;
+      // --- 【核心修复】将 t.componentName 修改为 t.moduleType ---
+      const template = allTemplates.find(t => t.moduleType === moduleType);
+      
+      if (!template) {
+        console.error(`addComponent: 未找到 moduleType 为 "${moduleType}" 的模板定义`);
+        return;
+      }
 
       const propsCopy = JSON.parse(JSON.stringify(template.props));
-      // 为列表项生成ID
       Object.keys(propsCopy).forEach(key => {
         if (Array.isArray(propsCopy[key])) {
-          (propsCopy[key] as any[]).forEach((item: any) => item.id = uuidv4());
+          (propsCopy[key] as any[]).forEach((item: any) => {
+            if(item && typeof item === 'object') {
+              item.id = uuidv4();
+            }
+          });
         }
       });
       
       const newComponent: ResumeComponent = {
         id: uuidv4(),
         componentName: template.componentName,
-         moduleType: template.moduleType, // 【新增】
+        moduleType: template.moduleType,
         title: template.title,
         props: propsCopy,
         styles: templates.find(t => t.id === this.selectedTemplateId)?.getStylesFor(template.componentName) || {},
