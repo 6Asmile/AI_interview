@@ -128,8 +128,13 @@ const confirmDelete = (moduleId: string, moduleTitle: string) => {
     }).catch(() => {});
 };
 
-const handleCollapseChange = (names: string[]) => {
-    activeCollapseNames.value = names;
+const handleCollapseChange = (activeIds: string | string[]) => {
+    // el-collapse 在非手风琴模式下返回一个ID数组
+    if (Array.isArray(activeIds)) {
+        // 我们将最新展开的（即数组中最后一个）模块设为选中状态
+        const latestId = activeIds[activeIds.length - 1] || null;
+        editorStore.selectComponent(latestId);
+    }
 };
 </script>
 
