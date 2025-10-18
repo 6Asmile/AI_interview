@@ -6,6 +6,7 @@ import { getStructuredResumeApi } from '@/api/modules/resumeEditor';
 import { ElMessage } from 'element-plus';
 import { templates } from '@/resume-templates';
 import { allTemplates } from '@/resume-templates/template-definitions';
+import { toRaw } from 'vue';
 
 export interface ResumeComponent {
   id: string;
@@ -21,13 +22,12 @@ export interface ResumeLayout {
   main: ResumeComponent[];
 }
 
-// // 修正 FullResumeItem，使其与 ResumeItem 的 content_json 类型兼容
-// interface FullResumeItem extends Omit<ResumeItem, 'content_json'> {
-//   content_json: ResumeLayout | any[] | null; // 允许两种类型
-// }
+interface FullResumeItem extends Omit<ResumeItem, 'content_json'> {
+  content_json: ResumeLayout | any[] | null;
+}
 
 interface ResumeEditorState {
-   resumeMeta: ResumeItem | null; // 直接使用导入的 ResumeItem
+  resumeMeta: FullResumeItem | null;
   resumeJson: ResumeLayout;
   selectedComponentId: string | null;
   selectedTemplateId: string;
@@ -53,28 +53,39 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
   },
 
   actions: {
+   // --- 【核心修复#1】重写 fetchResume ---
     async fetchResume(resumeId: number) {
-      this.isLoading = true;
-      this.resetState();
-      try {
-        const response = await getStructuredResumeApi(resumeId);
-        this.resumeMeta = response as ResumeItem; // 类型断言
-        if (response.content_json && 'sidebar' in response.content_json && 'main' in response.content_json) {
-            this.resumeJson = response.content_json as ResumeLayout; // 类型断言
-        } else if (Array.isArray(response.content_json)) {
-            this.resumeJson = { sidebar: [], main: response.content_json };
-        }
-        this.selectedTemplateId = response.template_name || 'sidebar-darkblue';
-      } catch (error) { console.error(error); ElMessage.error("加载简历数据失败"); } 
-      finally { this.isLoading = false; }
+        this.isLoading = true;
+        this.resetState();
+        try {
+            const response = await getStructuredResumeApi(resumeId);
+            this.resumeMeta = response as FullResumeItem;
+            this.selectedTemplateId = response.template_name || 'sidebar-darkblue';
+
+            // 1. 加载布局
+            if (response.content_json && typeof response.content_json === 'object' && 'sidebar' in response.content_json) {
+                this.resumeJson = response.content_json as ResumeLayout;
+            } else if (Array.isArray(response.content_json)) {
+                // 对于旧数据，先按规则分配一次
+                this.distributeLayout(response.content_json, this.selectedTemplateId);
+            }
+
+            // 2. 加载完布局后，只应用样式和标题风格，不再重新分配布局
+            this.applyStylesAndTitle(this.selectedTemplateId);
+
+        } catch (error) { console.error(error); ElMessage.error("加载简历数据失败"); } 
+        finally { this.isLoading = false; }
     },
+
+    // --- 【核心修复#2】重写 saveResume ---
     async saveResume() {
       if (!this.resumeMeta?.id) return;
       this.isSaving = true;
       try {
         const payload = {
           title: this.resumeMeta.title,
-          content_json: this.resumeJson,
+          // 使用 toRaw() 获取纯净的 JS 对象，避免响应式代理带来的问题
+          content_json: toRaw(this.resumeJson), 
           template_name: this.selectedTemplateId,
         };
         await updateResumeApi(this.resumeMeta.id, payload);
@@ -82,19 +93,25 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
       } catch (error) { console.error(error); ElMessage.error("保存失败"); } 
       finally { this.isSaving = false; }
     },
+
     resetState() {
       this.resumeMeta = null;
       this.resumeJson = { sidebar: [], main: [] };
       this.selectedComponentId = null;
       this.selectedTemplateId = 'sidebar-darkblue';
     },
+
     selectComponent(componentId: string | null) {
       this.selectedComponentId = componentId;
     },
-    applyTemplate(templateId: string) {
+
+    // --- 【核心修复#3】将 applyTemplate 拆分为两个独立的函数 ---
+
+    // 函数一：只负责应用样式和标题（不改变布局）
+    applyStylesAndTitle(templateId: string) {
         const template = templates.find(t => t.id === templateId);
         if (!template) return;
-        this.selectedTemplateId = templateId;
+        
         const allComponents = [...this.resumeJson.sidebar, ...this.resumeJson.main];
         allComponents.forEach(component => {
             component.styles = template.getStylesFor(component.componentName, component.moduleType);
@@ -105,51 +122,62 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
                 else component.props.titleStyle = 'style1';
             }
         });
+    },
+    
+    // 函数二：只负责重新分配布局
+    distributeLayout(components: ResumeComponent[], templateId: string) {
+        const template = templates.find(t => t.id === templateId);
+        if (!template) return;
+
         if (template.layout === 'sidebar') {
-            const newMain: ResumeComponent[] = [];
             const newSidebar: ResumeComponent[] = [];
-            allComponents.forEach(comp => {
+            const newMain: ResumeComponent[] = [];
+            components.forEach(comp => {
                 if (['BaseInfo', 'Skills'].includes(comp.moduleType)) newSidebar.push(comp);
                 else newMain.push(comp);
             });
             this.resumeJson = { sidebar: newSidebar, main: newMain };
         } else {
-            this.resumeJson = { sidebar: [], main: allComponents };
+            this.resumeJson = { sidebar: [], main: components };
         }
     },
-     // 【核心升级】addComponent 接收一个可选的 'zone' 参数
-    addComponent(moduleType: string, zone: 'sidebar' | 'main' = 'main') {
-      const template = allTemplates.find(t => t.moduleType === moduleType);
-      if (!template) {
-        console.error(`addComponent: 未找到 moduleType 为 "${moduleType}" 的模板定义`);
-        return;
-      }
 
-      const propsCopy = JSON.parse(JSON.stringify(template.props));
-      Object.keys(propsCopy).forEach(key => {
-        if (Array.isArray(propsCopy[key])) {
-          (propsCopy[key] as any[]).forEach((item: any) => {
-            if(item && typeof item === 'object') item.id = uuidv4();
-          });
-        }
-      });
-      
-      const newComponent: ResumeComponent = {
-        id: uuidv4(),
-        componentName: template.componentName,
-        moduleType: template.moduleType,
-        title: template.title,
-        props: propsCopy,
-        styles: templates.find(t => t.id === this.selectedTemplateId)?.getStylesFor(template.componentName, template.moduleType) || {},
-      };
-      
-      // 根据 zone 参数决定将模块添加到哪个数组
-      if (zone === 'sidebar') {
-          this.resumeJson.sidebar.push(newComponent);
-      } else {
-          this.resumeJson.main.push(newComponent);
+    // 现在的 applyTemplate 变得更智能
+    applyTemplate(templateId: string) {
+      const newTemplate = templates.find(t => t.id === templateId);
+      if (!newTemplate) return;
+
+      const oldTemplate = templates.find(t => t.id === this.selectedTemplateId);
+      this.selectedTemplateId = templateId;
+
+      // 1. 总是应用新样式
+      this.applyStylesAndTitle(templateId);
+
+      // 2. 只有在布局类型发生变化时，才重新分配布局
+      if (oldTemplate?.layout !== newTemplate.layout) {
+          const allComponents = [...this.resumeJson.sidebar, ...this.resumeJson.main];
+          this.distributeLayout(allComponents, templateId);
       }
     },
+
+    addComponent(moduleType: string, zone: 'sidebar' | 'main' = 'main') {
+        const template = allTemplates.find(t => t.moduleType === moduleType);
+        if (!template) return;
+        const propsCopy = JSON.parse(JSON.stringify(template.props));
+        Object.keys(propsCopy).forEach(key => {
+            if (Array.isArray(propsCopy[key])) (propsCopy[key] as any[]).forEach((item: any) => { if (item && typeof item === 'object') item.id = uuidv4(); });
+        });
+        const newComponent: ResumeComponent = {
+            id: uuidv4(),
+            componentName: template.componentName,
+            moduleType: template.moduleType,
+            title: template.title,
+            props: propsCopy,
+            styles: templates.find(t => t.id === this.selectedTemplateId)?.getStylesFor(template.componentName, template.moduleType) || {},
+        };
+        this.resumeJson[zone].push(newComponent);
+    },
+
     deleteComponent(componentId: string) {
         let index = this.resumeJson.sidebar.findIndex(c => c.id === componentId);
         if (index > -1) {

@@ -15,13 +15,13 @@
       <el-skeleton :rows="10" animated />
     </div>
 
-    <!-- #resume-content 是 html2canvas 的目标 -->
     <div id="resume-content" class="resume-wrapper" v-else>
       <div class="resume-paper" :style="pageStyles">
         <!-- 场景一：单栏布局 -->
         <template v-if="currentLayout === 'single-column'">
-          <div v-if="allVisibleModules.length > 0" class="canvas-area">
-            <div v-for="element in allVisibleModules" :key="element.id">
+          <div v-if="mainModules.length > 0" class="canvas-area">
+            <!-- 直接渲染 mainModules，它在单栏模式下包含所有模块 -->
+            <div v-for="element in mainModules" :key="element.id">
               <component :is="componentMap[element.componentName]" v-bind="element.props" :style="element.styles" />
             </div>
           </div>
@@ -55,8 +55,6 @@ import { type ResumeComponent, type ResumeLayout } from '@/store/modules/resumeE
 import { ElMessage, ElSkeleton, ElEmpty } from 'element-plus';
 import { Download } from '@element-plus/icons-vue';
 import { templates } from '@/resume-templates';
-
-// 导入所有需要的组件
 import SidebarLayout from '@/components/resume/layouts/SidebarLayout.vue';
 import BaseInfoModule from '@/components/resume/modules/BaseInfoModule.vue';
 import SummaryModule from '@/components/resume/modules/SummaryModule.vue';
@@ -66,7 +64,6 @@ import ProjectModule from '@/components/resume/modules/ProjectModule.vue';
 import SkillsModule from '@/components/resume/modules/SkillsModule.vue';
 import GenericListModule from '@/components/resume/modules/GenericListModule.vue';
 import CustomModule from '@/components/resume/modules/CustomModule.vue';
-
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -75,22 +72,9 @@ const router = useRouter();
 
 const resumeId = Number(route.params.id);
 const resumeData = ref<ResumeItem | null>(null);
-const resumeJson = ref<ResumeLayout>({ sidebar: [], main: [] });
+const resumeJson = ref<ResumeLayout>({ sidebar: [], main: [] }); // 存储最终用于渲染的、带有正确顺序和样式的二维数据
 const isLoading = ref(true);
 const isExporting = ref(false);
-
-// --- 【核心修复#1】确保 computed 属性从本组件的 ref 中读取数据 ---
-const currentTemplate = computed(() => {
-  const templateId = resumeData.value?.template_name || 'default';
-  return templates.find(t => t.id === templateId) || templates[0];
-});
-const currentLayout = computed(() => currentTemplate.value.layout);
-const pageStyles = computed(() => currentTemplate.value.pageStyles || {});
-
-const allModules = computed(() => [...resumeJson.value.sidebar, ...resumeJson.value.main]);
-const allVisibleModules = computed(() => allModules.value.filter((m: ResumeComponent) => m.props.show !== false));
-const sidebarModules = computed(() => allVisibleModules.value.filter((m: ResumeComponent) => m.props.layoutZone === 'sidebar'));
-const mainModules = computed(() => allVisibleModules.value.filter((m: ResumeComponent) => m.props.layoutZone !== 'sidebar'));
 
 const componentMap: Record<string, any> = {
   BaseInfoModule: markRaw(BaseInfoModule),
@@ -103,31 +87,65 @@ const componentMap: Record<string, any> = {
   CustomModule: markRaw(CustomModule),
 };
 
+// --- 【核心重构】所有计算属性现在都依赖于本组件的 state ---
+
+const currentTemplate = computed(() => {
+  const templateId = resumeData.value?.template_name || 'default';
+  return templates.find(t => t.id === templateId) || templates[0];
+});
+
+const currentLayout = computed(() => currentTemplate.value.layout);
+const pageStyles = computed(() => currentTemplate.value.pageStyles || {});
+
+// 直接从处理好的 resumeJson 中获取模块，不再进行合并操作
+const sidebarModules = computed(() => resumeJson.value.sidebar.filter(m => m.props.show !== false));
+const mainModules = computed(() => resumeJson.value.main.filter(m => m.props.show !== false));
+
+// allVisibleModules 仅用于单栏布局，需要合并
+const allVisibleModules = computed(() => [...sidebarModules.value, ...mainModules.value]);
+
+
 onMounted(async () => {
   if (!resumeId) return;
   isLoading.value = true;
   try {
     const response = await getStructuredResumeApi(resumeId);
     resumeData.value = response;
-    // 适配后端可能返回的一维或二维 content_json
-    if (response.content_json && typeof response.content_json === 'object' && 'sidebar' in response.content_json && 'main' in response.content_json) {
-      resumeJson.value = response.content_json as ResumeLayout;
+
+    const template = currentTemplate.value; // 使用计算属性获取当前模板
+    let finalLayout: ResumeLayout = { sidebar: [], main: [] };
+
+    // 1. 确定原始的二维布局
+    if (response.content_json && typeof response.content_json === 'object' && 'sidebar' in response.content_json) {
+      finalLayout = response.content_json as ResumeLayout;
     } else if (Array.isArray(response.content_json)) {
-      // 如果是旧的一维数组，根据模板布局进行分配
-      const template = templates.find(t => t.id === response.template_name) || templates[0];
-      if (template.layout === 'sidebar') {
-        const sidebar: ResumeComponent[] = [];
-        const main: ResumeComponent[] = [];
-        response.content_json.forEach(comp => {
-            if (['BaseInfo', 'Skills'].includes(comp.moduleType)) sidebar.push(comp);
-            else main.push(comp);
-        });
-        resumeJson.value = { sidebar, main };
-      } else {
-        resumeJson.value = { sidebar: [], main: response.content_json };
-      }
+      // 兼容旧数据：如果是数组，则全在 main
+      finalLayout.main = response.content_json;
     }
+
+    // 2. 遍历 sidebar 和 main 两个数组，为其中的每个组件应用样式和标题风格
+    // 这样做可以完全保留后端返回的顺序
+    const applyStyles = (components: ResumeComponent[]) => {
+      components.forEach(component => {
+        component.styles = template.getStylesFor(component.componentName, component.moduleType);
+        if (component.componentName !== 'BaseInfoModule') {
+            const templateId = template.id;
+            if (templateId === 'modern-accent') component.props.titleStyle = 'style2';
+            else if (templateId === 'business-gray') component.props.titleStyle = 'style3';
+            else if (templateId === 'sidebar-darkblue') component.props.titleStyle = 'style4';
+            else component.props.titleStyle = 'style1';
+        }
+      });
+    };
+    
+    applyStyles(finalLayout.sidebar);
+    applyStyles(finalLayout.main);
+
+    // 3. 将处理好的、带有正确顺序和样式的二维数据赋值给 ref
+    resumeJson.value = finalLayout;
+
   } catch (error) { 
+    console.error(error);
     ElMessage.error('加载简历数据失败'); 
   } finally { 
     isLoading.value = false; 
@@ -138,73 +156,33 @@ const goBack = () => {
   router.push({ name: 'ResumeEditor', params: { id: resumeId } });
 };
 
-// --- 【核心修复#2】加固 PDF 导出函数 ---
 const exportToPDF = async () => {
-  // 确保在 DOM 更新后再执行
-  await router.isReady();
-
-  const resumeElement = document.querySelector('#resume-content .resume-paper');
-  if (!resumeElement) {
-    ElMessage.error('找不到简历内容元素，无法导出。');
-    return;
-  }
-
-  isExporting.value = true;
-  try {
-    const canvas = await html2canvas(resumeElement as HTMLElement, {
-      scale: 2.5, // 进一步提高分辨率以获得更清晰的文本
-      useCORS: true,
-      allowTaint: true, // 允许绘制跨域图片
-      backgroundColor: '#ffffff', // 明确背景色
-    });
-    
-    const pdf = new jsPDF('p', 'pt', 'a4');
-    const a4Width = 595.28;
-    const a4Height = 841.89;
-    const imgWidth = canvas.width;
-    const imgHeight = canvas.height;
-    const pageData = canvas.toDataURL('image/jpeg', 1.0);
-
-    // 计算内容在A4纸上应该有的高度
-    const pdfPageHeight = (imgWidth / a4Width) * a4Height;
-    let position = 0;
-
-    while (position < imgHeight) {
-      // 创建一个临时 canvas 用于截取当前页的内容
-      const pageCanvas = document.createElement('canvas');
-      pageCanvas.width = imgWidth;
-      // 截取的高度不能超过剩余内容的高度
-      pageCanvas.height = Math.min(pdfPageHeight, imgHeight - position);
-      const ctx = pageCanvas.getContext('2d');
-      
-      if (ctx) {
-        // 从主 canvas 上绘制一页的高度到临时 canvas
-        ctx.drawImage(canvas, 0, position, imgWidth, pageCanvas.height, 0, 0, imgWidth, pageCanvas.height);
-        
-        if (position > 0) {
-          pdf.addPage();
+    // ... 导出逻辑保持不变 ...
+    const resumeElement = document.querySelector('#resume-content .resume-paper');
+    if (!resumeElement) { ElMessage.error('找不到简历内容，无法导出。'); return; }
+    isExporting.value = true;
+    try {
+        const canvas = await html2canvas(resumeElement as HTMLElement, { scale: 2.5, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' });
+        const pdf = new jsPDF('p', 'pt', 'a4');
+        const a4Width = 595.28; const a4Height = 841.89;
+        const imgWidth = canvas.width; const imgHeight = canvas.height;
+        const pageHeight = (imgWidth / a4Width) * a4Height;
+        let position = 0;
+        while (position < imgHeight) {
+            const pageCanvas = document.createElement('canvas');
+            pageCanvas.width = imgWidth;
+            pageCanvas.height = Math.min(pageHeight, imgHeight - position);
+            const ctx = pageCanvas.getContext('2d');
+            if (ctx) {
+                ctx.drawImage(canvas, 0, position, imgWidth, pageCanvas.height, 0, 0, imgWidth, pageCanvas.height);
+                if (position > 0) pdf.addPage();
+                pdf.addImage(pageCanvas.toDataURL('image/jpeg', 1.0), 'JPEG', 0, 0, a4Width, (pageCanvas.height * a4Width) / imgWidth);
+            }
+            position += pageHeight;
         }
-        // 将临时 canvas 的内容添加到 PDF 中
-        pdf.addImage(
-          pageCanvas.toDataURL('image/jpeg', 1.0),
-          'JPEG',
-          0,
-          0,
-          a4Width,
-          (pageCanvas.height * a4Width) / imgWidth // 按比例计算图片在PDF中的高度
-        );
-      }
-      
-      position += pdfPageHeight;
-    }
-    
-    pdf.save(`简历-${resumeData.value?.title || '未命名'}.pdf`);
-  } catch (error) {
-    console.error("导出PDF失败:", error);
-    ElMessage.error("导出PDF时发生未知错误，请检查控制台。");
-  } finally {
-    isExporting.value = false;
-  }
+        pdf.save(`简历-${resumeData.value?.title || '未命名'}.pdf`);
+    } catch (error) { console.error("导出PDF失败:", error); ElMessage.error("导出PDF时发生未知错误。"); }
+    finally { isExporting.value = false; }
 };
 </script>
 
