@@ -53,6 +53,10 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
   },
 
   actions: {
+    // 【核心修复】恢复 updateResumeJson action
+    updateResumeJson(newJson: ResumeLayout) {
+      this.resumeJson = newJson;
+    },
    // --- 【核心修复#1】重写 fetchResume ---
     async fetchResume(resumeId: number) {
         this.isLoading = true;
@@ -101,10 +105,21 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
       this.selectedTemplateId = 'sidebar-darkblue';
     },
 
-    selectComponent(componentId: string | null) {
+   /**
+     * @param componentId - 要选中的组件ID
+     * @param _source - 'canvas' | 'config'，指示点击来源于哪里
+     */
+    selectComponent(componentId: string | null, _source: 'canvas' | 'config' = 'config') {
+      if (this.selectedComponentId === componentId) {
+        // 如果重复点击同一个，则取消选中
+        this.selectedComponentId = null;
+        return;
+      }
       this.selectedComponentId = componentId;
+      
+      // 在这里我们不直接执行滚动，而是通过事件总线或让组件监听 selectedComponentId 的变化来触发。
+      // Pinia 的 state 变化本身就是响应式的，组件可以 watch 它。
     },
-
     // --- 【核心修复#3】将 applyTemplate 拆分为两个独立的函数 ---
 
     // 函数一：只负责应用样式和标题（不改变布局）

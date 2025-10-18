@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import draggable from 'vuedraggable';
 import { Plus } from '@element-plus/icons-vue';
@@ -68,14 +68,15 @@ import ModuleFormItem from './forms/ModuleFormItem.vue';
 
 const editorStore = useResumeEditorStore();
 const dialogVisible = ref(false);
-// 【核心新增】记录当前要添加到哪个区域
 const currentAddZone = ref<'sidebar' | 'main'>('main');
 
+// computed for sidebar modules
 const sidebarJson = computed({
   get: () => editorStore.resumeJson.sidebar,
   set: (value) => { editorStore.resumeJson.sidebar = value; },
 });
 
+// computed for main content modules
 const mainJson = computed({
   get: () => editorStore.resumeJson.main,
   set: (value) => { editorStore.resumeJson.main = value; },
@@ -86,33 +87,78 @@ const availableTemplates = computed(() => {
   return allTemplates.filter(t => !addedModuleTypes.has(t.moduleType));
 });
 
-// 打开弹窗时，记录目标区域
 const openAddDialog = (zone: 'sidebar' | 'main') => {
     currentAddZone.value = zone;
     dialogVisible.value = true;
 };
 
-// 添加模块时，将目标区域传递给 action
 const addModule = (template: ModuleTemplate) => {
   editorStore.addComponent(template.moduleType, currentAddZone.value);
   dialogVisible.value = false;
+  // Auto-scroll to the newly added module after DOM update
+  nextTick(() => {
+    const targetArray = currentAddZone.value === 'sidebar' ? sidebarJson.value : mainJson.value;
+    const newModule = targetArray[targetArray.length - 1];
+    if (newModule) {
+      // Set as selected and scroll
+      editorStore.selectComponent(newModule.id);
+      scrollToConfigModule(newModule.id);
+    }
+  });
 };
+
+const scrollToConfigModule = (moduleId: string) => {
+    nextTick(() => {
+        const targetId = `config-module-header-${moduleId}`;
+        const targetElement = document.getElementById(targetId);
+        if (targetElement) {
+            targetElement.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+            });
+        }
+    });
+};
+
+// Watch for changes from the canvas click
+watch(() => editorStore.selectedComponentId, (newId) => {
+    if (newId) {
+        scrollToConfigModule(newId);
+    }
+});
 </script>
 
 <style scoped>
-.config-panel { padding: 16px; }
-.zone-wrapper { margin-bottom: 24px; }
+.config-panel {
+  padding: 16px;
+}
+.zone-wrapper {
+  margin-bottom: 24px;
+}
 .zone-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
 }
-.zone-title { font-size: 13px; color: #999; }
-.module-list { display: flex; flex-direction: column; gap: 12px; min-height: 50px; border: 1px dashed #e0e0e0; border-radius: 4px; padding: 10px; }
-.ghost { opacity: 0.5; background: #c8ebfb; border: 1px dashed #409eff; }
-
-/* 【核心修复】恢复弹窗的美观样式 */
+.zone-title {
+  font-size: 13px;
+  color: #999;
+}
+.module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 50px;
+  border: 1px dashed #e0e0e0;
+  border-radius: 4px;
+  padding: 10px;
+}
+.ghost {
+  opacity: 0.5;
+  background: #c8ebfb;
+  border: 1px dashed #409eff;
+}
 .module-pool {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));

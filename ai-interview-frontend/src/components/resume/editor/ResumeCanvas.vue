@@ -1,31 +1,35 @@
 <!-- src/components/resume/editor/ResumeCanvas.vue -->
 <template>
   <div class="resume-paper" :style="pageStyles">
+    <!-- 场景一：单栏布局 -->
     <template v-if="currentLayout === 'single-column'">
       <div v-if="allVisibleModules.length > 0" class="canvas-area">
         <div 
           v-for="element in allVisibleModules" 
-          :key="element.id" 
+          :key="element.id"
+          :id="`canvas-module-${element.id}`"  
           :class="['canvas-component-item', { 'is-selected': isEditor && element.id === editorStore.selectedComponentId }]"
-          @click.stop="isEditor && editorStore.selectComponent(element.id)"
+          @click.stop="isEditor && handleClickCanvasModule(element.id)"
         >
           <component 
             :is="componentMap[element.componentName]" 
             v-bind="element.props" 
-            :style="element.styles"
+            :style="element.styles" 
           />
         </div>
       </div>
       <div v-else class="empty-tip"><el-empty description="请从左侧添加和配置模块" /></div>
     </template>
 
+    <!-- 场景二：左右分栏布局 -->
     <SidebarLayout v-if="currentLayout === 'sidebar'">
       <template #sidebar>
         <div 
           v-for="element in sidebarModules" 
-          :key="element.id" 
+          :key="element.id"
+          :id="`canvas-module-${element.id}`"
           :class="['canvas-component-item', { 'is-selected': isEditor && element.id === editorStore.selectedComponentId }]"
-          @click.stop="isEditor && editorStore.selectComponent(element.id)"
+          @click.stop="isEditor && handleClickCanvasModule(element.id)"
         >
           <component 
             :is="componentMap[element.componentName]" 
@@ -37,9 +41,10 @@
       <template #main>
         <div 
           v-for="element in mainModules" 
-          :key="element.id" 
+          :key="element.id"
+          :id="`canvas-module-${element.id}`"
           :class="['canvas-component-item', { 'is-selected': isEditor && element.id === editorStore.selectedComponentId }]"
-          @click.stop="isEditor && editorStore.selectComponent(element.id)"
+          @click.stop="isEditor && handleClickCanvasModule(element.id)"
         >
           <component 
             :is="componentMap[element.componentName]" 
@@ -53,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw } from 'vue';
+import { computed, markRaw, nextTick, watch } from 'vue';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import { templates } from '@/resume-templates';
 import { ElEmpty } from 'element-plus';
@@ -67,7 +72,8 @@ import SkillsModule from '../modules/SkillsModule.vue';
 import GenericListModule from '../modules/GenericListModule.vue';
 import CustomModule from '../modules/CustomModule.vue';
 
-const props = defineProps({
+// 【核心修复】移除未使用的 props
+defineProps({
   isEditor: { type: Boolean, default: true }
 });
 
@@ -90,7 +96,43 @@ const componentMap: Record<string, any> = {
   GenericListModule: markRaw(GenericListModule),
   CustomModule: markRaw(CustomModule),
 };
+
+watch(() => editorStore.selectedComponentId, (newId) => {
+  if (newId) {
+    const element = document.getElementById(`canvas-item-${newId}`);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+});
+
+// --- 【核心新增】点击画布模块的处理函数 ---
+const handleClickCanvasModule = (moduleId: string) => {
+    // 1. 更新Store中的选中状态
+    editorStore.selectComponent(moduleId);
+
+    // 2. 触发滚动到左侧配置面板的逻辑
+    scrollToConfigModule(moduleId);
+};
+
+// --- 【核心新增】滚动到左侧配置面板的函数 ---
+const scrollToConfigModule = (moduleId: string) => {
+    nextTick(() => {
+        // 构造左侧模块的 ID (注意，我们需要滚动的是 el-collapse-item 的 header)
+        const targetId = `config-module-header-${moduleId}`;
+        const targetElement = document.getElementById(targetId);
+
+        if (targetElement) {
+            targetElement.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+            });
+            
+            // 可以在这里找到对应的 el-collapse-item 并手动展开它
+            // 但因为 ConfigPanel 内部已经有展开逻辑，所以这里可以简化
+        }
+    });
+    };
 </script>
+
 
 <style scoped>
 .resume-paper {
