@@ -1,5 +1,6 @@
 // src/api/modules/resume.ts
 import request from '@/api/request';
+import { ResumeLayout } from '@/store/modules/resumeEditor';
 
 // --- 【核心修改】将所有简历相关的类型定义集中在此 ---
 
@@ -23,8 +24,8 @@ export interface ResumeItem {
   parsed_content: string;
   file_url?: string;
   
-  // 【核心新增】添加 content_json 字段，并允许其为 null
-  content_json: any[] | null;
+   // 【核心修复】使用联合类型，允许 content_json 是数组(旧)或对象(新)
+  content_json: ResumeLayout | any[] | null;
 
     // 【核心修复】新增 template_name 字段
   template_name?: string;

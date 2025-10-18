@@ -69,17 +69,29 @@ const businessGrayTemplate: ResumeTemplate = {
   }
 };
 
-// --- 模板5：左右分栏-深蓝 (保持不变) ---
+// --- 【核心修复】模板5：左右分栏-深蓝 (优化版) ---
 const sidebarDarkBlueTemplate: ResumeTemplate = {
   name: '左右分栏-深蓝',
   id: 'sidebar-darkblue',
   layout: 'sidebar',
-  pageStyles: { padding: '0', fontFamily: '微软雅黑, sans-serif' },
-  getStylesFor: (_componentName, moduleType) => { // 这里主要使用 moduleType
-    if (['BaseInfo', 'Skills'].includes(moduleType)) {
-      return { color: '#fff', padding: '0 20px', marginBottom: '45px' };
+  pageStyles: {
+    padding: '0',
+    fontFamily: '微软雅黑, sans-serif',
+  },
+  getStylesFor: (_componentName, moduleType) => {
+    // 左侧栏模块的样式
+    if (['BaseInfo', 'Skills'].includes(moduleType)) { // 假设技能模块也放在侧边栏
+      return {
+        color: '#fff',
+        padding: '0 10px',
+        marginBottom: '40px',
+      };
     }
-    return { padding: '0 20px 20px', color: 'rgb(53, 53, 53)' };
+    // 右侧主内容区模块的样式
+    return {
+      padding: '0 20px 25px', // 增加底部间距
+      color: '#3d3d3d',
+    };
   }
 };
 

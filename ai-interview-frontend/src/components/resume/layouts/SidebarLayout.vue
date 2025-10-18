@@ -13,21 +13,19 @@
 </template>
 
 <style scoped>
-.sidebar-layout {
-  display: flex;
-  width: 100%;
-  height: 100%;
-}
+.sidebar-layout { display: flex; width: 100%; min-height: 297mm; /* 确保撑满高度 */ }
 .sidebar {
-  width: 270px; /* 左侧栏固定宽度 */
-  background-color: rgb(37, 70, 101); /* 深蓝色背景 */
-  color: #fff; /* 白色文字 */
-  padding: 30px 20px;
+  width: 35%; /* 使用百分比，更灵活 */
+  max-width: 280px;
+  /* 【核心修复】使用更专业、更柔和的蓝色 */
+  background-color: #aacff5; 
+  color: #fff;
+  padding: 40px 25px;
   flex-shrink: 0;
 }
 .main-content {
   flex-grow: 1;
   background-color: #fff;
-  padding: 25px 20px;
+  padding-top: 40px; /* 与侧边栏顶部对齐 */
 }
 </style>

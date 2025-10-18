@@ -1,159 +1,141 @@
 <!-- src/components/resume/editor/ConfigPanel.vue -->
 <template>
   <div class="config-panel">
-    <draggable
-      v-model="resumeJson"
-      item-key="id"
-      handle=".drag-handle"
-      class="module-list"
-      ghost-class="ghost"
-    >
-      <template #item="{ element: module }">
-        <el-collapse v-model="activeCollapseNames" class="module-form" @change="handleCollapseChange">
-          <el-collapse-item :name="module.id">
-            <template #title>
-              <div class="module-header">
-                <el-icon class="drag-handle"><Rank /></el-icon>
-                <span class="module-title">{{ module.title }}</span>
-                <div class="header-actions">
-                  <el-switch
-                    v-model="module.props.show"
-                    size="small"
-                    @click.stop
-                  />
-                  <el-button
-                    link
-                    type="danger"
-                    :icon="Delete"
-                    @click.stop="confirmDelete(module.id, module.title)"
-                  />
-                </div>
-              </div>
-            </template>
-            
-            <div class="module-content">
-              <BaseInfoForm v-if="module.componentName === 'BaseInfoModule'" :module="module" />
-              <WorkExpForm v-else-if="module.componentName === 'WorkExpModule'" :module="module" propKey="experiences" />
-              <GenericListForm v-else-if="module.componentName === 'EducationModule'" :module="module" propKey="educations" />
-              <GenericListForm v-else-if="module.componentName === 'ProjectModule'" :module="module" propKey="projects" />
-              <GenericListForm v-else-if="module.componentName === 'SkillsModule'" :module="module" propKey="skills" />
-              <GenericListForm v-else-if="module.componentName === 'GenericListModule'" :module="module" propKey="items" />
-              <el-form v-else-if="module.componentName === 'SummaryModule' || module.componentName === 'CustomModule'" label-position="top">
-                <el-form-item :label="module.title">
-                   <el-input
-                    type="textarea"
-                    autosize
-                    :model-value="module.props.summary || module.props.content"
-                    @input="(value: string) => handleSimpleModuleInput(module, value)"
-                  />
-                </el-form-item>
-              </el-form>
-            </div>
-          </el-collapse-item>
-        </el-collapse>
-      </template>
-    </draggable>
+    <!-- 侧边栏模块列表 -->
+    <div class="zone-wrapper">
+      <div class="zone-header">
+        <span class="zone-title">侧边栏模块</span>
+        <el-button link type="primary" :icon="Plus" @click="openAddDialog('sidebar')" />
+      </div>
+      <draggable
+        v-model="sidebarJson"
+        item-key="id"
+        handle=".drag-handle"
+        class="module-list"
+        ghost-class="ghost"
+        group="resumeModules"
+      >
+        <template #item="{ element: module }">
+          <ModuleFormItem :module="module" />
+        </template>
+      </draggable>
+    </div>
 
-    <div class="add-module-container">
-      <el-button @click="dialogVisible = true" :icon="Plus" type="primary" plain>添加模块</el-button>
+    <!-- 主区域模块列表 -->
+    <div class="zone-wrapper">
+      <div class="zone-header">
+        <span class="zone-title">主内容区模块</span>
+        <el-button link type="primary" :icon="Plus" @click="openAddDialog('main')" />
+      </div>
+      <draggable
+        v-model="mainJson"
+        item-key="id"
+        handle=".drag-handle"
+        class="module-list"
+        ghost-class="ghost"
+        group="resumeModules"
+      >
+        <template #item="{ element: module }">
+          <ModuleFormItem :module="module" />
+        </template>
+      </draggable>
     </div>
     
+    <!-- 统一的“添加模块”弹窗 -->
     <el-dialog v-model="dialogVisible" title="添加新模块" width="60%">
-      <div class="module-pool">
-        <div 
-          v-for="template in availableTemplates" 
-          :key="template.moduleType"
-          class="module-pool-item"
-          @click="addModule(template)"
-        >
-          <el-icon><component :is="template.icon" /></el-icon>
-          <span>{{ template.title }}</span>
+        <div class="module-pool">
+            <div 
+            v-for="template in availableTemplates" 
+            :key="template.moduleType"
+            class="module-pool-item"
+            @click="addModule(template)"
+            >
+            <el-icon><component :is="template.icon" /></el-icon>
+            <span>{{ template.title }}</span>
+            </div>
         </div>
-      </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed } from 'vue';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import draggable from 'vuedraggable';
-import { Rank, Delete, Plus } from '@element-plus/icons-vue';
+import { Plus } from '@element-plus/icons-vue';
 import { allTemplates, type ModuleTemplate } from '@/resume-templates/template-definitions';
-import { ElMessageBox } from 'element-plus';
-import BaseInfoForm from './forms/BaseInfoForm.vue';
-import WorkExpForm from './forms/WorkExpForm.vue';
-import GenericListForm from './forms/GenericListForm.vue';
+import ModuleFormItem from './forms/ModuleFormItem.vue';
 
 const editorStore = useResumeEditorStore();
-const activeCollapseNames = ref<string[]>([]);
 const dialogVisible = ref(false);
+// 【核心新增】记录当前要添加到哪个区域
+const currentAddZone = ref<'sidebar' | 'main'>('main');
 
-const resumeJson = computed({
-  get: () => editorStore.resumeJson,
-  set: (value) => editorStore.updateResumeJson(value),
+const sidebarJson = computed({
+  get: () => editorStore.resumeJson.sidebar,
+  set: (value) => { editorStore.resumeJson.sidebar = value; },
+});
+
+const mainJson = computed({
+  get: () => editorStore.resumeJson.main,
+  set: (value) => { editorStore.resumeJson.main = value; },
 });
 
 const availableTemplates = computed(() => {
-  const addedModuleTypes = new Set(editorStore.resumeJson.map(c => c.moduleType));
+  const addedModuleTypes = new Set([...sidebarJson.value, ...mainJson.value].map(c => c.moduleType));
   return allTemplates.filter(t => !addedModuleTypes.has(t.moduleType));
 });
 
+// 打开弹窗时，记录目标区域
+const openAddDialog = (zone: 'sidebar' | 'main') => {
+    currentAddZone.value = zone;
+    dialogVisible.value = true;
+};
+
+// 添加模块时，将目标区域传递给 action
 const addModule = (template: ModuleTemplate) => {
-  editorStore.addComponent(template.moduleType);
+  editorStore.addComponent(template.moduleType, currentAddZone.value);
   dialogVisible.value = false;
-  nextTick(() => {
-    const newModule = resumeJson.value[resumeJson.value.length - 1];
-    if (newModule && !activeCollapseNames.value.includes(newModule.id)) {
-        activeCollapseNames.value.push(newModule.id);
-    }
-  });
-};
-
-const handleSimpleModuleInput = (module: any, value: string) => {
-    if (module.props.hasOwnProperty('summary')) {
-        module.props.summary = value;
-    } else if (module.props.hasOwnProperty('content')) {
-        module.props.content = value;
-    }
-};
-
-const confirmDelete = (moduleId: string, moduleTitle: string) => {
-    ElMessageBox.confirm(`确定要删除“${moduleTitle}”模块吗？`, '提示', {
-        confirmButtonText: '确定删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-    }).then(() => {
-        editorStore.deleteComponent(moduleId);
-    }).catch(() => {});
-};
-
-const handleCollapseChange = (activeIds: string | string[]) => {
-    // el-collapse 在非手风琴模式下返回一个ID数组
-    if (Array.isArray(activeIds)) {
-        // 我们将最新展开的（即数组中最后一个）模块设为选中状态
-        const latestId = activeIds[activeIds.length - 1] || null;
-        editorStore.selectComponent(latestId);
-    }
 };
 </script>
 
 <style scoped>
 .config-panel { padding: 16px; }
-.module-list { display: flex; flex-direction: column; gap: 12px; }
-.module-form { border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; }
+.zone-wrapper { margin-bottom: 24px; }
+.zone-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.zone-title { font-size: 13px; color: #999; }
+.module-list { display: flex; flex-direction: column; gap: 12px; min-height: 50px; border: 1px dashed #e0e0e0; border-radius: 4px; padding: 10px; }
 .ghost { opacity: 0.5; background: #c8ebfb; border: 1px dashed #409eff; }
-.module-header { display: flex; align-items: center; width: 100%; padding: 0 15px; }
-.drag-handle { cursor: grab; color: #999; margin-right: 10px; }
-.module-title { font-weight: 500; flex-grow: 1; }
-.header-actions { display: flex; align-items: center; gap: 12px; }
-.module-content { padding: 0 15px 15px; }
-.config-panel :deep(.el-collapse-item__header) { padding: 0; height: 48px; background-color: #fafafa; }
-.config-panel :deep(.el-collapse-item__wrap) { border-bottom: none; }
-.config-panel :deep(.el-collapse-item__content) { padding-bottom: 0; }
-.add-module-container { margin-top: 20px; text-align: center; }
-.module-pool { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px; }
-.module-pool-item { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px 8px; border: 1px solid #e8e8e8; border-radius: 4px; cursor: pointer; }
-.module-pool-item:hover { border-color: #409eff; color: #409eff; }
-.module-pool-item .el-icon { font-size: 24px; margin-bottom: 8px; }
+
+/* 【核心修复】恢复弹窗的美观样式 */
+.module-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 16px;
+}
+.module-pool-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 8px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.module-pool-item:hover {
+  border-color: #409eff;
+  color: #409eff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.09);
+}
+.module-pool-item .el-icon {
+  font-size: 24px;
+  margin-bottom: 8px;
+}
 </style>
