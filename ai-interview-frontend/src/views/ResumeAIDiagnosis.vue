@@ -111,7 +111,7 @@ const handleUpload = async () => {
     formData.append('title', `AI诊断-${tempTitle}`);
     const newResume = await createResumeApi(formData);
     
-    const genericJd = "请对这份简历进行通用性的评估，分析其作为一份专业简历的优点和缺点，并给出修改建议。";
+    const genericJd = "依据岗位匹配度优先原则，对该简历开展专业级通用性评估，重点分析其在‘目标岗位关键词匹配度’‘职业经历 STAR 法则应用’‘个人价值量化呈现’三方面的表现亮点与短板，同步提供可落地的经历描述优化、模块优先级调整及视觉呈现规范方案。";
     const newReport = await analyzeResumeApi(newResume.id, genericJd);
 
     ElMessage.success('分析完成，正在跳转到报告页面...');
