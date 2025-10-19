@@ -16,6 +16,8 @@ from .ai_services import (
 )
 # 【新增】导入 URL 编码工具
 from urllib.parse import quote
+# 在文件顶部导入
+from rest_framework.views import APIView
 def get_user_cache_key(user):
     return f"user_{user.id}_unfinished_interview"
 
@@ -254,3 +256,29 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         session.finished_at = timezone.now()
         session.save()
         return Response(report_data, status=status.HTTP_200_OK)
+
+
+# 【核心新增】在文件末尾添加新的 APIView
+class PolishDescriptionView(APIView):
+    """
+    接收简历描述并调用 AI 进行润色的 API 视图。
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        original_html = request.data.get('html_content')
+        job_position = request.data.get('job_position')  # 可选参数
+
+        if not original_html:
+            return Response({'error': '缺少 html_content 字段'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 从这里导入润色函数
+        from .ai_services import polish_description_by_ai
+
+        polished_html = polish_description_by_ai(
+            original_html=original_html,
+            user=request.user,
+            job_position=job_position
+        )
+
+        return Response({'polished_html': polished_html}, status=status.HTTP_200_OK)

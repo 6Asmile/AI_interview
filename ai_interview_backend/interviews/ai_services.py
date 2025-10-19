@@ -292,3 +292,56 @@ def generate_final_report(job_position: str, interview_history: list, user: User
     except Exception as e:
         print(f"调用 AI 生成最终报告时发生错误: {e}")
         return {"error": f"生成报告失败: {e}"}
+
+
+def polish_description_by_ai(original_html: str, user: User, job_position: str = None) -> str:
+    """
+    使用 AI 优化一段工作/项目描述的 HTML 内容。
+    :param original_html: 用户在富文本编辑器中输入的原始 HTML。
+    :param user: 当前用户，用于获取 AI 配置。
+    :param job_position: (可选) 目标岗位，让优化更有针对性。
+    :return: 优化后的 HTML 字符串。
+    """
+    api_key, model_slug, base_url = _get_user_ai_config(user)
+    if not api_key:
+        return "<p>AI 服务未配置，无法进行润色。</p>"
+
+    # 构造系统 Prompt
+    system_prompt = (
+        "你是一位顶级的简历优化专家和资深 HR，尤其擅长使用 STAR 法则（Situation, Task, Action, Result）来优化工作和项目描述。"
+        "你的任务是：润色用户提供的描述，使其更具吸引力、突出量化成果，并保持专业的书面语风格。"
+        "重要规则：你必须保持并返回与用户输入完全相同的 HTML 结构（例如 <ul>, <li>, <strong> 等），只修改文本内容。"
+    )
+
+    # 构造用户 Prompt
+    job_context = f" 这段描述是为应聘 '{job_position}' 岗位准备的。" if job_position else ""
+    user_prompt = (
+        f"请根据 STAR 法则，优化以下这段简历描述。{job_context}\n\n"
+        f"原始 HTML 内容如下：\n"
+        f"```html\n{original_html}\n```\n\n"
+        f"请严格按照以下 JSON 格式返回你优化后的 HTML 内容，不要包含任何额外的解释或代码块标记：\n"
+        "{\n"
+        "  \"polished_html\": \"(这里是你优化后的、保持了原有结构的 HTML 字符串)\"\n"
+        "}"
+    )
+
+    try:
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+        # 注意：这里我们强制要求返回 JSON 对象
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=model_slug,
+            messages=messages,
+            stream=False,
+            max_tokens=2048,  # 给予足够的空间来生成内容
+            temperature=0.5,  # 温度稍低，确保专业性
+            response_format={"type": "json_object"},
+        )
+
+        result_json = json.loads(response.choices[0].message.content)
+        return result_json.get("polished_html", original_html)  # 如果 AI 返回格式错误，则返回原文
+
+    except Exception as e:
+        print(f"调用 AI 进行文本润色时发生错误: {e}")
+        # 在出错时，最好返回原文，避免用户内容丢失
+        return original_html

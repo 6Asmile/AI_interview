@@ -43,17 +43,17 @@
     
     <!-- 统一的“添加模块”弹窗 -->
     <el-dialog v-model="dialogVisible" title="添加新模块" width="60%">
-        <div class="module-pool">
-            <div 
-            v-for="template in availableTemplates" 
-            :key="template.moduleType"
-            class="module-pool-item"
-            @click="addModule(template)"
-            >
-            <el-icon><component :is="template.icon" /></el-icon>
-            <span>{{ template.title }}</span>
-            </div>
+      <div class="module-pool">
+        <div 
+          v-for="template in availableTemplates" 
+          :key="template.moduleType"
+          class="module-pool-item"
+          @click="addModule(template)"
+        >
+          <el-icon><component :is="template.icon" /></el-icon>
+          <span>{{ template.title }}</span>
         </div>
+      </div>
     </el-dialog>
   </div>
 </template>
@@ -65,18 +65,18 @@ import draggable from 'vuedraggable';
 import { Plus } from '@element-plus/icons-vue';
 import { allTemplates, type ModuleTemplate } from '@/resume-templates/template-definitions';
 import ModuleFormItem from './forms/ModuleFormItem.vue';
+import { polishDescriptionApi } from '@/api/modules/resumeEditor'; // 导入 AI API
+import { MagicStick } from '@element-plus/icons-vue'; // 导入图标
 
 const editorStore = useResumeEditorStore();
 const dialogVisible = ref(false);
 const currentAddZone = ref<'sidebar' | 'main'>('main');
 
-// computed for sidebar modules
 const sidebarJson = computed({
   get: () => editorStore.resumeJson.sidebar,
   set: (value) => { editorStore.resumeJson.sidebar = value; },
 });
 
-// computed for main content modules
 const mainJson = computed({
   get: () => editorStore.resumeJson.main,
   set: (value) => { editorStore.resumeJson.main = value; },
@@ -95,14 +95,12 @@ const openAddDialog = (zone: 'sidebar' | 'main') => {
 const addModule = (template: ModuleTemplate) => {
   editorStore.addComponent(template.moduleType, currentAddZone.value);
   dialogVisible.value = false;
-  // Auto-scroll to the newly added module after DOM update
   nextTick(() => {
     const targetArray = currentAddZone.value === 'sidebar' ? sidebarJson.value : mainJson.value;
     const newModule = targetArray[targetArray.length - 1];
     if (newModule) {
-      // Set as selected and scroll
       editorStore.selectComponent(newModule.id);
-      scrollToConfigModule(newModule.id);
+      // We rely on the watcher to scroll and expand
     }
   });
 };
@@ -120,7 +118,24 @@ const scrollToConfigModule = (moduleId: string) => {
     });
 };
 
-// Watch for changes from the canvas click
+// 为 SummaryModule 和 CustomModule 添加 AI 润色逻辑
+const handleSimpleModulePolish = async (module: any) => {
+    module.isPolishing = true;
+    try {
+        const content = module.props.summary || module.props.content || '';
+        if (!content) return;
+        
+        const res = await polishDescriptionApi(content);
+        if (module.props.hasOwnProperty('summary')) {
+            module.props.summary = res.polished_html;
+        } else if (module.props.hasOwnProperty('content')) {
+            module.props.content = res.polished_html;
+        }
+    } finally {
+        module.isPolishing = false;
+    }
+}
+
 watch(() => editorStore.selectedComponentId, (newId) => {
     if (newId) {
         scrollToConfigModule(newId);
@@ -129,22 +144,15 @@ watch(() => editorStore.selectedComponentId, (newId) => {
 </script>
 
 <style scoped>
-.config-panel {
-  padding: 16px;
-}
-.zone-wrapper {
-  margin-bottom: 24px;
-}
+.config-panel { padding: 16px; }
+.zone-wrapper { margin-bottom: 24px; }
 .zone-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
 }
-.zone-title {
-  font-size: 13px;
-  color: #999;
-}
+.zone-title { font-size: 13px; color: #999; }
 .module-list {
   display: flex;
   flex-direction: column;
@@ -159,6 +167,7 @@ watch(() => editorStore.selectedComponentId, (newId) => {
   background: #c8ebfb;
   border: 1px dashed #409eff;
 }
+.add-module-container { margin-top: 20px; text-align: center; }
 .module-pool {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -183,5 +192,11 @@ watch(() => editorStore.selectedComponentId, (newId) => {
 .module-pool-item .el-icon {
   font-size: 24px;
   margin-bottom: 8px;
+}
+.description-label { /* Add this if it's used inside this component's template */
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  align-items: center;
 }
 </style>

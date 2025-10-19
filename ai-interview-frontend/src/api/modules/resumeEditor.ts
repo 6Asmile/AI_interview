@@ -28,3 +28,14 @@ export const getStructuredResumeApi = (resumeId: number): Promise<StructuredResu
         method: 'get',
     });
 };
+// 【核心新增】AI 润色 API 函数
+export const polishDescriptionApi = (html_content: string, job_position?: string): Promise<{ polished_html: string }> => {
+  return request({
+    url: '/polish-description/',
+    method: 'post',
+    data: {
+      html_content,
+      job_position,
+    },
+  });
+};
