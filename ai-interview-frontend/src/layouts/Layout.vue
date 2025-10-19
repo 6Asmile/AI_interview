@@ -22,6 +22,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item @click="navigateTo('ResumeManagement')">我的简历</el-dropdown-item>
+                 <el-dropdown-item @click="navigateTo('ResumeGenerator')">AI 简历生成</el-dropdown-item>
                 <el-dropdown-item @click="navigateTo('ResumeAIDiagnosis')">AI 简历诊断</el-dropdown-item>
               </el-dropdown-menu>
             </template>

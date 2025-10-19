@@ -2,6 +2,7 @@
 import request from '@/api/request';
 // 【核心修改】从 report.ts 导入更完整的类型
 import type { ResumeAnalysisReportItem } from './report';
+import type { ResumeLayout } from '@/store/modules/resumeEditor';
 // 【核心修改】从 resume.ts 导入类型
 import type { StructuredResume, EducationItem, WorkExperienceItem, ProjectExperienceItem, SkillItem } from './resume';
 
@@ -67,5 +68,13 @@ export const analyzeResumeApi = (resume_id: number, jd_text: string): Promise<Re
       resume_id,
       jd_text,
     },
+  });
+};
+
+export const generateResumeApi = (name: string, position: string, experience_years: string, keywords: string): Promise<ResumeLayout> => {
+  return request({
+    url: '/generate-resume/',
+    method: 'post',
+    data: { name, position, experience_years, keywords }
   });
 };

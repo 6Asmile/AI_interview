@@ -55,7 +55,13 @@ const routes: Array<RouteRecordRaw> = [
     { 
       path: 'ai-diagnosis', 
       name: 'ResumeAIDiagnosis',
-       component: () => import('@/views/ResumeAIDiagnosis.vue') },
+       component: () => import('@/views/ResumeAIDiagnosis.vue') 
+      },
+      { 
+        path: 'generate-resume', 
+        name: 'ResumeGenerator',
+         component: () => import('@/views/ResumeGenerator.vue') 
+        },
     ],
   },
 ];

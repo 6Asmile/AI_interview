@@ -16,7 +16,7 @@ from .ai_services import (
     generate_next_question_stream,
     generate_final_report,
     analyze_resume_against_jd,
-    polish_description_by_ai
+    polish_description_by_ai, generate_resume_by_ai
 )
 from urllib.parse import quote
 from reports.models import ResumeAnalysisReport
@@ -301,3 +301,25 @@ class ResumeAnalysisView(APIView):
         # 3. 序列化并返回新创建的报告对象
         serializer = ResumeAnalysisReportSerializer(new_report)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class GenerateResumeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        name = request.data.get('name')
+        position = request.data.get('position')
+        experience_years = request.data.get('experience_years')
+        keywords = request.data.get('keywords', '')
+
+        if not all([name, position, experience_years]):
+            return Response({'error': '姓名、岗位和工作年限为必填项'}, status=status.HTTP_400_BAD_REQUEST)
+
+        resume_json = generate_resume_by_ai(
+            name, position, experience_years, keywords, request.user
+        )
+
+        if 'error' in resume_json:
+            return Response(resume_json, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(resume_json, status=status.HTTP_200_OK)

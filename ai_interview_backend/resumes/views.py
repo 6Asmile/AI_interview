@@ -16,6 +16,8 @@ from .services import extract_text_from_file
 class ResumeViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
+
+
     def get_queryset(self):
         return Resume.objects.filter(user=self.request.user).order_by('-updated_at')
 
@@ -60,11 +62,11 @@ class ResumeViewSet(viewsets.ModelViewSet):
             output_serializer = ResumeDetailSerializer(resume_instance)
             return Response(output_serializer.data, status=status.HTTP_201_CREATED)
 
-        # --- 模式二：在线创建 ---
+            # --- 在线创建的部分 ---
         else:
-            serializer = ResumeCreateSerializer(data=request.data)
+            # 这里的 serializer 现在是更新后的 ResumeCreateSerializer
+            serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            # perform_create 会调用 serializer.save() 并注入 user
             self.perform_create(serializer)
             # 使用 Detail 序列化器返回完整的对象
             output_serializer = ResumeDetailSerializer(serializer.instance)
@@ -72,7 +74,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
             return Response(output_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def perform_create(self, serializer):
-        # 创建简历时，自动关联当前用户
+        # 这个函数会自动保存所有 serializer 中定义的字段，并注入 user
         serializer.save(user=self.request.user)
 
 

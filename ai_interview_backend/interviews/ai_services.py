@@ -416,3 +416,151 @@ def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dic
     except Exception as e:
         print(f"调用 AI 进行简历分析时发生错误: {e}")
         return {"error": f"分析失败，AI服务暂时不可用: {e}"}
+
+
+def generate_resume_by_ai(name: str, position: str, experience_years: str, keywords: str, user: User) -> dict:
+    """
+    根据用户提供的核心信息，使用 AI 生成一份完整的、结构化的简历 JSON。
+    :return: 一个符合前端 ResumeLayout 结构的字典。
+    """
+    api_key, model_slug, base_url = _get_user_ai_config(user)
+    if not api_key:
+        return {"error": "AI 服务未配置"}
+
+    system_prompt = (
+        "你是一位世界顶级的简历撰写专家和职业规划师，精通所有行业的招聘要求和简历写作技巧。"
+        "你的任务是根据用户提供的最核心信息，为他生成一份专业、完整、内容丰富且极具吸引力的简历。"
+        "你必须严格按照我指定的 JSON 格式返回，这个 JSON 包含 'sidebar' 和 'main' 两个区域的模块数组。"
+    )
+
+    user_prompt = (
+        f"请为我生成一份简历。我的核心信息如下：\n"
+        f"- 姓名: {name}\n"
+        f"- 期望岗位: {position}\n"
+        f"- 工作年限: {experience_years}\n"
+        f"- 其他关键词或个人优势: {keywords}\n\n"
+        f"请为我生成“基本信息”、“教育背景”、“工作经历”、“项目经历”、“专业技能”和“自我评价”这几个核心模块。"
+        f"内容需要你根据期望岗位进行专业的、合理的虚构和扩展，使其看起来非常真实和有竞争力。"
+        f"返回的 JSON 结构必须如下（不要包含任何额外解释）：\n"
+        "{\n"
+        "  \"sidebar\": [\n"
+        "    {\n"
+        "      \"id\": \"(生成一个uuid)\",\n"
+        "      \"componentName\": \"BaseInfoModule\",\n"
+        "      \"moduleType\": \"BaseInfo\",\n"
+        "      \"title\": \"基本信息\",\n"
+        "      \"props\": {\n"
+        "        \"show\": true,\n"
+        "        \"name\": \"(用户的姓名)\",\n"
+        "        \"photo\": \"\",\n"
+        "        \"items\": [\n"
+        "          {\"id\": \"(uuid)\", \"label\": \"电话\", \"value\": \"138-xxxx-xxxx\"},\n"
+        "          {\"id\": \"(uuid)\", \"label\": \"邮箱\", \"value\": \"xxxx@email.com\"}\n"
+        "        ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"id\": \"(uuid)\",\n"
+        "      \"componentName\": \"SkillsModule\",\n"
+        "      \"moduleType\": \"Skills\",\n"
+        "      \"title\": \"专业技能\",\n"
+        "      \"props\": {\n"
+        "        \"show\": true,\n"
+        "        \"title\": \"专业技能\",\n"
+        "        \"skills\": [\n"
+        "          {\"id\": \"(uuid)\", \"name\": \"(根据岗位生成的核心技能1)\", \"proficiency\": \"精通\"},\n"
+        "          {\"id\": \"(uuid)\", \"name\": \"(技能2)\", \"proficiency\": \"熟练\"}\n"
+        "        ]\n"
+        "      }\n"
+        "    }\n"
+        "  ],\n"
+        "  \"main\": [\n"
+        "    {\n"
+        "      \"id\": \"(uuid)\",\n"
+        "      \"componentName\": \"SummaryModule\",\n"
+        "      \"moduleType\": \"Summary\",\n"
+        "      \"title\": \"自我评价\",\n"
+        "      \"props\": {\n"
+        "        \"show\": true,\n"
+        "        \"title\": \"自我评价\",\n"
+        "        \"summary\": \"(生成一段2-3句话的、高度概括的自我评价)\"\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"id\": \"(uuid)\",\n"
+        "      \"componentName\": \"WorkExpModule\",\n"
+        "      \"moduleType\": \"WorkExp\",\n"
+        "      \"title\": \"工作经历\",\n"
+        "      \"props\": {\n"
+        "        \"show\": true,\n"
+        "        \"title\": \"工作经历\",\n"
+        "        \"experiences\": [\n"
+        "          {\n"
+        "            \"id\": \"(uuid)\",\n"
+        "            \"company\": \"(虚构一个知名的相关公司)\",\n"
+        "            \"position\": \"(相关职位)\",\n"
+        "            \"dateRange\": [\"(合理的开始年份)\", \"(合理的结束年份)\"],\n"
+        "            \"description\": \"(使用STAR法则生成一段非常有吸引力的工作描述，包含量化结果)\"\n"
+        "          }\n"
+        "        ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"id\": \"(uuid)\",\n"
+        "      \"componentName\": \"ProjectModule\",\n"
+        "      \"moduleType\": \"Project\",\n"
+        "      \"title\": \"项目经历\",\n"
+        "      \"props\": {\n"
+        "        \"show\": true,\n"
+        "        \"title\": \"项目经历\",\n"
+        "        \"projects\": [\n"
+        "          {\n"
+        "            \"id\": \"(uuid)\",\n"
+        "            \"name\": \"(虚构一个亮眼的相关项目)\",\n"
+        "            \"role\": \"(核心角色)\",\n"
+        "            \"dateRange\": [\"(合理的开始年份)\", \"(合理的结束年份)\"],\n"
+        "            \"description\": \"(使用STAR法则生成一段非常有吸引力的项目描述)\",\n"
+        "            \"techStack\": \"(项目使用的技术栈)\"\n"
+        "          }\n"
+        "        ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"id\": \"(uuid)\",\n"
+        "      \"componentName\": \"EducationModule\",\n"
+        "      \"moduleType\": \"Education\",\n"
+        "      \"title\": \"教育背景\",\n"
+        "      \"props\": {\n"
+        "        \"show\": true,\n"
+        "        \"title\": \"教育背景\",\n"
+        "        \"educations\": [\n"
+        "          {\n"
+        "            \"id\": \"(uuid)\",\n"
+        "            \"school\": \"(虚构一所不错的大学)\",\n"
+        "            \"major\": \"(相关专业)\",\n"
+        "            \"degree\": \"(本科/硕士)\",\n"
+        "            \"dateRange\": [\"(合理的开始年份)\", \"(合理的结束年份)\"],\n"
+        "            \"description\": \"\"\n"
+        "          }\n"
+        "        ]\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}"
+    )
+
+    try:
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=model_slug,
+            messages=messages,
+            stream=False,
+            max_tokens=4096,
+            temperature=0.8,  # 温度稍高，增加创造性
+            response_format={"type": "json_object"},
+        )
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        print(f"调用 AI 生成简历时发生错误: {e}")
+        return {"error": f"AI 生成失败: {e}"}

@@ -39,10 +39,18 @@ class ProjectExperienceSerializer(serializers.ModelSerializer):
 
 
 # --- 用于在线创建的简单序列化器 ---
+# --- 【核心修复】升级创建简历的序列化器 ---
 class ResumeCreateSerializer(serializers.ModelSerializer):
+    # 允许在创建时直接传入 content_json 和 template_name
+    # read_only=False (默认) 意味着这些字段是可写的
+    # required=False 意味着它们是可选的
+    content_json = serializers.JSONField(required=False, allow_null=True)
+    template_name = serializers.CharField(required=False, allow_blank=True)
+
     class Meta:
         model = Resume
-        fields = ['title', 'status']
+        # 将新字段添加到 fields 列表中
+        fields = ['title', 'status', 'content_json', 'template_name']
 
 
 # --- 【核心修复】支持深度嵌套读写的主序列化器 ---
