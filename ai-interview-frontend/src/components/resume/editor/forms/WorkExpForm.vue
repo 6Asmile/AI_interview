@@ -8,41 +8,60 @@
           <el-col :span="12"><el-form-item label="职位"><el-input v-model="exp.position" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="在职时间">
-          <el-date-picker v-model="exp.dateRange" type="monthrange" range-separator="至" start-placeholder="开始月份" end-placeholder="结束月份" value-format="YYYY-MM" />
+          <el-date-picker
+            v-model="exp.dateRange"
+            type="monthrange"
+            range-separator="至"
+            start-placeholder="开始月份"
+            end-placeholder="结束月份"
+            value-format="YYYY-MM"
+          />
         </el-form-item>
-        
         <div class="description-wrapper">
-            <div class="description-label">
-                <span>工作内容</span>
-                <el-button 
-                    class="ai-polish-button"
-                    @click="handlePolish(exp)"
-                    :loading="exp.isPolishing"
-                >
-                    <el-icon class="magic-icon"><MagicStick /></el-icon>
-                    AI 润色
-                </el-button>
-            </div>
-            <RichTextEditor v-model="exp.description" />
+          <div class="description-label">
+            <span>工作内容</span>
+            <el-button 
+              class="ai-polish-button" 
+              @click="handlePolish(exp)" 
+              :loading="exp.isPolishing"
+            >
+              <el-icon class="magic-icon"><MagicStick /></el-icon>
+              AI 润色
+            </el-button>
+          </div>
+          <RichTextEditor v-model="exp.description" />
         </div>
       </el-form>
-      <el-button link type="danger" @click="removeItem('experiences', index)" style="margin-top: 10px;">删除此条经历</el-button>
+      <el-button link type="danger" @click="removeItem(index)" style="margin-top: 10px;">删除此条经历</el-button>
     </div>
-    <el-button plain type="primary" @click="addItem('experiences')">添加工作经历</el-button>
+    <el-button plain type="primary" @click="addItem">添加工作经历</el-button>
+    
+    <el-dialog v-model="diffDialogVisible" title="AI 润色建议" width="60%">
+      <DiffViewer v-if="diffData" :old-text="diffData.oldHtml" :new-text="diffData.newHtml" />
+      <template #footer>
+        <el-button @click="diffDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyPolish">采纳修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 import RichTextEditor from '@/components/common/RichTextEditor.vue';
 import { MagicStick } from '@element-plus/icons-vue';
 import { polishDescriptionApi } from '@/api/modules/resumeEditor';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
+import DiffViewer from '@/components/common/DiffViewer.vue';
 
-const { module, propKey } = defineProps<{ module: any; propKey: string }>();
+// 移除了未使用的 propKey
+const { module } = defineProps<{ module: any }>();
 const props = computed(() => module.props);
 const editorStore = useResumeEditorStore();
+
+const diffDialogVisible = ref(false);
+const diffData = ref<{ oldHtml: string; newHtml: string; target: any } | null>(null);
 
 const newItemTemplates: Record<string, object> = {
   experiences: { company: '', position: '', dateRange: [], description: '<p><br></p>', isPolishing: false },
@@ -52,28 +71,47 @@ const handlePolish = async (experience: any) => {
   experience.isPolishing = true;
   try {
     const jobPosition = editorStore.resumeMeta?.job_title;
-    const res = await polishDescriptionApi(experience.description, jobPosition);
-    experience.description = res.polished_html;
+    const oldHtml = experience.description;
+    const res = await polishDescriptionApi(oldHtml, jobPosition);
+    diffData.value = { oldHtml, newHtml: res.polished_html, target: experience };
+    diffDialogVisible.value = true;
   } finally {
     experience.isPolishing = false;
   }
 };
 
-const addItem = (key: string) => {
-  if (props.value[key]) {
-    (props.value[key] as any[]).push({ id: uuidv4(), ...newItemTemplates[key] });
+const applyPolish = () => {
+  if (diffData.value) {
+    diffData.value.target.description = diffData.value.newHtml;
+    diffDialogVisible.value = false;
+    diffData.value = null;
   }
 };
-const removeItem = (key: string, index: number) => {
-  if (props.value[key]) {
-    (props.value[key] as any[]).splice(index, 1);
+
+const addItem = () => {
+  if (props.value.experiences) {
+    (props.value.experiences as any[]).push({ id: uuidv4(), ...newItemTemplates.experiences });
+  }
+};
+
+const removeItem = (index: number) => {
+  if (props.value.experiences) {
+    (props.value.experiences as any[]).splice(index, 1);
   }
 };
 </script>
 
 <style scoped>
-.list-item-form-vertical { padding: 15px; border: 1px solid #f0f0f0; margin-bottom: 15px; border-radius: 4px; }
-.description-wrapper { width: 100%; margin-top: 10px; }
+.list-item-form-vertical { 
+  padding: 15px; 
+  border: 1px solid #f0f0f0; 
+  margin-bottom: 15px; 
+  border-radius: 4px; 
+}
+.description-wrapper { 
+  width: 100%; 
+  margin-top: 10px; 
+}
 .description-label {
   display: flex;
   justify-content: space-between;
@@ -83,8 +121,8 @@ const removeItem = (key: string, index: number) => {
 }
 </style>
 
-<!-- 【核心修复】添加全局或共享样式来美化按钮 -->
 <style>
+/* 全局样式保持不变，用于美化按钮 */
 .ai-polish-button {
   padding: 5px 10px;
   height: auto;

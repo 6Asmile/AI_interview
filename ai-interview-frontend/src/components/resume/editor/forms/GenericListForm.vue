@@ -42,14 +42,24 @@
       <el-button link type="danger" @click="removeItem(index)">删除此条</el-button>
     </div>
     <el-button plain type="primary" @click="addItem">添加一项</el-button>
+
+    <!-- Diff 对话框 -->
+    <el-dialog v-model="diffDialogVisible" title="AI 润色建议" width="60%">
+      <DiffViewer v-if="diffData" :old-text="diffData.oldHtml" :new-text="diffData.newHtml" />
+      <template #footer>
+        <el-button @click="diffDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyPolish">采纳修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 import { allTemplates } from '@/resume-templates/template-definitions';
 import RichTextEditor from '@/components/common/RichTextEditor.vue';
+import DiffViewer from '@/components/common/DiffViewer.vue';
 import { MagicStick } from '@element-plus/icons-vue';
 import { polishDescriptionApi } from '@/api/modules/resumeEditor';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
@@ -59,6 +69,9 @@ const { module, propKey } = defineProps<{ module: any; propKey: string }>();
 const items = computed(() => module.props[propKey]);
 const editorStore = useResumeEditorStore();
 
+const diffDialogVisible = ref(false);
+const diffData = ref<{ oldHtml: string; newHtml: string; target: any } | null>(null);
+
 const labels: Record<string, string> = { name: '名称', school: '学校', company: '公司', proficiency: '熟练度', role: '角色', position: '职位', major: '专业', degree: '学位', dateRange: '时间范围', subtitle: '副标题/分数', description: '详细描述', techStack: '技术栈', content: '内容', title: '标题' };
 const getInputType = (key: string) => (key === 'description' || key === 'content' ? 'textarea' : 'text');
 const getLabel = (key: string) => labels[key] || key;
@@ -67,11 +80,21 @@ const handlePolish = async (item: any) => {
   item.isPolishing = true;
   try {
     const jobPosition = editorStore.resumeMeta?.job_title;
-    const res = await polishDescriptionApi(item.description, jobPosition);
-    item.description = res.polished_html;
+    const oldHtml = item.description;
+    const res = await polishDescriptionApi(oldHtml, jobPosition);
+    diffData.value = { oldHtml, newHtml: res.polished_html, target: item };
+    diffDialogVisible.value = true;
   } finally {
     item.isPolishing = false;
   }
+};
+
+const applyPolish = () => {
+    if (diffData.value) {
+        diffData.value.target.description = diffData.value.newHtml;
+        diffDialogVisible.value = false;
+        diffData.value = null;
+    }
 };
 
 const addItem = () => {
@@ -95,12 +118,5 @@ const removeItem = (index: number) => {
 <style scoped>
 .list-item-form-vertical { padding: 15px; border: 1px solid #f0f0f0; margin-bottom: 15px; border-radius: 4px; }
 .description-wrapper { width: 100%; }
-.description-label {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  align-items: center;
-  margin-bottom: 8px; /* 增加与编辑器的间距 */
-}
-/* 美化按钮的样式将在 WorkExpForm 中统一定义 */
+.description-label { display: flex; justify-content: space-between; width: 100%; align-items: center; margin-bottom: 8px; }
 </style>

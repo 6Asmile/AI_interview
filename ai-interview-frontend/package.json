@@ -12,6 +12,7 @@
     "@wangeditor/editor": "^5.1.23",
     "@wangeditor/editor-for-vue": "^5.1.12",
     "axios": "^1.7.2",
+    "diff-match-patch": "^1.0.5",
     "echarts": "^5.5.0",
     "element-plus": "^2.7.5",
     "face-api.js": "^0.22.2",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0-alpha.13",
+    "@types/diff-match-patch": "^1.0.36",
     "@types/node": "^20.14.2",
     "@types/uuid": "^9.0.8",
     "@vitejs/plugin-vue": "^5.0.5",

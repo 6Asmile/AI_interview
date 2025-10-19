@@ -41,7 +41,7 @@
       </draggable>
     </div>
     
-    <!-- 统一的“添加模块”弹窗 -->
+    <!-- 添加模块弹窗 -->
     <el-dialog v-model="dialogVisible" title="添加新模块" width="60%">
       <div class="module-pool">
         <div 
@@ -55,6 +55,15 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- Diff 对话框 -->
+    <el-dialog v-model="diffDialogVisible" title="AI 润色建议" width="60%">
+      <DiffViewer v-if="diffData" :old-text="diffData.oldHtml" :new-text="diffData.newHtml" />
+      <template #footer>
+        <el-button @click="diffDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyPolish">采纳修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -62,15 +71,18 @@
 import { ref, computed, watch, nextTick } from 'vue';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import draggable from 'vuedraggable';
-import { Plus } from '@element-plus/icons-vue';
+import { Plus, MagicStick } from '@element-plus/icons-vue';
 import { allTemplates, type ModuleTemplate } from '@/resume-templates/template-definitions';
 import ModuleFormItem from './forms/ModuleFormItem.vue';
-import { polishDescriptionApi } from '@/api/modules/resumeEditor'; // 导入 AI API
-import { MagicStick } from '@element-plus/icons-vue'; // 导入图标
+import { polishDescriptionApi } from '@/api/modules/resumeEditor';
+import DiffViewer from '@/components/common/DiffViewer.vue';
 
 const editorStore = useResumeEditorStore();
 const dialogVisible = ref(false);
 const currentAddZone = ref<'sidebar' | 'main'>('main');
+
+const diffDialogVisible = ref(false);
+const diffData = ref<{ oldHtml: string; newHtml: string; target: any; propName: string } | null>(null);
 
 const sidebarJson = computed({
   get: () => editorStore.resumeJson.sidebar,
@@ -100,7 +112,6 @@ const addModule = (template: ModuleTemplate) => {
     const newModule = targetArray[targetArray.length - 1];
     if (newModule) {
       editorStore.selectComponent(newModule.id);
-      // We rely on the watcher to scroll and expand
     }
   });
 };
@@ -118,23 +129,28 @@ const scrollToConfigModule = (moduleId: string) => {
     });
 };
 
-// 为 SummaryModule 和 CustomModule 添加 AI 润色逻辑
 const handleSimpleModulePolish = async (module: any) => {
+    const propName = module.props.hasOwnProperty('summary') ? 'summary' : 'content';
+    const oldHtml = module.props[propName] || '';
+    if (!oldHtml) return;
+
     module.isPolishing = true;
     try {
-        const content = module.props.summary || module.props.content || '';
-        if (!content) return;
-        
-        const res = await polishDescriptionApi(content);
-        if (module.props.hasOwnProperty('summary')) {
-            module.props.summary = res.polished_html;
-        } else if (module.props.hasOwnProperty('content')) {
-            module.props.content = res.polished_html;
-        }
+        const res = await polishDescriptionApi(oldHtml, editorStore.resumeMeta?.job_title);
+        diffData.value = { oldHtml, newHtml: res.polished_html, target: module.props, propName };
+        diffDialogVisible.value = true;
     } finally {
         module.isPolishing = false;
     }
-}
+};
+
+const applyPolish = () => {
+    if (diffData.value) {
+        diffData.value.target[diffData.value.propName] = diffData.value.newHtml;
+        diffDialogVisible.value = false;
+        diffData.value = null;
+    }
+};
 
 watch(() => editorStore.selectedComponentId, (newId) => {
     if (newId) {
@@ -193,7 +209,7 @@ watch(() => editorStore.selectedComponentId, (newId) => {
   font-size: 24px;
   margin-bottom: 8px;
 }
-.description-label { /* Add this if it's used inside this component's template */
+.description-label {
   display: flex;
   justify-content: space-between;
   width: 100%;
