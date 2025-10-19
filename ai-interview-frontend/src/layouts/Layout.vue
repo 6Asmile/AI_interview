@@ -15,8 +15,8 @@
               {{ industry.name }}
             </el-menu-item>
           </el-sub-menu>
-          <el-menu-item index="/dashboard/resumes">简历中心</el-menu-item>
-          <el-menu-item index="/dashboard/history">我的面试</el-menu-item>
+          <el-menu-item index="/dashboard/resumes">简历制作</el-menu-item>
+          <el-menu-item index="/dashboard/history">报告历史</el-menu-item>
         </el-menu>
       </div>
       <div class="user-info">
