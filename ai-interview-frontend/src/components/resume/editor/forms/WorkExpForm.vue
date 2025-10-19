@@ -16,7 +16,12 @@
           value-format="YYYY-MM"
         />
       </el-form-item>
-      <el-form-item label="工作内容"><el-input type="textarea" autosize v-model="exp.description" /></el-form-item>
+      
+      <!-- 【核心修改】将 el-input 替换为 RichTextEditor -->
+      <el-form-item label="工作内容">
+        <RichTextEditor v-model="exp.description" />
+      </el-form-item>
+
     </el-form>
     <el-button link type="danger" @click="removeItem('experiences', index)" style="margin-top: 10px;">删除此条经历</el-button>
   </div>
@@ -26,30 +31,28 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
-const { module } = defineProps<{ module: any }>();
+// 【核心修改】导入 RichTextEditor
+import RichTextEditor from '@/components/common/RichTextEditor.vue';
+
+const { module, propKey } = defineProps<{ module: any; propKey: string }>();
 const props = computed(() => module.props);
 
 const newItemTemplates: Record<string, object> = {
-  experiences: { company: '', position: '', dateRange: [], description: '' },
+  experiences: { company: '', position: '', dateRange: [], description: '<p><br></p>' }, // 默认值改为空段落
 };
 
 const addItem = (propKey: string) => {
   if (props.value[propKey]) {
-    props.value[propKey].push({ id: uuidv4(), ...newItemTemplates[propKey] });
+    (props.value[propKey] as any[]).push({ id: uuidv4(), ...newItemTemplates[propKey] });
   }
 };
 const removeItem = (propKey: string, index: number) => {
   if (props.value[propKey]) {
-    props.value[propKey].splice(index, 1);
+    (props.value[propKey] as any[]).splice(index, 1);
   }
 };
 </script>
 
 <style scoped>
-.list-item-form-vertical {
-  padding: 15px;
-  border: 1px solid #f0f0f0;
-  margin-bottom: 15px;
-  border-radius: 4px;
-}
+.list-item-form-vertical { padding: 15px; border: 1px solid #f0f0f0; margin-bottom: 15px; border-radius: 4px; }
 </style>

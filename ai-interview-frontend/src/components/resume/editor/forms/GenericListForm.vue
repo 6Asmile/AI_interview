@@ -1,5 +1,5 @@
 <!-- src/components/resume/editor/forms/GenericListForm.vue -->
-<template>
+  <template>
   <div>
     <div v-for="(item, index) in items" :key="item.id" class="list-item-form-vertical">
       <el-form label-position="top">
@@ -15,6 +15,8 @@
               value-format="YYYY-MM"
               style="width: 100%;"
             />
+            <!-- 【核心修改】当字段为 'description' 时，使用富文本编辑器 -->
+            <RichTextEditor v-else-if="key === 'description'" v-model="item[key]" />
             <el-input 
               v-else
               :type="getInputType(key)" 
@@ -35,6 +37,8 @@
 import { computed } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 import { allTemplates } from '@/resume-templates/template-definitions';
+// 【核心修改】导入 RichTextEditor
+import RichTextEditor from '@/components/common/RichTextEditor.vue';
 
 const { module, propKey } = defineProps<{ module: any; propKey: string }>();
 

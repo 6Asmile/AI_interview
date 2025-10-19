@@ -9,7 +9,8 @@
         <span class="date-range">{{ formatDisplayDateRange(proj.dateRange) }}</span>
       </div>
       <p class="tech-stack" v-if="proj.techStack"><b>技术栈:</b> {{ proj.techStack }}</p>
-      <pre class="description">{{ proj.description }}</pre>
+      <!-- 【核心修改】 -->
+      <div class="description" v-html="proj.description"></div>
     </div>
   </div>
 </template>
@@ -19,6 +20,7 @@ import { computed, markRaw } from 'vue';
 import SectionTitle from './common/SectionTitle.vue';
 import SectionTitleStyle2 from './common/SectionTitleStyle2.vue';
 import SectionTitleStyle3 from './common/SectionTitleStyle3.vue';
+import SectionTitleStyle4 from './common/SectionTitleStyle4.vue';
 
 interface Project {
   id: string;
@@ -36,15 +38,11 @@ const props = defineProps({
   projects: { type: Array as () => Project[], default: () => [] }
 });
 
-// 【核心修改】扩展 computed 属性以支持 style3
 const titleComponent = computed(() => {
-  if (props.titleStyle === 'style2') {
-    return markRaw(SectionTitleStyle2);
-  }
-  if (props.titleStyle === 'style3') {
-    return markRaw(SectionTitleStyle3);
-  }
-  return markRaw(SectionTitle); // 默认返回 style1
+  if (props.titleStyle === 'style2') return markRaw(SectionTitleStyle2);
+  if (props.titleStyle === 'style3') return markRaw(SectionTitleStyle3);
+  if (props.titleStyle === 'style4') return markRaw(SectionTitleStyle4);
+  return markRaw(SectionTitle);
 });
 
 const formatDisplayDateRange = (dateRange: (string | null)[] | string): string => {
@@ -65,5 +63,17 @@ const formatDisplayDateRange = (dateRange: (string | null)[] | string): string =
 .sub-info { color: #555; }
 .date-range { font-style: italic; color: #888; }
 .tech-stack { font-size: 14px; color: #555; margin-bottom: 4px; }
-.description { font-size: 14px; color: #555; line-height: 1.8; white-space: pre-wrap; font-family: inherit; }
+
+/* 【核心修改】 */
+.description {
+  font-size: 14px;
+  color: #555;
+  line-height: 1.8;
+  font-family: inherit;
+}
+.description :deep(p) { margin: 0; }
+.description :deep(ul), .description :deep(ol) {
+  padding-left: 20px;
+  margin: 8px 0;
+}
 </style>

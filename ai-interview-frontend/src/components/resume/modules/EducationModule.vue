@@ -8,7 +8,8 @@
         <span class="sub-info">{{ edu.major }} - {{ edu.degree }}</span>
         <span class="date-range">{{ formatDisplayDateRange(edu.dateRange) }}</span>
       </div>
-      <pre v-if="edu.description" class="description">{{ edu.description }}</pre>
+      <!-- 【核心修改】 -->
+      <div v-if="edu.description" class="description" v-html="edu.description"></div>
     </div>
   </div>
 </template>
@@ -18,6 +19,7 @@ import { computed, markRaw } from 'vue';
 import SectionTitle from './common/SectionTitle.vue';
 import SectionTitleStyle2 from './common/SectionTitleStyle2.vue';
 import SectionTitleStyle3 from './common/SectionTitleStyle3.vue';
+import SectionTitleStyle4 from './common/SectionTitleStyle4.vue';
 
 interface Education {
   id: string;
@@ -34,15 +36,11 @@ const props = defineProps({
   educations: { type: Array as () => Education[], default: () => [] }
 });
 
-// 【核心修改】扩展 computed 属性以支持 style3
 const titleComponent = computed(() => {
-  if (props.titleStyle === 'style2') {
-    return markRaw(SectionTitleStyle2);
-  }
-  if (props.titleStyle === 'style3') {
-    return markRaw(SectionTitleStyle3);
-  }
-  return markRaw(SectionTitle); // 默认返回 style1
+  if (props.titleStyle === 'style2') return markRaw(SectionTitleStyle2);
+  if (props.titleStyle === 'style3') return markRaw(SectionTitleStyle3);
+  if (props.titleStyle === 'style4') return markRaw(SectionTitleStyle4);
+  return markRaw(SectionTitle);
 });
 
 const formatDisplayDateRange = (dateRange: (string | null)[] | string): string => {
@@ -62,5 +60,18 @@ const formatDisplayDateRange = (dateRange: (string | null)[] | string): string =
 .main-info { font-weight: 600; }
 .sub-info { color: #555; }
 .date-range { font-style: italic; color: #888; }
-.description { font-size: 14px; color: #555; line-height: 1.8; white-space: pre-wrap; font-family: inherit; margin-left: 8px; }
+
+/* 【核心修改】 */
+.description {
+  font-size: 14px;
+  color: #555;
+  line-height: 1.8;
+  font-family: inherit;
+  margin-left: 8px;
+}
+.description :deep(p) { margin: 0; }
+.description :deep(ul), .description :deep(ol) {
+  padding-left: 20px;
+  margin: 8px 0;
+}
 </style>
