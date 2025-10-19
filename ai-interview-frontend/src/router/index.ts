@@ -45,6 +45,13 @@ const routes: Array<RouteRecordRaw> = [
         props: true,
         meta: { requiresAuth: true },
       },
+      // 【核心新增】分析报告详情页
+    { 
+        path: 'analysis/:reportId', 
+        name: 'AnalysisReportDetail', 
+        component: () => import('@/views/AnalysisReportDetail.vue'), 
+        props: true 
+    },
     ],
   },
 ];

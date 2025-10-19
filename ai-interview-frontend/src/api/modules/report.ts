@@ -1,4 +1,5 @@
 import request from '@/api/request';
+import type { AnalysisReport } from './resumeEditor'; // 导入类型
 import type { InterviewSessionItem, AnalysisFrame } from './interview'; // 【新增】导入 AnalysisFrame
 // --- 类型定义 ---
 export interface AbilityScore {
@@ -54,4 +55,25 @@ export const getInterviewHistoryApi = (): Promise<InterviewSessionItem[]> => {
 
 export const getInterviewReportApi = (sessionId: string): Promise<InterviewReport> => {
   return request({ url: `/interviews/${sessionId}/finish/`, method: 'post' });
+};
+
+// 定义完整的报告模型类型
+export interface ResumeAnalysisReportItem {
+    id: string;
+    user: number;
+    resume: number;
+    jd_text: string;
+    report_data: AnalysisReport;
+    overall_score: number;
+    created_at: string;
+}
+
+// 获取所有分析报告历史
+export const getAnalysisHistoryApi = (): Promise<ResumeAnalysisReportItem[]> => {
+    return request({ url: '/analysis-reports/', method: 'get' });
+};
+
+// 获取单个分析报告详情
+export const getAnalysisReportDetailApi = (reportId: string): Promise<ResumeAnalysisReportItem> => {
+    return request({ url: `/analysis-reports/${reportId}/`, method: 'get' });
 };

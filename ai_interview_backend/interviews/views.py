@@ -19,7 +19,8 @@ from .ai_services import (
     polish_description_by_ai
 )
 from urllib.parse import quote
-
+from reports.models import ResumeAnalysisReport
+from reports.serializers import ResumeAnalysisReportSerializer
 
 def format_resume_to_text(resume: Resume) -> str:
     """
@@ -270,20 +271,33 @@ class ResumeAnalysisView(APIView):
         try:
             resume_instance = Resume.objects.get(id=resume_id, user=request.user)
             resume_text = format_resume_to_text(resume_instance)
-
             if not resume_text.strip():
                 return Response({'error': '无法从该简历中提取有效文本内容'}, status=status.HTTP_400_BAD_REQUEST)
-
         except Resume.DoesNotExist:
             return Response({'error': '简历不存在'}, status=status.HTTP_404_NOT_FOUND)
 
-        analysis_report = analyze_resume_against_jd(
+        # 1. 调用AI服务
+        analysis_report_data = analyze_resume_against_jd(
             resume_text=resume_text,
             jd_text=jd_text,
             user=request.user
         )
 
-        if "error" in analysis_report:
-            return Response(analysis_report, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if "error" in analysis_report_data:
+            return Response(analysis_report_data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        return Response(analysis_report, status=status.HTTP_200_OK)
+        # 2. 【核心修改】将报告存入数据库
+        try:
+            new_report = ResumeAnalysisReport.objects.create(
+                user=request.user,
+                resume=resume_instance,
+                jd_text=jd_text,
+                report_data=analysis_report_data,
+                overall_score=analysis_report_data.get('overall_score', 0)
+            )
+        except Exception as e:
+            return Response({'error': f'保存分析报告失败: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 3. 序列化并返回新创建的报告对象
+        serializer = ResumeAnalysisReportSerializer(new_report)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

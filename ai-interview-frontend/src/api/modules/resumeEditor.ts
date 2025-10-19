@@ -1,5 +1,7 @@
 // src/api/modules/resumeEditor.ts
 import request from '@/api/request';
+// 【核心修改】从 report.ts 导入更完整的类型
+import type { ResumeAnalysisReportItem } from './report';
 // 【核心修改】从 resume.ts 导入类型
 import type { StructuredResume, EducationItem, WorkExperienceItem, ProjectExperienceItem, SkillItem } from './resume';
 
@@ -56,8 +58,8 @@ export interface AnalysisReport {
   }[];
 }
 
-// 【核心新增】AI 简历分析 API 函数
-export const analyzeResumeApi = (resume_id: number, jd_text: string): Promise<AnalysisReport> => {
+// 【核心修改】更新 analyzeResumeApi 的返回类型
+export const analyzeResumeApi = (resume_id: number, jd_text: string): Promise<ResumeAnalysisReportItem> => {
   return request({
     url: '/analyze-resume/',
     method: 'post',

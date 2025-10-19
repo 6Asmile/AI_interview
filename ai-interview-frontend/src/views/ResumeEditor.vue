@@ -61,7 +61,8 @@
       </template>
     </el-dialog>
 
-    <AnalysisReportDrawer :visible="reportDrawerVisible" :report="analysisReport" @close="reportDrawerVisible = false" />
+    <!-- 【核心修复】移除对旧抽屉组件的所有引用 -->
+    <!-- <AnalysisReportDrawer :visible="reportDrawerVisible" :report="analysisReport" @close="reportDrawerVisible = false" /> -->
   </div>
 </template>
 
@@ -71,12 +72,13 @@ import { useRoute, useRouter } from 'vue-router';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import ConfigPanel from '@/components/resume/editor/ConfigPanel.vue';
 import ResumeCanvas from '@/components/resume/editor/ResumeCanvas.vue';
-// 【核心修复】导入 Cpu 图标
 import { SuccessFilled, ArrowLeft, Cpu } from '@element-plus/icons-vue';
 import { templates } from '@/resume-templates';
 import { ElMessage, ElSkeleton, ElDialog, ElFormItem, ElInput, ElButton, ElDivider, ElSelect, ElOption } from 'element-plus';
-import { analyzeResumeApi, type AnalysisReport } from '@/api/modules/resumeEditor';
-import AnalysisReportDrawer from '@/components/resume/analysis/AnalysisReportDrawer.vue';
+// 【核心修复】移除未使用的 AnalysisReport 导入
+import { analyzeResumeApi } from '@/api/modules/resumeEditor';
+// 【核心修复】移除未使用的 AnalysisReportDrawer 导入
+// import AnalysisReportDrawer from '@/components/resume/analysis/AnalysisReportDrawer.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -84,11 +86,14 @@ const editorStore = useResumeEditorStore();
 const resumeId = Number(route.params.id);
 
 const isPreviewing = ref(false);
+
+// AI 分析相关状态
 const jdDialogVisible = ref(false);
 const jdText = ref('');
 const isAnalyzing = ref(false);
-const reportDrawerVisible = ref(false);
-const analysisReport = ref<AnalysisReport | null>(null);
+// 【核心修复】移除不再需要的 ref
+// const reportDrawerVisible = ref(false);
+// const analysisReport = ref<AnalysisReport | null>(null);
 
 onMounted(() => {
   if (resumeId) {
@@ -112,9 +117,7 @@ const handleSave = async () => {
 const handlePreview = async () => {
   isPreviewing.value = true;
   try {
-    // 静默保存
     await editorStore.saveResume();
-    // 打开预览页
     const routeData = router.resolve({ name: 'ResumePreview', params: { id: resumeId } });
     window.open(routeData.href, '_blank');
   } catch (error) {
@@ -139,12 +142,12 @@ const handleAnalysis = async () => {
     return;
   }
   isAnalyzing.value = true;
-  analysisReport.value = null;
   try {
-    const report = await analyzeResumeApi(resumeId, jdText.value);
-    analysisReport.value = report;
+    const newReport = await analyzeResumeApi(resumeId, jdText.value);
     jdDialogVisible.value = false;
-    reportDrawerVisible.value = true;
+    ElMessage.success('分析完成，正在跳转到报告页面...');
+    // 【核心修复】现在 newReport 的类型是 ResumeAnalysisReportItem，它有 'id' 属性
+    router.push({ name: 'AnalysisReportDetail', params: { reportId: newReport.id } });
   } catch (error) {
     // 错误已由 axios 拦截器处理
   } finally {
@@ -154,6 +157,7 @@ const handleAnalysis = async () => {
 </script>
 
 <style scoped>
+/* 样式与之前版本完全相同 */
 .resume-editor-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
 .editor-header { display: flex; justify-content: space-between; align-items: center; padding: 0 24px; height: 60px; background-color: #fff; border-bottom: 1px solid #e8e8e8; flex-shrink: 0; }
 .header-left { display: flex; align-items: center; gap: 16px; }
