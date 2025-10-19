@@ -10,7 +10,8 @@ class AIModel(models.Model):
     base_url = models.URLField(max_length=255, verbose_name='API Base URL')
     description = models.TextField(blank=True, verbose_name='模型描述')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
-
+    # 【核心新增】新增一个布尔字段来标记是否支持 JSON Mode
+    supports_json_mode = models.BooleanField(default=True, verbose_name='支持 JSON 模式')
     class Meta:
         verbose_name = 'AI 模型'
         verbose_name_plural = verbose_name
@@ -20,18 +21,26 @@ class AIModel(models.Model):
 
 
 # 2. AISetting 模型
+
 class AISetting(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='ai_setting', verbose_name='所属用户')
 
+    # 【核心修改】'ai_model' 现在代表用户选择的“默认模型”
     ai_model = models.ForeignKey(
         AIModel,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        verbose_name='AI 模型'
+        verbose_name='默认AI模型'
     )
 
-    api_key = models.CharField(max_length=255, blank=True, verbose_name='API Key')
+    # 【核心修改】将单一 api_key 替换为 JSONField 来存储多个 key
+    # 结构: {"model_id_1": "key_1", "model_id_2": "key_2", ...}
+    api_keys = models.JSONField(default=dict, blank=True, verbose_name='API Keys 映射')
+
+    # 原有的 api_key 字段可以删除了
+    # api_key = models.CharField(max_length=255, blank=True, verbose_name='API Key')
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -41,7 +50,6 @@ class AISetting(models.Model):
 
     def __str__(self):
         return f"{self.user.username} 的 AI 设置"
-
 
 # 3. Industry 模型
 class Industry(models.Model):

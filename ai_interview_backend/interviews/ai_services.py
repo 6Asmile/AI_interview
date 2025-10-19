@@ -1,90 +1,119 @@
+# ai_interview_backend/interviews/ai_services.py
+
 import os
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
 from users.models import User
-from system.models import AISetting
+from system.models import AISetting, AIModel
 
 load_dotenv()
 SYSTEM_DEFAULT_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-# 【核心修正】定义系统级默认模型，以防用户没有任何设置
 DEFAULT_MODEL_SLUG = "deepseek-chat"
-DEFAULT_BASE_URL = "https://api.deepseek.com"
 
 
-def _get_user_ai_config(user: User) -> (str, str, str):
+def _get_user_ai_config(user: User) -> tuple[str | None, AIModel | None]:
     """
-    获取用户的API Key, 模型调用名(slug), 和 Base URL。
-    如果用户未设置，则回退到系统默认值。
+    【新版】获取用户的AI配置。
+    1. 确定要使用的模型 (用户默认 -> 系统默认)。
+    2. 根据确定的模型，查找对应的API Key (用户自定义Key -> 系统默认Key)。
+    返回 (api_key, model_object)
     """
-    api_key = None
-    model_slug = DEFAULT_MODEL_SLUG
-    base_url = DEFAULT_BASE_URL
-
+    user_setting = None
     try:
         user_setting = user.ai_setting
-        if user_setting.api_key:
-            api_key = user_setting.api_key
-            print(f"正在为用户 {user.username} 使用自定义 API Key。")
-
-        if user_setting.ai_model:
-            model_slug = user_setting.ai_model.model_slug
-            base_url = user_setting.ai_model.base_url
-            print(f"用户 {user.username} 使用自定义模型: {model_slug} @ {base_url}")
-
     except AISetting.DoesNotExist:
-        print(f"用户 {user.username} 没有自定义设置，将使用系统默认配置。")
-        pass
+        print(f"用户 {user.username} 没有任何AI设置。")
+
+    # --- 步骤1: 确定模型 ---
+    final_model = None
+    if user_setting and user_setting.ai_model:
+        final_model = user_setting.ai_model
+        print(f"用户 {user.username} 已选择默认模型: {final_model.name}")
+
+    if not final_model:
+        try:
+            final_model = AIModel.objects.get(model_slug=DEFAULT_MODEL_SLUG, is_active=True)
+            print(f"用户未设置默认模型，回退到系统默认模型: {final_model.name}")
+        except AIModel.DoesNotExist:
+            print(f"警告: 系统默认模型 slug '{DEFAULT_MODEL_SLUG}' 在数据库中不存在！")
+            return SYSTEM_DEFAULT_API_KEY, None  # 返回 None 表示模型查找失败
+
+    # --- 步骤2: 根据确定的模型查找 API Key ---
+    api_key = None
+    if user_setting and user_setting.api_keys:
+        model_id_str = str(final_model.id)
+        api_key = user_setting.api_keys.get(model_id_str)
+        if api_key:
+            print(f"找到并使用用户为模型 '{final_model.name}' 自定义的 API Key。")
 
     if not api_key:
+        print(f"用户未提供该模型的 Key，回退到系统默认 API Key。")
         api_key = SYSTEM_DEFAULT_API_KEY
-        print("回退到使用系统默认 API Key。")
 
-    return api_key, model_slug, base_url
-
-
-def _call_openai_api(api_key, model_slug, base_url, messages, max_tokens, temperature):
-    """一个统一调用 OpenAI API 的辅助函数"""
-    # 【核心修正】确保 base_url 没有多余的 /v1
-    # DeepSeek 的 Chat API 不需要 /v1
-    if "deepseek.com" in base_url and "/v1" in base_url:
-        base_url = base_url.replace("/v1", "")
-
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
-        model=model_slug,
-        messages=messages,
-        stream=False,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-    )
-    return json.loads(response.choices[0].message.content)
+    return api_key, final_model
 
 
-# 【新增】专门处理流式调用的函数
-def _call_openai_api_stream(api_key, model_slug, base_url, messages, max_tokens, temperature):
-    if "deepseek.com" in base_url and "/v1" in base_url:
-        base_url = base_url.replace("/v1", "")
-    client = OpenAI(api_key=api_key, base_url=base_url)
+def _call_openai_api(api_key: str, model: AIModel, messages: list, max_tokens: int, temperature: float):
+    """
+    一个统一调用 OpenAI API 的辅助函数，现在能智能处理 JSON Mode。
+    """
+    client = OpenAI(api_key=api_key, base_url=model.base_url)
+
+    request_params = {
+        "model": model.model_slug,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    if model.supports_json_mode:
+        request_params["response_format"] = {"type": "json_object"}
+        print(f"为模型 '{model.name}' 启用 JSON Mode。")
+    else:
+        print(f"模型 '{model.name}' 不支持 JSON Mode，将进行常规调用。")
+
+    response = client.chat.completions.create(**request_params)
+    content = response.choices[0].message.content
+
+    if not model.supports_json_mode:
+        # 清理可能存在的代码块标记
+        content = content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+
+    return json.loads(content)
+
+
+def _call_openai_api_stream(api_key: str, model: AIModel, messages: list, max_tokens: int, temperature: float):
+    client = OpenAI(api_key=api_key, base_url=model.base_url)
     stream = client.chat.completions.create(
-        model=model_slug, messages=messages, stream=True,
-        max_tokens=max_tokens, temperature=temperature
+        model=model.model_slug,
+        messages=messages,
+        stream=True,
+        max_tokens=max_tokens,
+        temperature=temperature
     )
     for chunk in stream:
         content = chunk.choices[0].delta.content or ""
         yield content
+
+
+# --- 【核心修复】更新所有 AI 服务函数以使用新的 _get_user_ai_config 签名 ---
+
 def generate_first_question(job_position: str, user: User, resume_text: str = None) -> str:
-    # 【核心修正】用三个变量接收
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
-        return "系统AI服务未配置，无法生成问题。"
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
+        return "系统AI服务未配置或模型不存在。"
 
     system_prompt = (
         "你是一位顶尖公司的资深技术面试官，以提问精准、深入、专业著称。"
         "你的任务是开启一场关于特定岗位的面试。"
     )
-    # 【终极核心修正】为所有 user_prompt 添加 JSON 指令
     if resume_text:
         user_prompt = (
             f"我正在应聘 '{job_position}' 岗位。这是我的简历内容：\n\n"
@@ -103,66 +132,34 @@ def generate_first_question(job_position: str, user: User, resume_text: str = No
 
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        ai_response = _call_openai_api(api_key, model_slug, base_url, messages, 300, 0.7)
+        ai_response = _call_openai_api(api_key, model, messages, 300, 0.7)
         return ai_response.get("question", "你好，请做个自我介绍吧。")
     except Exception as e:
         print(f"调用 AI 生成第一问时发生错误: {e}")
         return f"你好，欢迎参加 {job_position} 的面试。很抱歉，我的AI大脑暂时出了一点小问题。不过没关系，我们可以从一个经典问题开始：请先做一个简单的自我介绍吧。"
 
 
-def analyze_and_generate_next(job_position: str, interview_history: list, user: User) -> dict:
-    # 【核心修正】用三个变量接收
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
-        return {"feedback": "AI服务未配置。", "next_question": "面试无法继续。"}
-
-    history_prompt_part = ""
-    for i, turn in enumerate(interview_history):
-        history_prompt_part += f"第 {i + 1} 轮:\n"
-        history_prompt_part += f"面试官 (你): {turn['question']}\n"
-        history_prompt_part += f"候选人 (我): {turn['answer']}\n\n"
-
-    latest_answer = interview_history[-1]['answer']
-    system_prompt = (
-        "你是一位顶尖公司的资深技术面试官，以提问精准、分析深刻著称。"
-        "你的任务是：1. 对候选人的最新回答进行简短、专业、有建设性的评价。2. 基于整个对话历史，提出下一个有深度的追问。"
-    )
-    user_prompt = (
-        f"以下是关于 '{job_position}' 岗位的面试对话历史：\n\n"
-        f"{history_prompt_part}"
-        f"请严格按照以下 JSON 格式返回你的回应，不要包含任何额外的解释：\n"
-        "{\n"
-        f"  \"feedback\": \"(这里是你对候选人最新回答 '{latest_answer}' 的简评，大约30-50字)\",\n"
-        f"  \"next_question\": \"(这里是你的下一个问题)\"\n"
-        "}"
-    )
-
-    try:
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        return _call_openai_api(api_key, model_slug, base_url, messages, 500, 0.8)
-    except Exception as e:
-        print(f"调用 AI 进行分析和提问时发生错误: {e}")
-        return {"feedback": "AI 在分析时遇到了一点小问题。",
-                "next_question": "让我们换个问题继续：请谈谈你遇到的最大的技术挑战是什么？"}
-# 【改造】所有 AI 调用函数，现在返回一个生成器
-#
-# 【新增】非流式函数，专门用于分析回答并生成简评
 def analyze_answer(job_position: str, question: str, answer: str, user: User) -> str:
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key: return "AI服务未配置，无法生成简评。"
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
+        return "AI服务未配置，无法生成简评。"
 
     system_prompt = "你是一位专业的面试官，任务是根据候选人的回答给出一个简短、有建设性的评价。"
     user_prompt = (
         f"我正在面试 '{job_position}' 岗位。\n"
         f"面试官提问: {question}\n"
         f"我的回答: {answer}\n\n"
-        "请对我的回答给出一个大约30-50字的简评。直接返回评价本身，不要包含多余内容。"
+        "请对我的回答给出一个大约50-100字的简评。直接返回评价本身，不要包含多余内容。"
     )
     try:
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        # 这个函数比较简单，可以直接调用 OpenAI API
+        client = OpenAI(api_key=api_key, base_url=model.base_url)
         response = client.chat.completions.create(
-            model=model_slug, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            stream=False, max_tokens=200, temperature=0.6
+            model=model.model_slug,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            stream=False,
+            max_tokens=200,
+            temperature=0.6
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -170,31 +167,9 @@ def analyze_answer(job_position: str, question: str, answer: str, user: User) ->
         return "AI 在分析时遇到了一点小问题。"
 
 
-# 【改造】流式函数，只负责生成第一个问题
-def generate_first_question_stream(job_position: str, user: User, resume_text: str = None):
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
-        yield "系统AI服务未配置，无法生成问题。"
-        return
-
-    system_prompt = "你是一位专业的AI面试官。请直接返回问题本身，不要包含任何多余的解释或标题。"
-    if resume_text:
-        user_prompt = f"我正在应聘 '{job_position}' 岗位。请根据我的简历：'{resume_text[:1000]}...'，提出一个有针对性的开场问题。"
-    else:
-        user_prompt = f"我正在应聘 '{job_position}' 岗位，请为我生成一个通用但热情的开场问题，要求我进行一个简洁的自我介绍。"
-
-    try:
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        yield from _call_openai_api_stream(api_key, model_slug, base_url, messages, 300, 0.7)
-    except Exception as e:
-        print(f"调用 AI 生成第一问时发生错误: {e}")
-        yield f"你好，欢迎参加 {job_position} 的面试。很抱歉，我的AI大脑暂时出了一点小问题。不过没关系，我们可以从一个经典问题开始：请先做一个简单的自我介绍吧。"
-
-
-# 【改造】流式函数，只负责生成下一个问题
 def generate_next_question_stream(job_position: str, interview_history: list, user: User):
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
         yield "AI服务未配置。"
         return
 
@@ -206,20 +181,15 @@ def generate_next_question_stream(job_position: str, interview_history: list, us
 
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        yield from _call_openai_api_stream(api_key, model_slug, base_url, messages, 500, 0.8)
+        yield from _call_openai_api_stream(api_key, model, messages, 500, 0.8)
     except Exception as e:
         print(f"调用 AI 生成下一问时发生错误: {e}")
         yield "请谈谈你遇到的最大的技术挑战是什么？"
 
 
 def generate_final_report(job_position: str, interview_history: list, user: User) -> dict:
-    """
-    【终极版】
-    根据完整的面试历史，生成一份包含多维度能力评分、关键词分析和STAR法则分析的综合报告。
-    """
-    # 【核心修正】用三个变量接收
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
         return {"error": "AI服务未配置，无法生成报告。"}
 
     history_prompt_part = ""
@@ -271,100 +241,60 @@ def generate_final_report(job_position: str, interview_history: list, user: User
 
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        report_data = _call_openai_api(api_key, model_slug, base_url, messages, 3500, 0.5)
+        report_data = _call_openai_api(api_key, model, messages, 3500, 0.5)
 
-        # --- 安全地转换分数为数字 (保持不变) ---
-        if 'overall_score' in report_data and isinstance(report_data.get('overall_score'), str):
+        if 'overall_score' in report_data:
             try:
                 report_data['overall_score'] = int(report_data['overall_score'])
             except:
                 report_data['overall_score'] = 0
         if 'ability_scores' in report_data and isinstance(report_data.get('ability_scores'), list):
             for item in report_data['ability_scores']:
-                if 'score' in item and isinstance(item.get('score'), (str, int, float)):
-                    try:
-                        item['score'] = float(item['score'])
-                    except:
-                        item['score'] = 0
-
+                try:
+                    item['score'] = float(item.get('score', 0))
+                except:
+                    item['score'] = 0
         return report_data
-
     except Exception as e:
         print(f"调用 AI 生成最终报告时发生错误: {e}")
         return {"error": f"生成报告失败: {e}"}
 
 
 def polish_description_by_ai(original_html: str, user: User, job_position: str = None) -> str:
-    """
-    使用 AI 优化一段工作/项目描述的 HTML 内容。
-    :param original_html: 用户在富文本编辑器中输入的原始 HTML。
-    :param user: 当前用户，用于获取 AI 配置。
-    :param job_position: (可选) 目标岗位，让优化更有针对性。
-    :return: 优化后的 HTML 字符串。
-    """
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
         return "<p>AI 服务未配置，无法进行润色。</p>"
 
-    # 构造系统 Prompt
     system_prompt = (
-        "你是一位顶级的简历优化专家和资深 HR，尤其擅长使用 STAR 法则（Situation, Task, Action, Result）来优化工作和项目描述。"
-        "你的任务是：润色用户提供的描述，使其更具吸引力、突出量化成果，并保持专业的书面语风格。"
-        "重要规则：你必须保持并返回与用户输入完全相同的 HTML 结构（例如 <ul>, <li>, <strong> 等），只修改文本内容。"
+        "你是一位顶级的简历优化专家和资深 HR，尤其擅长使用 STAR 法则优化工作和项目描述。"
+        "规则：必须保持并返回与用户输入完全相同的 HTML 结构（如 <ul>, <li>），只修改文本内容。"
     )
-
-    # 构造用户 Prompt
     job_context = f" 这段描述是为应聘 '{job_position}' 岗位准备的。" if job_position else ""
     user_prompt = (
-        f"请根据 STAR 法则，优化以下这段简历描述。{job_context}\n\n"
-        f"原始 HTML 内容如下：\n"
-        f"```html\n{original_html}\n```\n\n"
-        f"请严格按照以下 JSON 格式返回你优化后的 HTML 内容，不要包含任何额外的解释或代码块标记：\n"
-        "{\n"
-        "  \"polished_html\": \"(这里是你优化后的、保持了原有结构的 HTML 字符串)\"\n"
-        "}"
+        f"请根据 STAR 法则，优化以下简历描述。{job_context}\n\n"
+        f"原始 HTML 内容：\n```html\n{original_html}\n```\n\n"
+        f"请严格按照以下 JSON 格式返回优化后的 HTML 内容：\n"
+        "{\"polished_html\": \"(这里是你优化后的 HTML 字符串)\"}"
     )
 
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        # 注意：这里我们强制要求返回 JSON 对象
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        response = client.chat.completions.create(
-            model=model_slug,
-            messages=messages,
-            stream=False,
-            max_tokens=2048,  # 给予足够的空间来生成内容
-            temperature=0.5,  # 温度稍低，确保专业性
-            response_format={"type": "json_object"},
-        )
-
-        result_json = json.loads(response.choices[0].message.content)
-        return result_json.get("polished_html", original_html)  # 如果 AI 返回格式错误，则返回原文
-
+        result_json = _call_openai_api(api_key, model, messages, 2048, 0.5)
+        return result_json.get("polished_html", original_html)
     except Exception as e:
         print(f"调用 AI 进行文本润色时发生错误: {e}")
-        # 在出错时，最好返回原文，避免用户内容丢失
         return original_html
 
 
 def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dict:
-    """
-    根据给定的岗位描述(JD)，深度分析简历内容，并返回结构化的优化报告。
-
-    :param resume_text: 简历的纯文本内容。
-    :param jd_text: 目标岗位的 JD 纯文本内容。
-    :param user: 当前用户，用于获取 AI 配置。
-    :return: 一个包含分析结果的字典。
-    """
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
         return {"error": "AI 服务未配置，无法进行分析。"}
 
     system_prompt = (
-        "你是一位顶级的职业规划导师和资深招聘专家，拥有极其敏锐的洞察力，擅长将简历与岗位要求进行精确匹配和分析。"
+        "你是一位顶级的职业规划导师和资深招聘专家，擅长将简历与岗位要求进行精确匹配和分析。"
         "你的任务是：基于一份岗位描述（JD）和一份候选人简历，进行一次全面、深度、富有建设性的评估。"
     )
-
     user_prompt = (
         f"请严格遵循以下步骤，对提供的简历和JD进行分析，并以一个完整的JSON对象格式返回结果，不要包含任何额外的解释。\n\n"
         f"--- 岗位描述 (JD) ---\n"
@@ -398,41 +328,22 @@ def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dic
 
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        response = client.chat.completions.create(
-            model=model_slug,
-            messages=messages,
-            stream=False,
-            max_tokens=3072,  # 给予足够的空间来生成详细报告
-            temperature=0.6,
-            response_format={"type": "json_object"},
-        )
-
-        analysis_report = json.loads(response.choices[0].message.content)
-        # (可选) 在这里可以对AI返回的JSON进行一次校验和清洗
+        analysis_report = _call_openai_api(api_key, model, messages, 3072, 0.6)
         return analysis_report
-
     except Exception as e:
         print(f"调用 AI 进行简历分析时发生错误: {e}")
         return {"error": f"分析失败，AI服务暂时不可用: {e}"}
 
 
 def generate_resume_by_ai(name: str, position: str, experience_years: str, keywords: str, user: User) -> dict:
-    """
-    根据用户提供的核心信息，使用 AI 生成一份完整的、结构化的简历 JSON。
-    :return: 一个符合前端 ResumeLayout 结构的字典。
-    """
-    api_key, model_slug, base_url = _get_user_ai_config(user)
-    if not api_key:
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
         return {"error": "AI 服务未配置"}
 
     system_prompt = (
-        "你是一位世界顶级的简历撰写专家和职业规划师，精通所有行业的招聘要求和简历写作技巧。"
-        "你的任务是根据用户提供的最核心信息，为他生成一份专业、完整、内容丰富且极具吸引力的简历。"
-        "你必须严格按照我指定的 JSON 格式返回，这个 JSON 包含 'sidebar' 和 'main' 两个区域的模块数组。"
+        "你是一位世界顶级的简历撰写专家，任务是根据用户的核心信息，生成一份专业、完整的简历。"
+        "你必须严格按照我指定的 JSON 格式返回，包含 'sidebar' 和 'main' 两个区域的模块数组。"
     )
-
     user_prompt = (
         f"请为我生成一份简历。我的核心信息如下：\n"
         f"- 姓名: {name}\n"
@@ -548,19 +459,10 @@ def generate_resume_by_ai(name: str, position: str, experience_years: str, keywo
         "  ]\n"
         "}"
     )
-
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        response = client.chat.completions.create(
-            model=model_slug,
-            messages=messages,
-            stream=False,
-            max_tokens=4096,
-            temperature=0.8,  # 温度稍高，增加创造性
-            response_format={"type": "json_object"},
-        )
-        return json.loads(response.choices[0].message.content)
+        resume_json = _call_openai_api(api_key, model, messages, 4096, 0.8)
+        return resume_json
     except Exception as e:
         print(f"调用 AI 生成简历时发生错误: {e}")
         return {"error": f"AI 生成失败: {e}"}

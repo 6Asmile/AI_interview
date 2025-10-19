@@ -9,18 +9,23 @@ class AIModelSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'model_slug', 'description')
 
 class AISettingSerializer(serializers.ModelSerializer):
-    # 【核心改造】使用 ai_model_id 来处理输入，使用嵌套序列化器来处理输出
+    # 'ai_model_id' 用于接收用户选择的“默认模型”ID
     ai_model_id = serializers.PrimaryKeyRelatedField(
         queryset=AIModel.objects.filter(is_active=True),
         source='ai_model',
         write_only=True,
-        allow_null=True
+        allow_null=True,
+        required=False # 设为非必须，因为用户可能只想更新 keys
     )
+    # 'ai_model' 用于在返回数据时，嵌套展示默认模型的详细信息
     ai_model = AIModelSerializer(read_only=True)
+
+    # 'api_keys' 字段现在是可读写的
+    api_keys = serializers.JSONField(required=False)
 
     class Meta:
         model = AISetting
-        fields = ['ai_model', 'ai_model_id', 'api_key']
+        fields = ['ai_model', 'ai_model_id', 'api_keys']
 class JobPositionSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobPosition

@@ -1,127 +1,128 @@
+<!-- src/views/Settings.vue -->
 <template>
   <div class="page-container">
-    <el-card>
+    <el-card v-loading="isLoading">
       <template #header>
         <div class="page-card-header">
-          <span>AI 模型设置</span>
+          <span>AI 设置</span>
+          <el-button type="primary" @click="saveSettings" :loading="isSaving">保存设置</el-button>
         </div>
       </template>
-    
-      <div v-if="!loading" style="max-width: 600px">
-        <el-form 
-          ref="settingsFormRef" 
-          :model="settingsForm" 
-          label-width="120px" 
-        >
-          <el-form-item label="选择模型">
-            <!-- 下拉框现在是动态生成的 -->
-            <el-select v-model="settingsForm.ai_model_id" placeholder="请选择AI模型" clearable>
-              <el-option 
-                v-for="model in aiModelList"
-                :key="model.id"
-                :label="model.name"
-                :value="model.id"
-              >
-                <span style="float: left">{{ model.name }}</span>
-                <span style="float: right; color: #8492a6; font-size: 13px">{{ model.model_slug }}</span>
-              </el-option>
-            </el-select>
-             <div class="form-tip">
-                选择您偏好的对话模型。如果留空，将使用系统默认模型。
-              </div>
-          </el-form-item>
-          <el-form-item label="API Key">
-            <el-input 
-              v-model="settingsForm.api_key" 
-              type="password"
-              show-password
-              placeholder="填写您的 API Key (将安全存储)" 
+
+      <el-form label-position="top" v-if="!isLoading">
+        <!-- 1. 默认模型选择 -->
+        <el-form-item label="默认对话模型">
+          <el-select v-model="settingsForm.ai_model_id" placeholder="选择您偏好的对话模型" clearable style="width: 100%;">
+            <el-option
+              v-for="model in allModels"
+              :key="model.id"
+              :label="`${model.name} (${model.model_slug})`"
+              :value="model.id"
             />
-            <div class="form-tip">
-              如果您填写了自己的 API Key，面试将优先使用您的 Key。如果留空，将使用系统默认配置。
-            </div>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="handleSave" :loading="saving">保存设置</el-button>
-          </el-form-item>
-        </el-form>
-      </div>
-      <el-skeleton :rows="5" animated v-if="loading" />
+          </el-select>
+          <p class="form-tip">所有 AI 功能（面试、润色、分析）将优先使用您选择的默认模型。如果留空，将使用系统默认模型。</p>
+        </el-form-item>
+        
+        <el-divider />
+
+        <!-- 2. API Key 管理 -->
+        <h3>API Key 管理</h3>
+        <p class="form-tip">您可以为不同的模型配置独立的 API Key。当使用某个模型时，系统会优先使用您在此处提供的 Key。</p>
+        
+        <el-row :gutter="20">
+          <el-col :span="12" v-for="model in allModels" :key="`key-${model.id}`">
+            <el-form-item :label="model.name">
+              <el-input 
+                v-model="settingsForm.api_keys[model.id]" 
+                :placeholder="`输入 ${model.name} 的 API Key`"
+                show-password
+                clearable
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, reactive } from 'vue';
+import { getAISettingsApi, updateAISettingsApi, getAIModelsApi, type AIModelItem, type UpdateAISettingsData } from '@/api/modules/system';
 import { ElMessage } from 'element-plus';
-import type { FormInstance } from 'element-plus';
-import { 
-  getAISettingsApi, 
-  updateAISettingsApi, 
-  getAIModelsApi, // 导入新 API
-  type UpdateAISettingsData,
-  type AIModelItem
-} from '@/api/modules/system';
 
-const loading = ref(true);
-const saving = ref(false);
-const settingsFormRef = ref<FormInstance>();
+const isLoading = ref(true);
+const isSaving = ref(false);
+const allModels = ref<AIModelItem[]>([]);
 
-// 存储从后端获取的所有可用 AI 模型
-const aiModelList = ref<AIModelItem[]>([]);
-
-// 表单数据现在只包含需要提交的字段
-const settingsForm = reactive<UpdateAISettingsData>({
-  ai_model_id: null,
-  api_key: '',
+const settingsForm = reactive({
+    ai_model_id: null as number | null,
+    api_keys: {} as Record<string, string>,
 });
 
-// 获取所有数据
-const fetchData = async () => {
-  loading.value = true;
+onMounted(async () => {
+  isLoading.value = true;
   try {
-    // 并行获取用户当前的设置和系统可用的模型列表
-    const [settings, models] = await Promise.all([
-      getAISettingsApi(),
+    const [modelsRes, settingsRes] = await Promise.all([
       getAIModelsApi(),
+      getAISettingsApi(),
     ]);
+
+    allModels.value = modelsRes;
     
-    // 填充表单
-    settingsForm.api_key = settings.api_key;
-    settingsForm.ai_model_id = settings.ai_model?.id || null;
-    
-    // 填充模型列表
-    aiModelList.value = models;
+    // --- 【核心修复】确保 api_keys 对象的完整性 ---
+
+    // 1. 获取用户已保存的 keys
+    const savedKeys = settingsRes.api_keys || {};
+    const newApiKeys: Record<string, string> = {};
+
+    // 2. 遍历所有从后端获取的模型
+    for (const model of modelsRes) {
+        // 无论用户是否已保存该模型的 key，都在新对象中为其创建一个属性
+        // 如果用户已保存，则使用保存的值；否则，使用空字符串
+        newApiKeys[model.id] = savedKeys[model.id] || '';
+    }
+
+    // 3. 将这个结构完整的、响应式的对象赋值给表单
+    settingsForm.api_keys = newApiKeys;
+    settingsForm.ai_model_id = settingsRes.ai_model?.id || null;
+
   } catch (error) {
-    console.error('获取AI设置或模型列表失败', error);
-    ElMessage.error('数据加载失败');
+    ElMessage.error('加载设置失败');
   } finally {
-    loading.value = false;
+    isLoading.value = false;
   }
-};
+});
 
-onMounted(fetchData);
-
-const handleSave = async () => {
-  saving.value = true;
+const saveSettings = async () => {
+  isSaving.value = true;
   try {
-    await updateAISettingsApi(settingsForm);
+    // 在发送前，可以清理掉值为空字符串的 key，减小 payload 体积
+    const cleanedApiKeys: Record<string, string> = {};
+    for (const modelId in settingsForm.api_keys) {
+        if (settingsForm.api_keys[modelId]) {
+            cleanedApiKeys[modelId] = settingsForm.api_keys[modelId];
+        }
+    }
+
+    const payload: UpdateAISettingsData = {
+        ai_model_id: settingsForm.ai_model_id,
+        api_keys: cleanedApiKeys,
+    };
+
+    await updateAISettingsApi(payload);
     ElMessage.success('设置已成功保存！');
-    // 保存后重新获取一次数据，以确保显示正确
-    await fetchData(); 
   } catch (error) {
-    console.error('保存AI设置失败', error);
+    ElMessage.error('保存设置失败');
   } finally {
-    saving.value = false;
+    isSaving.value = false;
   }
 };
 </script>
 
 <style scoped>
-.form-tip {
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.5;
-  margin-top: 5px;
-}
+.page-container { padding: 20px; }
+.page-card-header { display: flex; justify-content: space-between; align-items: center; }
+.form-tip { font-size: 12px; color: #999; margin-top: 4px; }
+h3 { margin-top: 20px; margin-bottom: 8px; }
 </style>

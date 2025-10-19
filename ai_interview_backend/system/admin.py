@@ -1,12 +1,11 @@
 from django.contrib import admin
 from .models import AIModel, AISetting, Industry, JobPosition
 
+# system/admin.py
 @admin.register(AIModel)
 class AIModelAdmin(admin.ModelAdmin):
-    list_display = ('name', 'model_slug', 'base_url', 'is_active')
-    list_editable = ('is_active',)
-    # 【核心修正】添加 search_fields
-    # 告诉 Django Admin 可以在 AI 模型的 name 和 model_slug 字段中进行搜索
+    list_display = ('name', 'model_slug', 'base_url', 'is_active', 'supports_json_mode')
+    list_editable = ('is_active', 'supports_json_mode')
     search_fields = ('name', 'model_slug')
 
 @admin.register(AISetting)

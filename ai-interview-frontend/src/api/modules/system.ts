@@ -19,18 +19,18 @@ export const getAIModelsApi = (): Promise<AIModelItem[]> => {
 
 // --- AI 设置相关 (改造) ---
 
-// AISettingsData 现在包含一个嵌套的 AIModelItem 对象
+// AISettingsData 现在代表整个设置对象
 export interface AISettingsData {
-  ai_model: AIModelItem | null; // 模型可以是 null
-  ai_model_id: number | null; // 用于发送更新
-  api_key: string;
+  ai_model: AIModelItem | null; // 用户的默认模型
+  api_keys: Record<string, string>; // 用户的 Key 映射, e.g., { '1': 'key-abc', '3': 'key-xyz' }
 }
 
 // 定义更新时发送的数据类型
 export interface UpdateAISettingsData {
-    ai_model_id: number | null;
-    api_key: string;
+    ai_model_id?: number | null; // 设为可选
+    api_keys?: Record<string, string>; // 设为可选
 }
+
 
 // API: 获取当前用户的AI设置
 export const getAISettingsApi = (): Promise<AISettingsData> => {
