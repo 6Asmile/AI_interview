@@ -345,3 +345,74 @@ def polish_description_by_ai(original_html: str, user: User, job_position: str =
         print(f"调用 AI 进行文本润色时发生错误: {e}")
         # 在出错时，最好返回原文，避免用户内容丢失
         return original_html
+
+
+def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dict:
+    """
+    根据给定的岗位描述(JD)，深度分析简历内容，并返回结构化的优化报告。
+
+    :param resume_text: 简历的纯文本内容。
+    :param jd_text: 目标岗位的 JD 纯文本内容。
+    :param user: 当前用户，用于获取 AI 配置。
+    :return: 一个包含分析结果的字典。
+    """
+    api_key, model_slug, base_url = _get_user_ai_config(user)
+    if not api_key:
+        return {"error": "AI 服务未配置，无法进行分析。"}
+
+    system_prompt = (
+        "你是一位顶级的职业规划导师和资深招聘专家，拥有极其敏锐的洞察力，擅长将简历与岗位要求进行精确匹配和分析。"
+        "你的任务是：基于一份岗位描述（JD）和一份候选人简历，进行一次全面、深度、富有建设性的评估。"
+    )
+
+    user_prompt = (
+        f"请严格遵循以下步骤，对提供的简历和JD进行分析，并以一个完整的JSON对象格式返回结果，不要包含任何额外的解释。\n\n"
+        f"--- 岗位描述 (JD) ---\n"
+        f"{jd_text}\n"
+        f"--- JD 结束 ---\n\n"
+        f"--- 候选人简历 ---\n"
+        f"{resume_text}\n"
+        f"--- 简历结束 ---\n\n"
+        f"分析步骤与返回的JSON格式要求如下:\n"
+        "{\n"
+        "  \"overall_score\": (请给出一个0-100的整数，代表简历与JD的整体匹配度得分),\n"
+        "  \"keyword_analysis\": {\n"
+        "    \"jd_keywords\": [\"从JD中提取出5-8个最核心的技能/经验关键词\"],\n"
+        "    \"matched_keywords\": [\"在简历中明确匹配到的JD关键词\"],\n"
+        "    \"missing_keywords\": [\"简历中缺失的、但JD中很重要的关键词\"]\n"
+        "  },\n"
+        "  \"strengths_analysis\": [\n"
+        "    \"(列出2-3条简历中最突出的、与JD高度匹配的亮点，例如：'项目经历中的XX技术栈与JD要求完全吻合')\"\n"
+        "  ],\n"
+        "  \"weaknesses_analysis\": [\n"
+        "    \"(列出2-3条简历中明显的不足或与JD不匹配之处，例如：'缺乏JD中要求的XX项目管理经验')\"\n"
+        "  ],\n"
+        "  \"suggestions\": [\n"
+        "    {\n"
+        "      \"module\": \"(建议修改的简历模块名，如：'项目经历', '专业技能', '自我评价')\",\n"
+        "      \"suggestion\": \"(提供一条非常具体、可执行的修改建议，例如：'在AI模拟面试平台的项目描述中，增加关于并发处理或性能优化的具体数据，以呼应JD中的高并发要求。')\"\n"
+        "    }\n"
+        "  ]\n"
+        "}"
+    )
+
+    try:
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=model_slug,
+            messages=messages,
+            stream=False,
+            max_tokens=3072,  # 给予足够的空间来生成详细报告
+            temperature=0.6,
+            response_format={"type": "json_object"},
+        )
+
+        analysis_report = json.loads(response.choices[0].message.content)
+        # (可选) 在这里可以对AI返回的JSON进行一次校验和清洗
+        return analysis_report
+
+    except Exception as e:
+        print(f"调用 AI 进行简历分析时发生错误: {e}")
+        return {"error": f"分析失败，AI服务暂时不可用: {e}"}

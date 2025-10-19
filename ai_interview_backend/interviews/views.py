@@ -1,80 +1,85 @@
-# 【新增】从 Django 导入 timezone
+# ai_interview_backend/interviews/views.py
+
 from django.utils import timezone
 from django.http import StreamingHttpResponse
 from django.core.cache import cache
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from resumes.models import Resume
 from .models import InterviewSession, InterviewQuestion
-from .serializers import InterviewSessionSerializer, StartInterviewSerializer, SubmitAnswerSerializer, InterviewQuestionSerializer
+from .serializers import InterviewSessionSerializer, StartInterviewSerializer, SubmitAnswerSerializer
 from .ai_services import (
-    generate_first_question, # 使用非流式
+    generate_first_question,
     analyze_answer,
     generate_next_question_stream,
-    generate_final_report
+    generate_final_report,
+    analyze_resume_against_jd,
+    polish_description_by_ai
 )
-# 【新增】导入 URL 编码工具
 from urllib.parse import quote
-# 在文件顶部导入
-from rest_framework.views import APIView
+
+
+def format_resume_to_text(resume: Resume) -> str:
+    """
+    一个统一的函数，从任何类型的 Resume 实例中提取纯文本内容。
+    """
+    # 优先级 1: 新的 content_json (无论是对象还是数组)
+    if resume.content_json:
+        components = []
+        # 兼容新的二维布局对象
+        if isinstance(resume.content_json, dict) and 'main' in resume.content_json:
+            components.extend(resume.content_json.get('sidebar', []))
+            components.extend(resume.content_json.get('main', []))
+        # 兼容旧的一维数组
+        elif isinstance(resume.content_json, list):
+            components = resume.content_json
+
+        all_text = []
+        for module in components:
+            if not module or not isinstance(module, dict): continue
+            props = module.get('props', {})
+            if not props or not isinstance(props, dict): continue
+
+            all_text.append(f"\n--- {props.get('title', module.get('title', ''))} ---\n")
+
+            # 提取简单 props
+            for key, value in props.items():
+                if isinstance(value, str) and key not in ['title', 'layoutZone', 'titleStyle']:
+                    all_text.append(value)
+
+            # 提取列表型 props
+            for list_key in ['items', 'educations', 'experiences', 'projects', 'skills']:
+                if list_key in props and isinstance(props[list_key], list):
+                    for item in props[list_key]:
+                        if not item or not isinstance(item, dict): continue
+                        item_texts = []
+                        for item_key, item_value in item.items():
+                            if isinstance(item_value, str) and item_key != 'id':
+                                item_texts.append(item_value)
+                        all_text.append(" ".join(item_texts))
+
+        return "\n".join(filter(None, all_text))
+
+    # 优先级 2: 文件简历的解析内容
+    if resume.parsed_content:
+        return resume.parsed_content
+
+    # 优先级 3: 旧版的、基于模型字段的在线简历
+    # (这个逻辑可以逐步废弃，但为了兼容性暂时保留)
+    if resume.status in [Resume.Status.DRAFT, Resume.Status.PUBLISHED]:
+        parts = []
+        if resume.full_name: parts.append(f"姓名: {resume.full_name}")
+        if resume.job_title: parts.append(f"期望职位: {resume.job_title}")
+        if resume.summary: parts.append(f"\n个人总结:\n{resume.summary}")
+        return "\n".join(parts)
+
+    return ""
+
+
 def get_user_cache_key(user):
     return f"user_{user.id}_unfinished_interview"
-
-
-# 辅助函数：将在线简历转换为文本
-def format_online_resume_to_text(resume: Resume) -> str:
-    parts = []
-    if resume.full_name: parts.append(f"姓名: {resume.full_name}")
-    if resume.job_title: parts.append(f"期望职位: {resume.job_title}")
-    if resume.summary: parts.append(f"\n个人总结:\n{resume.summary}")
-
-    if resume.educations.exists():
-        parts.append("\n教育背景:")
-        for edu in resume.educations.all():
-            parts.append(f"- {edu.school} | {edu.degree} | {edu.major} ({edu.start_date} to {edu.end_date})")
-
-    if resume.work_experiences.exists():
-        parts.append("\n工作经历:")
-        for exp in resume.work_experiences.all():
-            parts.append(
-                f"- {exp.company} | {exp.position} ({exp.start_date} to {exp.end_date or '至今'})\n  {exp.description}")
-
-    # 您可以继续添加项目经历、技能等
-
-    return "\n".join(parts)
-
-
-# 【辅助函数2：核心新增，用于解析新版JSON简历】
-def format_json_resume_to_text(resume_content_json: list) -> str:
-    """从 resume-design 的 JSON 结构中提取所有有意义的文本内容。"""
-    if not resume_content_json or not isinstance(resume_content_json, list):
-        return ""
-
-    all_text = []
-
-    # 遍历JSON中的每一个模块 (component)
-    for component in resume_content_json:
-        # dataSource 包含了该模块的用户输入数据
-        data_source = component.get('dataSource', {})
-        if not data_source:
-            continue
-
-        # 遍历模块中的每一个数据项 (如姓名、年龄、公司名等)
-        for key, item in data_source.items():
-            # 我们只关心有 value 字段的项，并且 value 是字符串
-            if 'value' in item and isinstance(item['value'], str) and item['value'].strip():
-                # 可以选择性地添加标签，让AI更好地理解
-                label = item.get('label', key)
-                all_text.append(f"{label}: {item['value']}")
-            # 【扩展】对于复杂的列表型数据（如工作经历），可能需要更深层的解析
-            elif 'value' in item and isinstance(item['value'], list):
-                for sub_item in item['value']:
-                    desc = sub_item.get('description', '')
-                    if desc:
-                        all_text.append(desc)
-
-    return "\n".join(all_text)
 
 
 class InterviewSessionViewSet(viewsets.ModelViewSet):
@@ -115,8 +120,6 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 cache.delete(cache_key)
         return Response({"message": "没有需要放弃的面试"}, status=status.HTTP_404_NOT_FOUND)
 
-        # 【终极核心】回归到这个稳健的、非流式的启动接口
-
     @action(detail=False, methods=['post'], url_path='start')
     def start_interview(self, request):
         force_start = request.query_params.get('force', 'false').lower() == 'true'
@@ -138,25 +141,14 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         job_position = serializer.validated_data['job_position']
         resume_id = serializer.validated_data.get('resume_id')
         question_count = serializer.validated_data.get('question_count')
-        resume_instance, resume_text = None, ""
+
+        resume_text = ""
+        resume_instance = None
         if resume_id:
             try:
                 resume_instance = Resume.objects.get(id=resume_id, user=request.user)
-
-                # --- 【核心修改】智能判断使用哪种方式提取简历文本 ---
-                if resume_instance.content_json:
-                    # 优先使用新版 JSON 简历内容
-                    resume_text = format_json_resume_to_text(resume_instance.content_json)
-                    print("正在使用新版JSON简历内容...")
-                elif resume_instance.status in [Resume.Status.DRAFT, Resume.Status.PUBLISHED]:
-                    # 其次，兼容旧版在线简历
-                    resume_text = format_online_resume_to_text(resume_instance)
-                    print("正在使用旧版结构化简历内容...")
-                elif resume_instance.status == Resume.Status.PARSED:
-                    # 最后，使用文件简历的解析内容
-                    resume_text = resume_instance.parsed_content
-                    print("正在使用文件解析简历内容...")
-
+                resume_text = format_resume_to_text(resume_instance)
+                print("已为面试提取简历文本。")
             except Resume.DoesNotExist:
                 return Response({"error": "简历不存在"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -164,14 +156,9 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             user=request.user, job_position=job_position, resume=resume_instance,
             question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now()
         )
-
-        # 调用非流式的 AI 服务
         first_question_text = generate_first_question(job_position, request.user, resume_text)
-
         InterviewQuestion.objects.create(session=session, question_text=first_question_text, sequence=1)
-        cache.set(cache_key, str(session.id), timeout=7200)
-
-        # 返回完整的会话数据
+        cache.set(get_user_cache_key(request.user), str(session.id), timeout=7200)
         session_data = self.get_serializer(instance=session).data
         return Response(session_data, status=status.HTTP_201_CREATED)
 
@@ -196,17 +183,14 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
 
         cache.touch(get_user_cache_key(request.user), timeout=7200)
 
-        # 【终极核心修正】将结束判断逻辑提前
         feedback_text = analyze_answer(session.job_position, current_question.question_text, answer_text, request.user)
         current_question.ai_feedback = {"feedback": feedback_text}
         current_question.save()
 
         answered_count = session.questions.filter(answered_at__isnull=False).count()
         if answered_count >= session.question_count:
-            # 如果已回答问题数量达到或超过设定值，直接返回结束信号
             return Response({"feedback": feedback_text, "interview_finished": True}, status=status.HTTP_200_OK)
 
-        # 如果面试未结束，才继续生成下一个问题
         history = [{'question': q.question_text, 'answer': q.answer_text} for q in
                    session.questions.filter(answered_at__isnull=False).order_by('sequence')]
 
@@ -217,18 +201,14 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 question_buffer.append(chunk)
                 yield chunk
             full_question_text = "".join(question_buffer)
-            # 此时 answered_count 是正确的序号
             InterviewQuestion.objects.create(session=session, question_text=full_question_text,
                                              sequence=answered_count + 1)
 
         response = StreamingHttpResponse(stream_response_generator(), content_type='text/plain; charset=utf-8')
-
-        # 【终极核心修正】对中文进行 URL 编码后再放入响应头
         response['X-Feedback'] = quote(feedback_text)
-        # 允许前端访问这个自定义头部
         response['Access-Control-Expose-Headers'] = 'X-Feedback'
-
         return response
+
     @action(detail=True, methods=['post'], url_path='finish')
     def finish_interview(self, request, pk=None):
         session = self.get_object()
@@ -244,7 +224,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             history.append({
                 'question': q.question_text,
                 'answer': q.answer_text,
-                'analysis_data': q.analysis_data  # <-- 就是这一行！
+                'analysis_data': q.analysis_data
             })
         if not history:
             return Response({"error": "没有有效的问答记录，无法生成报告"}, status=status.HTTP_400_BAD_REQUEST)
@@ -258,22 +238,15 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         return Response(report_data, status=status.HTTP_200_OK)
 
 
-# 【核心新增】在文件末尾添加新的 APIView
 class PolishDescriptionView(APIView):
-    """
-    接收简历描述并调用 AI 进行润色的 API 视图。
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
         original_html = request.data.get('html_content')
-        job_position = request.data.get('job_position')  # 可选参数
+        job_position = request.data.get('job_position')
 
         if not original_html:
             return Response({'error': '缺少 html_content 字段'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 从这里导入润色函数
-        from .ai_services import polish_description_by_ai
 
         polished_html = polish_description_by_ai(
             original_html=original_html,
@@ -282,3 +255,35 @@ class PolishDescriptionView(APIView):
         )
 
         return Response({'polished_html': polished_html}, status=status.HTTP_200_OK)
+
+
+class ResumeAnalysisView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        resume_id = request.data.get('resume_id')
+        jd_text = request.data.get('jd_text')
+
+        if not resume_id or not jd_text:
+            return Response({'error': '必须提供 resume_id 和 jd_text 字段'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            resume_instance = Resume.objects.get(id=resume_id, user=request.user)
+            resume_text = format_resume_to_text(resume_instance)
+
+            if not resume_text.strip():
+                return Response({'error': '无法从该简历中提取有效文本内容'}, status=status.HTTP_400_BAD_REQUEST)
+
+        except Resume.DoesNotExist:
+            return Response({'error': '简历不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        analysis_report = analyze_resume_against_jd(
+            resume_text=resume_text,
+            jd_text=jd_text,
+            user=request.user
+        )
+
+        if "error" in analysis_report:
+            return Response(analysis_report, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(analysis_report, status=status.HTTP_200_OK)

@@ -39,3 +39,31 @@ export const polishDescriptionApi = (html_content: string, job_position?: string
     },
   });
 };
+
+// 定义分析报告的类型结构，以便获得完整的 TypeScript 类型提示
+export interface AnalysisReport {
+  overall_score: number;
+  keyword_analysis: {
+    jd_keywords: string[];
+    matched_keywords: string[];
+    missing_keywords: string[];
+  };
+  strengths_analysis: string[];
+  weaknesses_analysis: string[];
+  suggestions: {
+    module: string;
+    suggestion: string;
+  }[];
+}
+
+// 【核心新增】AI 简历分析 API 函数
+export const analyzeResumeApi = (resume_id: number, jd_text: string): Promise<AnalysisReport> => {
+  return request({
+    url: '/analyze-resume/',
+    method: 'post',
+    data: {
+      resume_id,
+      jd_text,
+    },
+  });
+};

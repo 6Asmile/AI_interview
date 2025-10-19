@@ -13,19 +13,19 @@
         />
       </div>
       <div class="header-actions">
+        <el-button @click="openJdDialog" :icon="Cpu" type="success" plain>AI 分析</el-button>
         <el-select 
           v-model="selectedTemplateId" 
           placeholder="选择模板" 
           class="template-selector"
         >
-          <el-option 
-            v-for="template in templates" 
-            :key="template.id" 
-            :label="template.name" 
-            :value="template.id" 
+          <el-option
+            v-for="template in templates"
+            :key="template.id"
+            :label="template.name"
+            :value="template.id"
           />
         </el-select>
-        <!-- 【核心修改】为预览按钮增加 loading 状态 -->
         <el-button @click="handlePreview" :loading="isPreviewing">预览</el-button>
         <el-button 
           type="primary" 
@@ -46,6 +46,22 @@
       <aside class="editor-sidebar"><ConfigPanel /></aside>
       <main class="editor-canvas-wrapper"><ResumeCanvas /></main>
     </div>
+
+    <el-dialog v-model="jdDialogVisible" title="AI 简历分析" width="50%">
+      <el-form-item label="请在此处粘贴目标岗位的职位描述 (JD)">
+        <el-input v-model="jdText" type="textarea" :rows="10" placeholder="将职位描述粘贴到这里..." />
+      </el-form-item>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="jdDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleAnalysis" :loading="isAnalyzing">
+            {{ isAnalyzing ? '分析中...' : '开始分析' }}
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <AnalysisReportDrawer :visible="reportDrawerVisible" :report="analysisReport" @close="reportDrawerVisible = false" />
   </div>
 </template>
 
@@ -55,17 +71,24 @@ import { useRoute, useRouter } from 'vue-router';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import ConfigPanel from '@/components/resume/editor/ConfigPanel.vue';
 import ResumeCanvas from '@/components/resume/editor/ResumeCanvas.vue';
-import { SuccessFilled, ArrowLeft } from '@element-plus/icons-vue';
+// 【核心修复】导入 Cpu 图标
+import { SuccessFilled, ArrowLeft, Cpu } from '@element-plus/icons-vue';
 import { templates } from '@/resume-templates';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElSkeleton, ElDialog, ElFormItem, ElInput, ElButton, ElDivider, ElSelect, ElOption } from 'element-plus';
+import { analyzeResumeApi, type AnalysisReport } from '@/api/modules/resumeEditor';
+import AnalysisReportDrawer from '@/components/resume/analysis/AnalysisReportDrawer.vue';
 
 const route = useRoute();
 const router = useRouter();
 const editorStore = useResumeEditorStore();
 const resumeId = Number(route.params.id);
 
-// 【核心修改】为预览操作增加独立的 loading 状态
 const isPreviewing = ref(false);
+const jdDialogVisible = ref(false);
+const jdText = ref('');
+const isAnalyzing = ref(false);
+const reportDrawerVisible = ref(false);
+const analysisReport = ref<AnalysisReport | null>(null);
 
 onMounted(() => {
   if (resumeId) {
@@ -86,27 +109,14 @@ const handleSave = async () => {
   await editorStore.saveResume();
 };
 
-// --- 【核心修改】重写 handlePreview 函数 ---
 const handlePreview = async () => {
   isPreviewing.value = true;
   try {
-    // 步骤1：调用 saveResume action，但这里我们直接复用其逻辑
-    if (!editorStore.resumeMeta?.id) {
-      ElMessage.error("无法预览，简历ID不存在。");
-      return;
-    }
-    const payload = {
-      title: editorStore.resumeMeta.title,
-      content_json: editorStore.resumeJson,
-      template_name: editorStore.selectedTemplateId,
-    };
-    // 调用API进行静默保存
+    // 静默保存
     await editorStore.saveResume();
-
-    // 步骤2：保存成功后，再打开预览页面
+    // 打开预览页
     const routeData = router.resolve({ name: 'ResumePreview', params: { id: resumeId } });
     window.open(routeData.href, '_blank');
-
   } catch (error) {
     console.error("预览前保存失败:", error);
     ElMessage.error("数据同步失败，无法打开预览。");
@@ -118,10 +128,32 @@ const handlePreview = async () => {
 const goBack = () => {
   router.push({ name: 'ResumeManagement' });
 };
+
+const openJdDialog = () => {
+  jdDialogVisible.value = true;
+};
+
+const handleAnalysis = async () => {
+  if (!jdText.value.trim()) {
+    ElMessage.warning('职位描述不能为空');
+    return;
+  }
+  isAnalyzing.value = true;
+  analysisReport.value = null;
+  try {
+    const report = await analyzeResumeApi(resumeId, jdText.value);
+    analysisReport.value = report;
+    jdDialogVisible.value = false;
+    reportDrawerVisible.value = true;
+  } catch (error) {
+    // 错误已由 axios 拦截器处理
+  } finally {
+    isAnalyzing.value = false;
+  }
+};
 </script>
 
 <style scoped>
-/* 样式与之前版本完全相同，无需修改 */
 .resume-editor-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
 .editor-header { display: flex; justify-content: space-between; align-items: center; padding: 0 24px; height: 60px; background-color: #fff; border-bottom: 1px solid #e8e8e8; flex-shrink: 0; }
 .header-left { display: flex; align-items: center; gap: 16px; }
