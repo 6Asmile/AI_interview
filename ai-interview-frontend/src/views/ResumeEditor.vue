@@ -61,8 +61,7 @@
       </template>
     </el-dialog>
 
-    <!-- 【核心修复】移除对旧抽屉组件的所有引用 -->
-    <!-- <AnalysisReportDrawer :visible="reportDrawerVisible" :report="analysisReport" @close="reportDrawerVisible = false" /> -->
+    <!-- 分析报告现在通过路由跳转显示，不再需要抽屉 -->
   </div>
 </template>
 
@@ -75,10 +74,7 @@ import ResumeCanvas from '@/components/resume/editor/ResumeCanvas.vue';
 import { SuccessFilled, ArrowLeft, Cpu } from '@element-plus/icons-vue';
 import { templates } from '@/resume-templates';
 import { ElMessage, ElSkeleton, ElDialog, ElFormItem, ElInput, ElButton, ElDivider, ElSelect, ElOption } from 'element-plus';
-// 【核心修复】移除未使用的 AnalysisReport 导入
 import { analyzeResumeApi } from '@/api/modules/resumeEditor';
-// 【核心修复】移除未使用的 AnalysisReportDrawer 导入
-// import AnalysisReportDrawer from '@/components/resume/analysis/AnalysisReportDrawer.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -86,14 +82,9 @@ const editorStore = useResumeEditorStore();
 const resumeId = Number(route.params.id);
 
 const isPreviewing = ref(false);
-
-// AI 分析相关状态
 const jdDialogVisible = ref(false);
 const jdText = ref('');
 const isAnalyzing = ref(false);
-// 【核心修复】移除不再需要的 ref
-// const reportDrawerVisible = ref(false);
-// const analysisReport = ref<AnalysisReport | null>(null);
 
 onMounted(() => {
   if (resumeId) {
@@ -146,7 +137,6 @@ const handleAnalysis = async () => {
     const newReport = await analyzeResumeApi(resumeId, jdText.value);
     jdDialogVisible.value = false;
     ElMessage.success('分析完成，正在跳转到报告页面...');
-    // 【核心修复】现在 newReport 的类型是 ResumeAnalysisReportItem，它有 'id' 属性
     router.push({ name: 'AnalysisReportDetail', params: { reportId: newReport.id } });
   } catch (error) {
     // 错误已由 axios 拦截器处理
@@ -157,7 +147,6 @@ const handleAnalysis = async () => {
 </script>
 
 <style scoped>
-/* 样式与之前版本完全相同 */
 .resume-editor-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
 .editor-header { display: flex; justify-content: space-between; align-items: center; padding: 0 24px; height: 60px; background-color: #fff; border-bottom: 1px solid #e8e8e8; flex-shrink: 0; }
 .header-left { display: flex; align-items: center; gap: 16px; }

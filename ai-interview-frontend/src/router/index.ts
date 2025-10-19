@@ -52,6 +52,10 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@/views/AnalysisReportDetail.vue'), 
         props: true 
     },
+    { 
+      path: 'ai-diagnosis', 
+      name: 'ResumeAIDiagnosis',
+       component: () => import('@/views/ResumeAIDiagnosis.vue') },
     ],
   },
 ];
