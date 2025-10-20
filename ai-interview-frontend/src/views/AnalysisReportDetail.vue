@@ -1,16 +1,17 @@
 <template>
   <div class="analysis-report-detail-container p-4 sm:p-6 lg:p-8" v-loading="isLoading">
     
-    <!-- [核心修改] 增加顶部操作栏，包含返回和导出按钮 -->
     <div class="flex justify-between items-center mb-4">
-      <el-page-header @back="goBack" title="返回列表">
+      <el-page-header @back="goBack" title="返回">
         <template #content>
           <span class="text-lg font-medium">AI 简历分析报告</span>
         </template>
       </el-page-header>
+      
+      <!-- [核心修正] 恢复为简单的导出按钮 -->
       <el-button 
         type="primary" 
-        @click="exportToPdf" 
+        @click="exportToPdf()" 
         :loading="isExporting"
         :icon="Download"
       >
@@ -18,12 +19,12 @@
       </el-button>
     </div>
 
-    <!-- [核心修改] 将 ref 绑定到需要导出的 el-card -->
-    <el-card shadow="never" v-if="reportItem" ref="reportContentRef">
-      <AnalysisReportContent :report="reportItem.report_data" />
-    </el-card>
-
-    <el-empty v-else-if="!isLoading" description="报告不存在或加载失败"></el-empty>
+    <div ref="reportContentRef">
+      <el-card shadow="never" v-if="reportItem">
+        <AnalysisReportContent :report="reportItem.report_data" />
+      </el-card>
+      <el-empty v-else-if="!isLoading" description="报告不存在或加载失败"></el-empty>
+    </div>
   </div>
 </template>
 
@@ -32,23 +33,20 @@ import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getAnalysisReportDetailApi, type ResumeAnalysisReportItem } from '@/api/modules/report';
 import AnalysisReportContent from '@/components/resume/analysis/AnalysisReportContent.vue';
-import { ElMessage, ElCard, ElEmpty, ElPageHeader, ElButton } from 'element-plus';
-// [核心修改] 导入 composable 和图标
-import { usePdfExport } from '@/composables/usePdfExport';
+import { useExport } from '@/composables/useExport';
 import { Download } from '@element-plus/icons-vue';
+import { ElMessage, ElCard, ElEmpty, ElPageHeader, ElButton } from 'element-plus';
 
 const route = useRoute();
 const router = useRouter();
 const isLoading = ref(true);
 const reportItem = ref<ResumeAnalysisReportItem | null>(null);
 
-// [核心修改] 设置 PDF 导出
 const reportContentRef = ref<HTMLElement | null>(null);
-const { isExporting, exportToPdf } = usePdfExport(reportContentRef, '简历分析报告');
-
+// [核心修正] 移除 isExportingHtml 和 exportToHtml
+const { isExporting, exportToPdf } = useExport(reportContentRef, '简历分析报告');
 
 const goBack = () => {
-  // 假设历史记录页的 name 是 'History'
   router.push({ name: 'History' });
 };
 
@@ -76,6 +74,4 @@ onMounted(async () => {
   max-width: 1000px;
   margin: 0 auto;
 }
-.page-container { padding: 20px; }
-.page-card-header { display: flex; justify-content: space-between; align-items: center; }
 </style>

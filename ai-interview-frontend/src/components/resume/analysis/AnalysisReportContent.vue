@@ -1,122 +1,111 @@
-<!-- src/components/resume/analysis/AnalysisReportContent.vue -->
 <template>
-  <div v-if="report" class="report-container">
-    <!-- 1. 总体得分 -->
-    <el-card shadow="never" class="report-section">
-      <div class="score-section">
-        <el-progress type="dashboard" :percentage="report.overall_score" :color="scoreColors" :width="120">
+  <div class="analysis-report-content" v-if="report">
+    <!-- 综合评估 -->
+    <el-card shadow="hover" class="mb-6">
+      <div class="flex items-center gap-8">
+        <el-progress type="dashboard" :percentage="percentage" :color="colors" :width="120">
           <template #default="{ percentage }">
-            <span class="percentage-value">{{ percentage }}</span>
-            <span class="percentage-label">匹配度</span>
+            <span class="text-2xl font-bold">{{ percentage }}</span>
+            <span class="text-xs text-gray-500">匹配度</span>
           </template>
         </el-progress>
-        <div class="score-summary">
-          <h3>综合评估</h3>
-          <p>这份简历与目标岗位的整体匹配度得分为 {{ report.overall_score }} 分。</p>
+        <div>
+          <h3 class="text-lg font-semibold">综合评估</h3>
+          <p class="text-gray-600 mt-2">这份简历与目标岗位的整体匹配度得分为 {{ report.overall_score }} 分。</p>
         </div>
       </div>
     </el-card>
-    <!-- 【核心新增】能力维度分析 -->
-<el-card shadow="never" class="report-section">
-  <template #header><h3>能力维度雷达图</h3></template>
-  <!-- 这里未来可以放一个 ECharts 的雷达图 -->
-  <div class="ability-scores">
-    <div v-for="ability in report.ability_scores" :key="ability.name" class="ability-item">
-        <span>{{ ability.name }}</span>
-        <el-rate :model-value="ability.score" disabled :max="5" show-score text-color="#ff9900" score-template="{value} 分" />
+
+    <!-- [核心修正] 添加能力维度雷达图 -->
+    <el-card shadow="hover" class="mb-6">
+      <template #header><div class="font-semibold text-lg">能力维度分析</div></template>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+        <div>
+          <AbilityRadarChart :ability-scores="report.ability_scores" />
+        </div>
+        <div class="space-y-4">
+          <div v-for="ability in report.ability_scores" :key="ability.name" class="flex justify-between items-center">
+            <span class="text-sm text-gray-700">{{ ability.name }}</span>
+            <div class="flex items-center">
+              <el-rate v-model="ability.score" disabled show-score text-color="#ff9900" score-template="{value} 分" :max="5" allow-half />
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 关键词匹配分析 -->
+    <el-card shadow="hover" class="mb-6">
+       <template #header><div class="font-semibold text-lg">关键词匹配分析</div></template>
+       <div class="space-y-4">
+        <div>
+          <p class="font-medium mb-2 text-gray-600">岗位核心要求 (JD):</p>
+          <el-tag v-for="kw in report.keyword_analysis.jd_keywords" :key="kw" type="info" class="mr-2 mb-2">{{ kw }}</el-tag>
+        </div>
+        <div>
+          <p class="font-medium mb-2 text-gray-600">简历中匹配的关键词:</p>
+          <el-tag v-for="kw in report.keyword_analysis.matched_keywords" :key="kw" type="success" class="mr-2 mb-2">{{ kw }}</el-tag>
+        </div>
+        <div>
+          <p class="font-medium mb-2 text-gray-600">简历中缺失的关键词:</p>
+          <el-tag v-for="kw in report.keyword_analysis.missing_keywords" :key="kw" type="warning" class="mr-2 mb-2">{{ kw }}</el-tag>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 亮点与改进 -->
+     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <el-card shadow="hover">
+        <template #header><div class="font-semibold text-lg flex items-center gap-2"><el-icon color="green"><CircleCheckFilled /></el-icon>亮点分析</div></template>
+        <ul class="list-disc pl-5 space-y-2 text-gray-700">
+          <li v-for="(item, index) in report.strengths_analysis" :key="index">{{ item }}</li>
+        </ul>
+      </el-card>
+      <el-card shadow="hover">
+        <template #header><div class="font-semibold text-lg flex items-center gap-2"><el-icon color="orange"><WarningFilled /></el-icon>待改进点</div></template>
+        <ul class="list-disc pl-5 space-y-2 text-gray-700">
+          <li v-for="(item, index) in report.weaknesses_analysis" :key="index">{{ item }}</li>
+        </ul>
+      </el-card>
     </div>
-  </div>
-</el-card>
-    <!-- 2. 关键词分析 -->
-    <el-card shadow="never" class="report-section">
-      <template #header><h3>关键词匹配分析</h3></template>
-      <div class="keyword-section">
-        <p><strong>岗位核心要求 (JD):</strong></p>
-        <div class="tag-group">
-          <el-tag v-for="kw in report.keyword_analysis.jd_keywords" :key="kw" type="info" effect="plain">{{ kw }}</el-tag>
-        </div>
-        <p><strong>简历中匹配的关键词:</strong></p>
-        <div class="tag-group">
-          <el-tag v-for="kw in report.keyword_analysis.matched_keywords" :key="kw" type="success">{{ kw }}</el-tag>
-        </div>
-        <p><strong>简历中缺失的关键词:</strong></p>
-        <div class="tag-group">
-          <el-tag v-for="kw in report.keyword_analysis.missing_keywords" :key="kw" type="warning">{{ kw }}</el-tag>
-        </div>
-      </div>
-    </el-card>
 
-    <!-- 3. 优势 & 劣势 -->
-    <el-row :gutter="20">
-      <el-col :span="12">
-        <el-card shadow="never" class="report-section">
-          <template #header><h3><el-icon color="#67C23A"><CircleCheckFilled /></el-icon> 亮点分析</h3></template>
-          <ul>
-            <li v-for="(item, index) in report.strengths_analysis" :key="index">{{ item }}</li>
-          </ul>
-        </el-card>
-      </el-col>
-      <el-col :span="12">
-        <el-card shadow="never" class="report-section">
-          <template #header><h3><el-icon color="#F56C6C"><WarningFilled /></el-icon> 待改进点</h3></template>
-          <ul>
-            <li v-for="(item, index) in report.weaknesses_analysis" :key="index">{{ item }}</li>
-          </ul>
-        </el-card>
-      </el-col>
-    </el-row>
-    
-    <!-- 4. 修改建议 -->
-    <el-card shadow="never" class="report-section">
-      <template #header><h3><el-icon color="#E6A23C"><Opportunity /></el-icon> 具体修改建议</h3></template>
-      <!-- 【核心修复】为 v-for 的 div 补全结束标签 -->
-      <div v-for="(item, index) in report.suggestions" :key="index" class="suggestion-item">
-        <p><strong>针对模块: </strong><el-tag size="small">{{ item.module }}</el-tag></p>
-        <p>{{ item.suggestion }}</p>
-      </div>
+    <!-- 具体修改建议 -->
+    <el-card shadow="hover">
+      <template #header><div class="font-semibold text-lg flex items-center gap-2"><el-icon color="blue"><Edit /></el-icon>具体修改建议</div></template>
+      <el-timeline>
+        <el-timeline-item
+          v-for="(item, index) in report.suggestions"
+          :key="index"
+          hollow
+          type="primary"
+        >
+          <p class="font-semibold">针对模块: {{ item.module }}</p>
+          <p class="text-gray-600 mt-1">{{ item.suggestion }}</p>
+        </el-timeline-item>
+      </el-timeline>
     </el-card>
-
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { AnalysisReport } from '@/api/modules/resumeEditor';
-import { CircleCheckFilled, WarningFilled, Opportunity } from '@element-plus/icons-vue';
-import { ElCard, ElProgress, ElTag, ElRow, ElCol, ElIcon } from 'element-plus'; // 确保导入所有使用的组件
+import { ElCard, ElProgress, ElTag, ElRate, ElTimeline, ElTimelineItem, ElIcon } from 'element-plus';
+import { CircleCheckFilled, WarningFilled, Edit } from '@element-plus/icons-vue';
+// [核心修正] 导入雷达图组件
+import AbilityRadarChart from '@/components/common/AbilityRadarChart.vue';
 
-defineProps<{
-  report: AnalysisReport | null;
+const props = defineProps<{
+  report: AnalysisReport;
 }>();
 
-const scoreColors = [
-  { color: '#f56c6c', percentage: 50 },
+const percentage = computed(() => {
+  return props.report?.overall_score || 0;
+});
+
+const colors = [
+  { color: '#f56c6c', percentage: 60 },
   { color: '#e6a23c', percentage: 80 },
   { color: '#67c23a', percentage: 100 },
 ];
 </script>
-
-<style scoped>
-.report-container { display: flex; flex-direction: column; gap: 20px; }
-.report-section .el-card__header { padding: 10px 15px; } /* Element Plus 2.x hack */
-.report-section :deep(.el-card__header) { padding: 12px 20px; }
-.report-section h3 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; }
-.score-section { display: flex; align-items: center; gap: 24px; }
-.percentage-value { font-size: 28px; font-weight: bold; }
-.percentage-label { font-size: 12px; color: #999; }
-.tag-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; margin-bottom: 16px; }
-ul { padding-left: 20px; margin: 0; }
-li { margin-bottom: 8px; }
-.suggestion-item { border-bottom: 1px solid #f0f0f0; padding-bottom: 12px; margin-bottom: 12px; }
-.suggestion-item:last-child { border-bottom: none; margin-bottom: 0; }
-/* 在 <style scoped> 中添加 */
-.ability-scores {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-}
-.ability-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-</style>

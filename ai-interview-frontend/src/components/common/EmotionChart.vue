@@ -3,8 +3,7 @@
 </template>
 
 <script setup lang="ts">
-// [核心修正] 显式导入 Ref 类型，以提供更强的类型提示
-import { ref, onMounted, watch, type Ref } from 'vue';
+import { ref, onMounted, watch, type Ref, defineExpose } from 'vue';
 import { useECharts } from '@/composables/useECharts';
 import type { EChartsOption } from 'echarts';
 import type { AnalysisFrame } from '@/api/modules/interview';
@@ -20,9 +19,8 @@ const emotionMap: Record<string, string> = {
   fearful: '害怕', disgusted: '厌恶', surprised: '惊讶',
 };
 
-// [核心修正] 将 options 的类型显式声明为 Ref<EChartsOption>
 const options: Ref<EChartsOption> = ref({
-  title: { text: '图表加载中...', left: 'center', top: 'center' }
+  title: { text: '', left: 'center', top: 'center' }
 });
 
 const updateChartOptions = () => {
@@ -45,8 +43,8 @@ const updateChartOptions = () => {
       type: 'line',
       smooth: true,
       data: props.analysisData.map(frame => [
-        (frame.timestamp - startTime) / 1000,
-        Math.round((frame.emotions[emotionKey] || 0) * 100)
+        (frame.timestamp - startTime) / 1000, // X轴：秒
+        Math.round((frame.emotions[emotionKey] || 0) * 100) // Y轴：百分比
       ])
     });
   });
@@ -73,6 +71,16 @@ const updateChartOptions = () => {
 onMounted(updateChartOptions);
 watch(() => props.analysisData, updateChartOptions, { deep: true });
 
-useECharts(chartRef, options);
+// [核心修正 1/2] 从 useECharts 中获取 chartInstance
+const { chartInstance } = useECharts(chartRef, options);
+
+// [核心修正 2/2] 定义 resize 方法并暴露给父组件
+const resizeChart = () => {
+  chartInstance.value?.resize();
+};
+
+defineExpose({
+  resizeChart
+});
 
 </script>
