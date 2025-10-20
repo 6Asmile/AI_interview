@@ -103,8 +103,6 @@ def _call_openai_api_stream(api_key: str, model: AIModel, messages: list, max_to
         yield content
 
 
-# --- 【核心修复】更新所有 AI 服务函数以使用新的 _get_user_ai_config 签名 ---
-
 def generate_first_question(job_position: str, user: User, resume_text: str = None) -> str:
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
@@ -152,7 +150,6 @@ def analyze_answer(job_position: str, question: str, answer: str, user: User) ->
         "请对我的回答给出一个大约50-100字的简评。直接返回评价本身，不要包含多余内容。"
     )
     try:
-        # 这个函数比较简单，可以直接调用 OpenAI API
         client = OpenAI(api_key=api_key, base_url=model.base_url)
         response = client.chat.completions.create(
             model=model.model_slug,
@@ -187,53 +184,98 @@ def generate_next_question_stream(job_position: str, interview_history: list, us
         yield "请谈谈你遇到的最大的技术挑战是什么？"
 
 
-def generate_final_report(job_position: str, interview_history: list, user: User) -> dict:
+# --- [核心改造 1/3] 新增一个辅助函数，用于简化情绪数据的文本描述 ---
+def _summarize_emotion_data(analysis_data: list) -> str:
+    if not analysis_data:
+        return "无情绪数据。"
+
+    emotion_map: dict[str, str] = {
+        'neutral': '平静', 'happy': '开心', 'sad': '悲伤', 'angry': '生气',
+        'fearful': '害怕', 'disgusted': '厌恶', 'surprised': '惊讶',
+    }
+
+    primary_emotions = []
+    for frame in analysis_data:
+        emotions = frame.get('emotions', {})
+        if emotions:
+            # 找到得分最高的情绪
+            top_emotion = max(emotions, key=emotions.get)
+            primary_emotions.append(emotion_map.get(top_emotion, '未知'))
+
+    if not primary_emotions:
+        return "情绪稳定。"
+
+    # 统计主要情绪
+    from collections import Counter
+    emotion_counts = Counter(primary_emotions)
+    summary = ", ".join([f"{emotion}({count}次)" for emotion, count in emotion_counts.most_common(3)])
+    return f"主要情绪表现: {summary}。"
+
+
+# --- [核心改造 2/3] 重写 generate_final_report 函数 ---
+def generate_final_report(job_position: str, interview_history: list, user: User, resume_text: str = None) -> dict:
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         return {"error": "AI服务未配置，无法生成报告。"}
 
+    # 构造包含情绪分析的面试历史
     history_prompt_part = ""
     for i, turn in enumerate(interview_history):
+        emotion_summary = _summarize_emotion_data(turn.get('analysis_data', []))
         history_prompt_part += f"--- 问题 {i + 1} ---\n"
         history_prompt_part += f"面试官提问: {turn['question']}\n"
-        history_prompt_part += f"我的回答: {turn['answer']}\n\n"
+        history_prompt_part += f"我的回答: {turn['answer']}\n"
+        history_prompt_part += f"回答期间情绪总结: {emotion_summary}\n\n"
+
+    # 构造简历部分
+    resume_prompt_part = "该候选人未提供简历。"
+    if resume_text:
+        resume_prompt_part = f"--- 候选人简历 ---\n{resume_text}\n--- 简历结束 ---\n"
 
     system_prompt = (
-        "你是一位顶级的职业规划师和面试分析专家，尤其擅长使用 STAR 法则优化工作和项目描述以及结构化思维分析和关键词提取。"
-        "你的任务是基于一场完整的面试记录，生成一份专业、数据驱动、富有洞察力的面试报告。"
+        "你是一位顶级的职业规划师和面试分析专家，拥有多年的HR和技术面试官经验。"
+        "你的任务是基于候选人的**简历**、**完整的面试记录**以及**每道题回答时的情绪变化**，进行一次全面、深度、富有洞察力的评估。"
+        "你的分析必须体现出你综合了所有信息，例如，指出回答中的亮点是否在简历中有所体现，或者情绪波动是否与问题难度相关。"
     )
+
     user_prompt = (
-        f"我刚刚完成了一场关于 '{job_position}' 岗位的模拟面试。完整的问答记录如下：\n\n"
-        f"--- 面试记录开始 ---\n{history_prompt_part}--- 面试记录结束 ---\n\n"
-        "请对我本次面试进行综合评估，并严格按照下面的 JSON 格式返回你的分析报告。"
-        "所有评分都是0-5分，可以有1位小数。所有文本内容需客观、专业且有建设性。\n"
+        f"我刚刚完成了一场关于 '{job_position}' 岗位的模拟面试。请严格遵循以下要求，生成一份综合评估报告。\n\n"
+        f"{resume_prompt_part}\n\n"
+        f"--- 面试记录 (含情绪总结) ---\n{history_prompt_part}--- 面试记录结束 ---\n\n"
+        "请严格按照下面的 JSON 格式返回你的分析报告。所有评分都是0-5分，所有文本内容需客观、专业且有建设性。\n"
+        "在 strength_analysis 和 weakness_analysis 中，你的分析必须明确关联到具体的简历内容或面试问答。\n"
         "{\n"
         "  \"overall_score\": \"(一个0到100的整数，代表综合得分)\",\n"
         "  \"ability_scores\": [\n"
         "    {\"name\": \"专业知识\", \"score\": (0-5分)},\n"
-        "    {\"name\": \"项目经验\", \"score\": (0-5分)},\n"
-        "    {\"name\": \"逻辑思维\", \"score\": (0-5分)},\n"
-        "    {\"name\": \"沟通表达\", \"score\": (0-5分)},\n"
-        "    {\"name\": \"求职动机\", \"score\": (0-5分)}\n"
+        "    {\"name\": \"技术深度\", \"score\": (0-5分)},\n"
+        "    {\"name\": \"求职动机\", \"score\": (0-5分)},\n"
+        "    {\"name\": \"业务理解\", \"score\": (0-5分)},\n"
+        "    {\"name\": \"沟通表达\", \"score\": (0-5分)}\n"
         "  ],\n"
-        "  \"overall_comment\": \"(一段100字左右的总体评价)\",\n"
-        "  \"strength_analysis\": \"(关于本次面试亮点的分析)\",\n"
-        "  \"weakness_analysis\": \"(关于本次面试不足之处的分析)\",\n"
+        "  \"overall_comment\": \"(一段100字左右的总体评价，需体现出你结合了简历和面试表现)\",\n"
+        "  \"strength_analysis\": \"(分点列出本次面试的亮点，例如：'在回答问题2时，候选人很好地将简历中提到的XX项目经验与实际问题结合，并全程表现自信（情绪主要是开心和平静），这是一个很大的加分项。')\",\n"
+        "  \"weakness_analysis\": \"(分点列出本次面试的不足，例如：'对于问题3中关于性能优化的追问，候选人的回答较为宽泛，未能深入到简历中提到的ClickHouse具体应用细节，且情绪数据显示出犹豫（多次出现惊讶），表明在该领域的知识深度有待加强。')\",\n"
         "  \"improvement_suggestions\": [\n"
         "    \"(第一条具体的改进建议)\",\n"
-        "    \"(第二条具体的改进建议)\"\n"
+        "    \"(第二条具体的改进建议)\",\n"
+        "    \"(第三条具体的改进建议)\"\n"
         "  ],\n"
         "  \"keyword_analysis\": {\n"
-        "    \"matched_keywords\": [\"(从我的回答中提取出的、与岗位要求高度相关的关键词1)\", \"(关键词2)\", \"(关键词3)\"],\n"
-        "    \"missing_keywords\": [\"(根据岗位要求，我应该提及但未提及的核心关键词1)\", \"(关键词2)\", \"(关键词3)\"],\n"
+        "    \"matched_keywords\": [\"(关键词1)\", \"(关键词2)\", \"(关键词3)\"],\n"
+        "    \"missing_keywords\": [\"(关键词1)\", \"(关键词2)\", \"(关键词3)\"],\n"
         "    \"analysis_comment\": \"(一段关于我关键词使用情况的简短分析)\"\n"
         "  },\n"
         "  \"star_analysis\": [\n"
         "    {\n"
-        "      \"question_sequence\": (问题序号，例如 1),\n"
-        "      \"is_behavioral_question\": (判断这个问题是否是行为面试题，true/false),\n"
-        "      \"conforms_to_star\": (判断我的回答是否符合STAR法则，true/false),\n"
-        "      \"star_feedback\": \"(如果是不符合，请分点给出具体的改进建议，例如'Situation描述不清'或'缺少量化的Result'；如果符合，则表扬)\"\n"
+        "      \"question_sequence\": 1,\n"
+        "      \"is_behavioral_question\": true,\n"
+        "      \"conforms_to_star\": false,\n"
+        "      \"overall_star_feedback\": \"(对这个回答的STAR法则应用情况给出一个简短的总体评价)\",\n"
+        "      \"situation_analysis\": \"(针对'Situation'部分的详尽分析)\",\n"
+        "      \"task_analysis\": \"(针对'Task'部分的详尽分析)\",\n"
+        "      \"action_analysis\": \"(针对'Action'部分的详尽分析)\",\n"
+        "      \"result_analysis\": \"(针对'Result'部分的详尽分析，尤其要强调量化结果的重要性)\"\n"
         "    }\n"
         "  ]\n"
         "}"
@@ -241,7 +283,7 @@ def generate_final_report(job_position: str, interview_history: list, user: User
 
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        report_data = _call_openai_api(api_key, model, messages, 3500, 0.5)
+        report_data = _call_openai_api(api_key, model, messages, 4096, 0.5)
 
         if 'overall_score' in report_data:
             try:
@@ -260,7 +302,49 @@ def generate_final_report(job_position: str, interview_history: list, user: User
         return {"error": f"生成报告失败: {e}"}
 
 
+# --- [核心改造 3/3] 新增一个函数，用于生成 AI 参考答案 ---
+def generate_reference_answer_for_question(job_position: str, question: str, user: User,
+                                           resume_text: str = None) -> str:
+    api_key, model = _get_user_ai_config(user)
+    if not api_key or not model:
+        return "AI 服务未配置，无法生成参考答案。"
+
+    system_prompt = (
+        "你是一位经验极其丰富的资深技术专家和面试官，现在需要扮演一位明星候选人。"
+        "你的任务是针对一个具体问题，给出一个逻辑清晰、内容详实、并严格遵循 STAR 法则的完美回答。"
+    )
+
+    resume_context = "我没有提供简历。"
+    if resume_text:
+        resume_context = f"请参考我的简历：\n{resume_text}"
+
+    user_prompt = (
+        f"我正在面试 '{job_position}' 岗位。\n"
+        f"{resume_context}\n\n"
+        f"面试官的问题是：\n"
+        f"--- 问题开始 ---\n{question}\n--- 问题结束 ---\n\n"
+        "请为我生成一份这个问题的“专家级”参考答案。要求：\n"
+        "1. 如果是行为面试题，必须严格遵循 STAR 法则，每个部分都要清晰明了。\n"
+        "2. 内容要具体、有深度，最好包含量化的结果。\n"
+        "3. 直接返回答案文本，不需要任何额外的问候或解释。"
+    )
+    try:
+        client = OpenAI(api_key=api_key, base_url=model.base_url)
+        response = client.chat.completions.create(
+            model=model.model_slug,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            stream=False,
+            max_tokens=1024,
+            temperature=0.6
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"调用 AI 生成参考答案时发生错误: {e}")
+        return "抱歉，AI 在思考参考答案时遇到了一点小问题。"
+
+
 def polish_description_by_ai(original_html: str, user: User, job_position: str = None) -> str:
+    # ... (此函数保持不变) ...
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         return "<p>AI 服务未配置，无法进行润色。</p>"
@@ -286,15 +370,8 @@ def polish_description_by_ai(original_html: str, user: User, job_position: str =
         return original_html
 
 
-# ai_interview_backend/interviews/ai_services.py
-
-# ... (其他 imports 和函数保持不变) ...
-
 def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dict:
-    """
-    【豪华升级版】
-    根据给定的岗位描述(JD)，从多个维度深度分析简历，并返回结构化的数据报告。
-    """
+    # ... (此函数保持不变) ...
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         return {"error": "AI 服务未配置，无法进行分析。"}
@@ -347,7 +424,6 @@ def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dic
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         analysis_report = _call_openai_api(api_key, model, messages, 3072, 0.6)
 
-        # --- 【核心新增】添加数据清洗逻辑，确保分数是数字 ---
         if 'overall_score' in analysis_report and not isinstance(analysis_report['overall_score'], int):
             try:
                 analysis_report['overall_score'] = int(analysis_report['overall_score'])
@@ -370,6 +446,7 @@ def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dic
 
 
 def generate_resume_by_ai(name: str, position: str, experience_years: str, keywords: str, user: User) -> dict:
+    # ... (此函数保持不变) ...
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         return {"error": "AI 服务未配置"}

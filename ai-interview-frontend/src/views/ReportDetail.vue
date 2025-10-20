@@ -1,292 +1,253 @@
 <template>
-  <div class="page-container report-container">
-    <el-card v-if="reportData && !loading" class="report-card">
+  <div class="report-detail-container p-4 sm:p-6 lg:p-8" v-loading="isLoading">
+    
+    <div class="flex justify-end mb-4">
+       <el-button 
+        type="primary" 
+        @click="exportToPdf" 
+        :loading="isExporting"
+        :icon="Download"
+      >
+        {{ isExporting ? '导出中...' : '导出为 PDF' }}
+      </el-button>
+    </div>
+
+    <el-card shadow="never" class="report-card" v-if="reportData && sessionInfo" ref="reportContentRef">
       <template #header>
-        <div class="page-card-header report-header">
-          <div class="header-left">
-            <el-icon :size="30"><Document /></el-icon>
-            <h1>AI 面试评估报告</h1>
-          </div>
-          <div class="header-right">
-            <span>面试用户: {{ sessionInfo?.user?.username || 'N/A' }}</span>
-            <span>面试时间: {{ sessionInfo?.started_at ? new Date(sessionInfo.started_at).toLocaleString() : 'N/A' }}</span>
-          </div>
+        <div class="card-header flex justify-between items-center">
+          <h1 class="text-2xl font-bold text-gray-800">AI 面试评估报告</h1>
+        </div>
+        <div class="meta-info text-sm text-gray-500 mt-2">
+          <span>面试用户: {{ sessionInfo?.user?.username || 'N/A' }}</span>
+          <el-divider direction="vertical" />
+          <span>面试时间: {{ sessionInfo?.started_at ? new Date(sessionInfo.started_at).toLocaleString() : 'N/A' }}</span>
         </div>
       </template>
-      
-      <div class="section">
-        <h2>综合评语</h2>
-        <div class="overall-comment">
-          <el-icon><Opportunity /></el-icon>
-          <p>{{ reportData.overall_comment }}</p>
-        </div>
-      </div>
-      
-      <div class="section">
-        <h2>能力维度分析</h2>
-        <el-row :gutter="40">
+
+      <el-card shadow="hover" class="mb-6">
+        <template #header>
+          <div class="font-semibold text-lg">综合评语</div>
+        </template>
+        <p class="text-gray-700 leading-relaxed">{{ reportData.overall_comment }}</p>
+      </el-card>
+
+      <el-card shadow="hover" class="mb-6">
+        <template #header>
+          <div class="font-semibold text-lg">能力维度分析</div>
+        </template>
+        <el-row :gutter="20">
           <el-col :span="12">
-            <div ref="radarChart" style="width: 100%; height: 400px;"></div>
+            <AbilityRadarChart :ability-scores="reportData.ability_scores" />
           </el-col>
-          <el-col :span="12" class="ability-bars">
-             <div v-for="ability in reportData.ability_scores" :key="ability.name" class="ability-item">
-               <span>{{ ability.name }}</span>
-               <el-progress :percentage="ability.score * 20" :format="() => `${ability.score} / 5`" />
-             </div>
+          <el-col :span="12">
+            <el-table :data="reportData.ability_scores" style="width: 100%; height: 350px;">
+              <el-table-column prop="name" label="能力项" />
+              <el-table-column prop="score" label="得分 (0-5)">
+                <template #default="scope">
+                  <el-rate v-model="scope.row.score" disabled :max="5" :allow-half="true" />
+                </template>
+              </el-table-column>
+            </el-table>
           </el-col>
         </el-row>
-      </div>
+      </el-card>
 
-      <el-row :gutter="20">
+      <el-row :gutter="24">
         <el-col :span="12">
-          <div class="section">
-            <h2>亮点表现</h2>
-            <div class="suggestion-box good">
-              <p>{{ reportData.strength_analysis }}</p>
-            </div>
-          </div>
+          <el-card shadow="hover" class="mb-6">
+            <template #header><div class="font-semibold text-lg">亮点表现</div></template>
+            <div class="text-green-700 whitespace-pre-wrap">{{ reportData.strength_analysis }}</div>
+          </el-card>
+          <el-card shadow="hover" class="mb-6">
+            <template #header><div class="font-semibold text-lg">待改进点</div></template>
+            <div class="text-yellow-700 whitespace-pre-wrap">{{ reportData.weakness_analysis }}</div>
+          </el-card>
         </el-col>
         <el-col :span="12">
-          <div class="section">
-            <h2>待改进点</h2>
-             <div class="suggestion-box bad">
-              <p>{{ reportData.weakness_analysis }}</p>
+           <el-card shadow="hover" class="mb-6">
+            <template #header><div class="font-semibold text-lg">改进建议</div></template>
+            <el-timeline>
+              <el-timeline-item 
+                v-for="(suggestion, index) in reportData.improvement_suggestions" 
+                :key="index" 
+                type="primary"
+                hollow
+              >
+                <p class="font-medium">建议 {{ index + 1 }}</p>
+                <p class="text-gray-600">{{ suggestion }}</p>
+              </el-timeline-item>
+            </el-timeline>
+          </el-card>
+          <el-card shadow="hover" class="mb-6" v-if="reportData.keyword_analysis">
+            <template #header><div class="font-semibold text-lg">关键词分析</div></template>
+            <div>
+              <p class="font-medium mb-2">匹配的关键词:</p>
+              <el-tag v-for="kw in reportData.keyword_analysis.matched_keywords" :key="kw" type="success" class="mr-2 mb-2">{{ kw }}</el-tag>
             </div>
-          </div>
+            <el-divider />
+            <div>
+              <p class="font-medium mb-2">建议补充的关键词:</p>
+               <el-tag v-for="kw in reportData.keyword_analysis.missing_keywords" :key="kw" type="warning" class="mr-2 mb-2">{{ kw }}</el-tag>
+            </div>
+             <p class="text-sm text-gray-600 mt-4">{{ reportData.keyword_analysis.analysis_comment }}</p>
+          </el-card>
         </el-col>
       </el-row>
       
-      <div class="section">
-        <h2>改进建议</h2>
-        <div v-for="(suggestion, index) in reportData.improvement_suggestions" :key="index" class="suggestion-item">
-          <el-tag type="success" effect="plain" round class="suggestion-index">{{ index + 1 }}</el-tag>
-          <p>{{ suggestion }}</p>
-        </div>
-      </div>
-      
-      <!-- 新增：关键词分析模块 -->
-      <div class="section">
-        <h2>关键词分析</h2>
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <p class="analysis-subtitle">匹配的关键词</p>
-            <el-tag v-for="kw in reportData.keyword_analysis.matched_keywords" :key="kw" type="success" class="keyword-tag">{{ kw }}</el-tag>
-            <el-empty v-if="!reportData.keyword_analysis.matched_keywords?.length" description="无" :image-size="50" />
-          </el-col>
-          <el-col :span="12">
-            <p class="analysis-subtitle">建议补充的关键词</p>
-            <el-tag v-for="kw in reportData.keyword_analysis.missing_keywords" :key="kw" type="warning" class="keyword-tag">{{ kw }}</el-tag>
-            <el-empty v-if="!reportData.keyword_analysis.missing_keywords?.length" description="无" :image-size="50" />
-          </el-col>
-        </el-row>
-        <div class="analysis-comment">
-          <p>{{ reportData.keyword_analysis.analysis_comment }}</p>
-        </div>
-      </div>
-      
-      <!-- 新增：STAR 法则分析模块 -->
-      <div class="section">
-        <h2>STAR 法则分析</h2>
-        <el-table :data="starAnalysisData" style="width: 100%">
-          <el-table-column prop="question" label="行为问题" />
-          <el-table-column prop="conforms_to_star" label="STAR 符合度" width="150" align="center">
-            <template #default="scope">
-              <el-tag :type="scope.row.conforms_to_star ? 'success' : 'danger'">
-                {{ scope.row.conforms_to_star ? '符合' : '待改进' }}
-              </el-tag>
+      <!-- [核心修正] 确保 starAnalysisWithQuestionText 被使用 -->
+      <el-card shadow="hover" class="mb-6">
+        <template #header><div class="font-semibold text-lg">STAR 法则分析</div></template>
+        <el-table :data="starAnalysisWithQuestionText" style="width: 100%" row-key="question_sequence">
+          <el-table-column type="expand">
+            <template #default="props">
+              <div class="p-4 bg-gray-50 rounded-md">
+                <div v-if="props.row.is_behavioral_question">
+                  <h4 class="text-base font-semibold mb-3 text-gray-700">深度分析</h4>
+                  <p class="text-sm text-gray-600 mb-4"><strong>总体评价:</strong> {{ props.row.overall_star_feedback }}</p>
+                  <div class="space-y-3">
+                    <div class="analysis-item"><strong class="text-blue-600">S (Situation):</strong><p class="text-gray-700 pl-2 border-l-2 border-blue-200 ml-1">{{ props.row.situation_analysis }}</p></div>
+                    <div class="analysis-item"><strong class="text-green-600">T (Task):</strong><p class="text-gray-700 pl-2 border-l-2 border-green-200 ml-1">{{ props.row.task_analysis }}</p></div>
+                    <div class="analysis-item"><strong class="text-purple-600">A (Action):</strong><p class="text-gray-700 pl-2 border-l-2 border-purple-200 ml-1">{{ props.row.action_analysis }}</p></div>
+                    <div class="analysis-item"><strong class="text-red-600">R (Result):</strong><p class="text-gray-700 pl-2 border-l-2 border-red-200 ml-1">{{ props.row.result_analysis }}</p></div>
+                  </div>
+                </div>
+                <div v-else class="text-gray-500"><p>该问题非典型的行为面试题，不适用 STAR 法则进行深度分析。</p></div>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column prop="star_feedback" label="AI 反馈" />
+          <el-table-column label="问题" prop="question_text" min-width="300" />
+          <el-table-column label="是否行为题" prop="is_behavioral_question" width="120" align="center">
+            <template #default="scope"><el-tag :type="scope.row.is_behavioral_question ? 'success' : 'info'" size="small">{{ scope.row.is_behavioral_question ? '是' : '否' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="STAR 法则符合度" prop="conforms_to_star" width="150" align="center">
+            <template #default="scope"><el-tag :type="scope.row.conforms_to_star ? 'success' : 'warning'">{{ scope.row.conforms_to_star ? '符合' : '待改进' }}</el-tag></template>
+          </el-table-column>
         </el-table>
-        <el-empty v-if="!starAnalysisData.length" description="本次面试未涉及需 STAR 法则作答的行为问题" />
-      </div>
-    </el-card>
-    
-    <el-card v-if="sessionInfo && !loading" class="review-card">
-      <template #header>
-        <div class="page-card-header">
-          <h2>面试详情回顾</h2>
-        </div>
-      </template>
-      <el-timeline>
-        <el-timeline-item 
-          v-for="(qa, index) in sessionInfo.questions" 
-          :key="qa.id"
-          :timestamp="`问题 ${index + 1}`"
-          placement="top"
-        >
-          <el-card>
-            <h4>{{ qa.question_text }}</h4>
-            <p v-if="qa.answer_text" class="answer-text"><strong>您的回答:</strong> {{ qa.answer_text }}</p>
-            <p v-if="qa.ai_feedback?.feedback" class="feedback-text">
-              <strong>AI 简评:</strong> {{ qa.ai_feedback.feedback }}
-            </p>
-            <div v-if="qa.analysis_data && qa.analysis_data.length > 0" class="emotion-chart-container">
-              <p class="chart-title">回答期间情绪波动</p>
-              <div :ref="el => setChartRef(qa.id, el)" class="emotion-chart"></div>
-            </div>
-          </el-card>
-        </el-timeline-item>
-      </el-timeline>
-    </el-card>
+      </el-card>
 
-    <el-skeleton :rows="10" animated v-if="loading" />
+      <!-- [核心修正] 确保 EmotionChart, ElCollapse, ElCollapseItem, activeCollapse, fetchReferenceAnswer 被使用 -->
+      <el-card shadow="hover" class="mb-6">
+        <template #header><div class="font-semibold text-lg">面试详情回顾</div></template>
+        <el-collapse v-model="activeCollapse">
+          <el-collapse-item 
+            v-for="(qa, index) in sessionInfo.questions" 
+            :key="qa.id" 
+            :name="index"
+          >
+            <template #title><span class="font-medium">问题 {{ index + 1 }}: {{ qa.question_text }}</span></template>
+            <div>
+              <p class="text-gray-800 p-3 bg-blue-50 rounded-md"><strong>您的回答:</strong> {{ qa.answer_text || '未作答' }}</p>
+              <p class="text-gray-800 p-3 bg-green-50 rounded-md mt-2"><strong>AI 简评:</strong> {{ qa.ai_feedback?.feedback || '暂无简评' }}</p>
+              <div class="mt-4 p-4 border border-dashed border-yellow-400 bg-yellow-50 rounded-md">
+                <div class="flex justify-between items-center">
+                  <h5 class="font-semibold text-yellow-800">AI 参考答案</h5>
+                  <el-button type="primary" link @click="fetchReferenceAnswer(qa.id)" :loading="referenceAnswerState[qa.id]?.loading">
+                    {{ referenceAnswerState[qa.id]?.answer ? '重新获取' : '查看参考答案' }}
+                  </el-button>
+                </div>
+                <div v-if="referenceAnswerState[qa.id]?.answer" class="mt-2 text-gray-700 whitespace-pre-wrap">{{ referenceAnswerState[qa.id]?.answer }}</div>
+              </div>
+              <div v-if="qa.analysis_data && qa.analysis_data.length > 0" class="mt-4">
+                <h5 class="font-semibold mb-2">回答期间情绪波动</h5>
+                <EmotionChart :analysis-data="qa.analysis_data" />
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </el-card>
+
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
+import { ref, onMounted, computed, reactive } from 'vue';
 import { useRoute } from 'vue-router';
-import * as echarts from 'echarts';
 import { getInterviewReportApi, type InterviewReport } from '@/api/modules/report';
-import { getInterviewSessionApi, type InterviewSessionItem, type AnalysisFrame } from '@/api/modules/interview';
-import { Document, Opportunity } from '@element-plus/icons-vue';
-import { emotionMap } from '@/composables/useFaceApi';
+import { getInterviewSessionApi, getAIReferenceAnswerApi, type InterviewSessionItem } from '@/api/modules/interview';
+import EmotionChart from '@/components/common/EmotionChart.vue';
+import AbilityRadarChart from '@/components/common/AbilityRadarChart.vue';
+import { usePdfExport } from '@/composables/usePdfExport';
+import { Download } from '@element-plus/icons-vue';
+import { ElMessage, ElCard, ElRow, ElCol, ElDivider, ElTable, ElTableColumn, ElRate, ElTag, ElTimeline, ElTimelineItem, ElCollapse, ElCollapseItem, ElButton } from 'element-plus';
 
 const route = useRoute();
-const loading = ref(true);
+const isLoading = ref(true);
 const reportData = ref<InterviewReport | null>(null);
 const sessionInfo = ref<InterviewSessionItem | null>(null);
-const radarChart = ref<HTMLElement | null>(null);
+const activeCollapse = ref([0]);
 
-const chartRefs = ref<Map<number, HTMLElement>>(new Map());
-const chartInstances = new Map<number, echarts.ECharts>();
-let radarChartInstance: echarts.ECharts | null = null;
+const reportContentRef = ref<HTMLElement | null>(null);
+const { isExporting, exportToPdf } = usePdfExport(reportContentRef, '面试评估报告');
 
-const starAnalysisData = computed(() => {
-  if (!reportData.value || !sessionInfo.value || !reportData.value.star_analysis) return [];
-  return reportData.value.star_analysis
-    .filter(sa => sa.is_behavioral_question)
-    .map(sa => {
-      const question = sessionInfo.value?.questions.find(q => q.sequence === sa.question_sequence);
-      return {
-        ...sa,
-        question: question ? `Q${sa.question_sequence}: ${question.question_text}` : `问题 ${sa.question_sequence}`
-      }
-    });
-});
+const referenceAnswerState = reactive<Record<number, {loading: boolean, answer: string | null}>>({});
 
-const setChartRef = (id: number, el: any) => {
-  if (el) { chartRefs.value.set(id, el); }
+const fetchReferenceAnswer = async (questionId: number) => {
+  if (!referenceAnswerState[questionId]) {
+    referenceAnswerState[questionId] = { loading: false, answer: null };
+  }
+  referenceAnswerState[questionId].loading = true;
+  try {
+    const res = await getAIReferenceAnswerApi(questionId);
+    referenceAnswerState[questionId].answer = res.answer;
+  } catch (error) {
+    ElMessage.error('获取参考答案失败');
+    console.error("Fetch reference answer error:", error);
+  } finally {
+    referenceAnswerState[questionId].loading = false;
+  }
 };
 
-const fetchData = async (sessionId: string) => {
-  loading.value = true;
+onMounted(async () => {
+  const sessionId = route.params.id as string;
+  if (!sessionId) {
+    ElMessage.error('无效的报告ID');
+    isLoading.value = false;
+    return;
+  }
   try {
-    const [report, session] = await Promise.all([
+    const [reportRes, sessionRes] = await Promise.all([
       getInterviewReportApi(sessionId),
       getInterviewSessionApi(sessionId),
     ]);
-    reportData.value = report;
-    sessionInfo.value = session;
-    
-    setTimeout(() => {
-      initRadarChart();
-      initEmotionCharts();
-    }, 200);
+    reportData.value = reportRes;
+    sessionInfo.value = sessionRes;
   } catch (error) {
-    console.error("获取报告失败", error);
+    console.error("获取面试报告失败", error);
+    ElMessage.error("加载报告数据失败，请稍后重试。");
   } finally {
-    loading.value = false;
+    isLoading.value = false;
   }
-};
-
-onMounted(() => {
-  const sessionId = route.params.id as string;
-  if (sessionId) fetchData(sessionId);
 });
 
-onUnmounted(() => {
-  radarChartInstance?.dispose();
-  chartInstances.forEach(chart => chart.dispose());
-});
-
-const initRadarChart = () => {
-  if (!radarChart.value || !reportData.value || !reportData.value.ability_scores || reportData.value.ability_scores.length === 0) {
-    if(radarChart.value) radarChart.value.innerHTML = '<div class="chart-error">AI 未返回能力维度评分数据</div>';
-    return;
+const starAnalysisWithQuestionText = computed(() => {
+  if (!reportData.value?.star_analysis || !sessionInfo.value?.questions) {
+    return [];
   }
-  
-  if (!radarChartInstance) {
-    radarChartInstance = echarts.init(radarChart.value);
-  }
-  
-  const indicatorData = reportData.value.ability_scores.map(item => ({ name: item.name, max: 5 }));
-  const seriesData = reportData.value.ability_scores.map(item => Number(item.score) || 0);
-
-  const option = {
-    tooltip: { trigger: 'item' },
-    radar: { indicator: indicatorData, radius: '65%', center: ['50%', '55%'] },
-    series: [{ type: 'radar', data: [{ value: seriesData, name: '能力评估', areaStyle: { color: 'rgba(64, 158, 255, 0.4)' }}] }]
-  };
-  radarChartInstance.setOption(option);
-};
-
-const initEmotionCharts = () => {
-  if (!sessionInfo.value || !sessionInfo.value.questions) return;
-  sessionInfo.value.questions.forEach(qa => {
-    if (!qa.analysis_data || qa.analysis_data.length === 0) return;
-    
-    const chartDom = chartRefs.value.get(qa.id);
-    if (chartDom) {
-      let chart = chartInstances.get(qa.id);
-      if (!chart) {
-        chart = echarts.init(chartDom);
-        chartInstances.set(qa.id, chart);
-      }
-      const timestamps = qa.analysis_data.map((d: AnalysisFrame) => (d.timestamp / 1000).toFixed(1) + 's');
-      const series = Object.keys(emotionMap).map(key => ({
-        name: emotionMap[key],
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        data: qa.analysis_data!.map((d: AnalysisFrame) => {
-          const emotionValue = d.emotions ? d.emotions[key] : 0;
-          return ((emotionValue || 0) * 100).toFixed(2);
-        })
-      }));
-      const option = {
-        tooltip: { trigger: 'axis' },
-        legend: { data: Object.values(emotionMap), top: 'bottom', type: 'scroll' },
-        grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-        xAxis: { type: 'category', boundaryGap: false, data: timestamps },
-        yAxis: { type: 'value', max: 100, name: '置信度 (%)' },
-        series: series
-      };
-      chart.setOption(option);
-    }
+  return reportData.value.star_analysis.map(analysisItem => {
+    const question = sessionInfo.value?.questions.find(
+      q => q.sequence === analysisItem.question_sequence
+    );
+    return {
+      ...analysisItem,
+      question_text: question ? question.question_text : '未知问题'
+    };
   });
-};
+});
 </script>
 
 <style scoped>
-.report-container { max-width: 1000px; margin: 20px auto; display: flex; flex-direction: column; gap: 20px;}
-.report-header { align-items: center; }
-.header-left { display: flex; align-items: center; gap: 10px; }
-.header-left h1 { font-size: 1.8rem; margin: 0; }
-.header-right { font-size: 0.9rem; color: #909399; display: flex; gap: 20px;}
-.section { margin-top: 30px; }
-.section h2 { font-size: 1.4rem; margin-bottom: 20px; border-left: 4px solid #409EFF; padding-left: 10px; }
-.overall-comment { display: flex; gap: 10px; align-items: flex-start; background-color: #ecf5ff; padding: 15px; border-radius: 4px; color: #409eff; }
-.overall-comment p { margin: 0; line-height: 1.6; }
-.ability-bars { display: flex; flex-direction: column; justify-content: center; gap: 15px; padding: 10px 0; }
-.ability-item { display: flex; align-items: center; gap: 15px; }
-.ability-item span { width: 80px; text-align: right; }
-.suggestion-box { padding: 15px; border-radius: 4px; line-height: 1.6; }
-.suggestion-box.good { background-color: #f0f9eb; color: #67c23a; }
-.suggestion-box.bad { background-color: #fef0f0; color: #f56c6c; }
-.suggestion-item { display: flex; align-items: flex-start; gap: 10px; margin-top: 15px; }
-.suggestion-index { font-weight: bold; }
-.suggestion-item p { margin: 0; line-height: 1.6; }
-.review-card { margin-top: 20px; }
-.answer-text, .feedback-text { margin-top: 10px; padding: 10px; border-radius: 4px; line-height: 1.6; }
-.answer-text { background-color: #f4f4f5; }
-.feedback-text { background-color: #d9ecff; }
-.emotion-chart-container { margin-top: 20px; border-top: 1px solid #f0f0f0; padding-top: 20px; }
-.chart-title { font-weight: 500; color: #303133; margin-bottom: 10px; }
-.emotion-chart { width: 100%; height: 300px; }
-.chart-error { display: flex; justify-content: center; align-items: center; height: 100%; color: #909399; font-size: 14px; }
-.analysis-subtitle { font-weight: bold; color: #606266; margin-bottom: 10px; }
-.keyword-tag { margin: 5px; }
-.analysis-comment { margin-top: 20px; padding: 15px; background-color: #f4f4f5; border-radius: 4px; font-size: 0.9rem; line-height: 1.6; }
+.report-detail-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+.analysis-item p {
+  margin-top: 4px;
+}
+.whitespace-pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  line-height: 1.6;
+}
 </style>

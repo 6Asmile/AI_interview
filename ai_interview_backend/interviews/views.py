@@ -16,7 +16,9 @@ from .ai_services import (
     generate_next_question_stream,
     generate_final_report,
     analyze_resume_against_jd,
-    polish_description_by_ai, generate_resume_by_ai
+    polish_description_by_ai,
+    generate_resume_by_ai,
+    generate_reference_answer_for_question
 )
 from urllib.parse import quote
 from reports.models import ResumeAnalysisReport
@@ -178,7 +180,11 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             current_question = session.questions.get(id=question_id)
             current_question.answer_text = answer_text
             current_question.answered_at = timezone.now()
-            if analysis_data: current_question.analysis_data = analysis_data
+            if analysis_data and isinstance(analysis_data, list):
+                current_question.analysis_data = [
+                    {'timestamp': frame.get('timestamp'), 'emotions': frame.get('emotions')}
+                    for frame in analysis_data
+                ]
         except InterviewQuestion.DoesNotExist:
             return Response({"error": "问题不存在"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -230,13 +236,56 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         if not history:
             return Response({"error": "没有有效的问答记录，无法生成报告"}, status=status.HTTP_400_BAD_REQUEST)
 
-        report_data = generate_final_report(job_position=session.job_position, interview_history=history,
-                                            user=request.user)
+            # --- [核心修改] 获取简历文本并传入 ---
+        resume_text = None
+        if session.resume:
+            resume_text = format_resume_to_text(session.resume)
+
+        report_data = generate_final_report(
+            job_position=session.job_position,
+            interview_history=history,
+            user=request.user,
+            resume_text=resume_text  # 传入简历文本
+            )
+
         session.report = report_data
         session.status = InterviewSession.Status.FINISHED
         session.finished_at = timezone.now()
         session.save()
         return Response(report_data, status=status.HTTP_200_OK)
+
+        # --- [核心新增] 新增一个 action 用于获取 AI 参考答案 ---
+
+    @action(detail=False, methods=['get'], url_path=r'questions/(?P<question_pk>\d+)/reference-answer')
+    def get_reference_answer(self, request, question_pk=None):
+        try:
+            question = InterviewQuestion.objects.get(pk=question_pk, session__user=request.user)
+        except InterviewQuestion.DoesNotExist:
+            return Response({"error": "问题不存在或您没有权限访问"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 尝试从缓存获取
+        cache_key = f"ref_answer_{question_pk}"
+        cached_answer = cache.get(cache_key)
+        if cached_answer:
+            return Response({"answer": cached_answer}, status=status.HTTP_200_OK)
+
+        # 获取简历文本
+        resume_text = None
+        if question.session.resume:
+            resume_text = format_resume_to_text(question.session.resume)
+
+        # 调用新的 AI 服务
+        reference_answer = generate_reference_answer_for_question(
+            job_position=question.session.job_position,
+            question=question.question_text,
+            user=request.user,
+            resume_text=resume_text
+        )
+
+        # 存入缓存，有效期 1 小时
+        cache.set(cache_key, reference_answer, timeout=3600)
+
+        return Response({"answer": reference_answer}, status=status.HTTP_200_OK)
 
 
 class PolishDescriptionView(APIView):

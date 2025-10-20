@@ -1,66 +1,81 @@
-<!-- src/views/AnalysisReportDetail.vue -->
 <template>
-  <div class="page-container">
-    <el-card>
-      <template #header>
-        <div class="page-card-header">
-            <span>AI 简历分析报告</span>
-            <el-button @click="goBackToEditor">返回编辑器</el-button>
-        </div>
-      </template>
-      <div v-if="isLoading" class="loading-state">
-        <el-skeleton :rows="10" animated />
-      </div>
-      <div v-else-if="reportData">
-        <!-- 直接复用抽屉组件的 UI 逻辑 -->
-        <AnalysisReportContent :report="reportData.report_data" />
-      </div>
-      <div v-else class="empty-state">
-        <el-empty description="无法加载分析报告" />
-      </div>
+  <div class="analysis-report-detail-container p-4 sm:p-6 lg:p-8" v-loading="isLoading">
+    
+    <!-- [核心修改] 增加顶部操作栏，包含返回和导出按钮 -->
+    <div class="flex justify-between items-center mb-4">
+      <el-page-header @back="goBack" title="返回列表">
+        <template #content>
+          <span class="text-lg font-medium">AI 简历分析报告</span>
+        </template>
+      </el-page-header>
+      <el-button 
+        type="primary" 
+        @click="exportToPdf" 
+        :loading="isExporting"
+        :icon="Download"
+      >
+        {{ isExporting ? '导出中...' : '导出为 PDF' }}
+      </el-button>
+    </div>
+
+    <!-- [核心修改] 将 ref 绑定到需要导出的 el-card -->
+    <el-card shadow="never" v-if="reportItem" ref="reportContentRef">
+      <AnalysisReportContent :report="reportItem.report_data" />
     </el-card>
+
+    <el-empty v-else-if="!isLoading" description="报告不存在或加载失败"></el-empty>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { getAnalysisReportDetailApi, type ResumeAnalysisReportItem } from '@/api/modules/report';
 import AnalysisReportContent from '@/components/resume/analysis/AnalysisReportContent.vue';
-import { ElMessage, ElSkeleton, ElEmpty } from 'element-plus';
+import { ElMessage, ElCard, ElEmpty, ElPageHeader, ElButton } from 'element-plus';
+// [核心修改] 导入 composable 和图标
+import { usePdfExport } from '@/composables/usePdfExport';
+import { Download } from '@element-plus/icons-vue';
 
-const props = defineProps<{ reportId: string }>();
-
+const route = useRoute();
 const router = useRouter();
-const reportData = ref<ResumeAnalysisReportItem | null>(null);
 const isLoading = ref(true);
+const reportItem = ref<ResumeAnalysisReportItem | null>(null);
+
+// [核心修改] 设置 PDF 导出
+const reportContentRef = ref<HTMLElement | null>(null);
+const { isExporting, exportToPdf } = usePdfExport(reportContentRef, '简历分析报告');
+
+
+const goBack = () => {
+  // 假设历史记录页的 name 是 'History'
+  router.push({ name: 'History' });
+};
 
 onMounted(async () => {
-    if (!props.reportId) {
-        ElMessage.error('报告ID无效');
-        isLoading.value = false;
-        return;
-    }
-    try {
-        reportData.value = await getAnalysisReportDetailApi(props.reportId);
-    } catch (error) {
-        ElMessage.error('加载报告详情失败');
-    } finally {
-        isLoading.value = false;
-    }
-});
+  const reportId = route.params.reportId as string;
+  if (!reportId) {
+    ElMessage.error("无效的报告ID");
+    isLoading.value = false;
+    return;
+  }
 
-const goBackToEditor = () => {
-    // 假设报告关联的简历ID是 reportData.value.resume
-    if(reportData.value) {
-        router.push({ name: 'ResumeEditor', params: { id: reportData.value.resume } });
-    } else {
-        router.back(); // 备用方案
-    }
-};
+  try {
+    reportItem.value = await getAnalysisReportDetailApi(reportId);
+  } catch (error) {
+    console.error("加载简历分析报告详情失败", error);
+    ElMessage.error("加载报告失败");
+  } finally {
+    isLoading.value = false;
+  }
+});
 </script>
 
 <style scoped>
+.analysis-report-detail-container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
 .page-container { padding: 20px; }
 .page-card-header { display: flex; justify-content: space-between; align-items: center; }
 </style>
