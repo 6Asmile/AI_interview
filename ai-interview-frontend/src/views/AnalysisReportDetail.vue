@@ -2,27 +2,14 @@
   <div class="analysis-report-detail-container p-4 sm:p-6 lg:p-8" v-loading="isLoading">
     
     <div class="flex justify-between items-center mb-4">
-      <el-page-header @back="goBack" title="返回">
-        <template #content>
-          <span class="text-lg font-medium">AI 简历分析报告</span>
-        </template>
-      </el-page-header>
-      
-      <!-- [核心修正] 恢复为简单的导出按钮 -->
-      <el-button 
-        type="primary" 
-        @click="exportToPdf()" 
-        :loading="isExporting"
-        :icon="Download"
-      >
-        {{ isExporting ? '导出中...' : '导出为 PDF' }}
-      </el-button>
+      <el-page-header @back="goBack" title="返回"><template #content><span class="text-lg font-medium">AI 简历分析报告</span></template></el-page-header>
+      <el-button type="primary" @click="exportToPdf()" :loading="isExporting" :icon="Download">{{ isExporting ? '导出中...' : '导出为 PDF' }}</el-button>
     </div>
 
     <div ref="reportContentRef">
-      <el-card shadow="never" v-if="reportItem">
+      <div v-if="reportItem" class="page-break-inside-avoid">
         <AnalysisReportContent :report="reportItem.report_data" />
-      </el-card>
+      </div>
       <el-empty v-else-if="!isLoading" description="报告不存在或加载失败"></el-empty>
     </div>
   </div>
@@ -43,7 +30,6 @@ const isLoading = ref(true);
 const reportItem = ref<ResumeAnalysisReportItem | null>(null);
 
 const reportContentRef = ref<HTMLElement | null>(null);
-// [核心修正] 移除 isExportingHtml 和 exportToHtml
 const { isExporting, exportToPdf } = useExport(reportContentRef, '简历分析报告');
 
 const goBack = () => {
@@ -70,8 +56,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.analysis-report-detail-container {
-  max-width: 1000px;
-  margin: 0 auto;
+.analysis-report-detail-container :deep(.el-card) {
+  break-inside: avoid;
 }
 </style>
