@@ -199,7 +199,7 @@ def generate_final_report(job_position: str, interview_history: list, user: User
         history_prompt_part += f"我的回答: {turn['answer']}\n\n"
 
     system_prompt = (
-        "你是一位顶级的职业规划师和面试分析专家，尤其擅长结构化思维分析和关键词提取。"
+        "你是一位顶级的职业规划师和面试分析专家，尤其擅长使用 STAR 法则优化工作和项目描述以及结构化思维分析和关键词提取。"
         "你的任务是基于一场完整的面试记录，生成一份专业、数据驱动、富有洞察力的面试报告。"
     )
     user_prompt = (
@@ -233,7 +233,7 @@ def generate_final_report(job_position: str, interview_history: list, user: User
         "      \"question_sequence\": (问题序号，例如 1),\n"
         "      \"is_behavioral_question\": (判断这个问题是否是行为面试题，true/false),\n"
         "      \"conforms_to_star\": (判断我的回答是否符合STAR法则，true/false),\n"
-        "      \"star_feedback\": \"(如果是不符合，请给出具体的改进建议，例如'Situation描述不清'或'缺少量化的Result'；如果符合，则表扬)\"\n"
+        "      \"star_feedback\": \"(如果是不符合，请分点给出具体的改进建议，例如'Situation描述不清'或'缺少量化的Result'；如果符合，则表扬)\"\n"
         "    }\n"
         "  ]\n"
         "}"
@@ -286,15 +286,24 @@ def polish_description_by_ai(original_html: str, user: User, job_position: str =
         return original_html
 
 
+# ai_interview_backend/interviews/ai_services.py
+
+# ... (其他 imports 和函数保持不变) ...
+
 def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dict:
+    """
+    【豪华升级版】
+    根据给定的岗位描述(JD)，从多个维度深度分析简历，并返回结构化的数据报告。
+    """
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         return {"error": "AI 服务未配置，无法进行分析。"}
 
     system_prompt = (
-        "你是一位顶级的职业规划导师和资深招聘专家，擅长将简历与岗位要求进行精确匹配和分析。"
-        "你的任务是：基于一份岗位描述（JD）和一份候选人简历，进行一次全面、深度、富有建设性的评估。"
+        "你是一位顶级的职业规划导师和资深技术招聘官，拥有15年以上的经验，以分析精准、洞察深刻、要求严格著称。"
+        "你的任务是：像对待一份真实投递的简历一样，基于一份岗位描述（JD）和一份候选人简历，进行一次全面、深度、数据驱动的评估。"
     )
+
     user_prompt = (
         f"请严格遵循以下步骤，对提供的简历和JD进行分析，并以一个完整的JSON对象格式返回结果，不要包含任何额外的解释。\n\n"
         f"--- 岗位描述 (JD) ---\n"
@@ -306,21 +315,29 @@ def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dic
         f"分析步骤与返回的JSON格式要求如下:\n"
         "{\n"
         "  \"overall_score\": (请给出一个0-100的整数，代表简历与JD的整体匹配度得分),\n"
+
+        "  \"ability_scores\": [\n"
+        "    {\"name\": \"岗位技能匹配度\", \"score\": (请根据简历中体现的技能与JD要求的吻合度，给出0-5分，可有1位小数)},\n"
+        "    {\"name\": \"项目经验含金量\", \"score\": (请评估简历中的项目经验是否复杂、有深度、与JD相关，给出0-5分)},\n"
+        "    {\"name\": \"经验的量化成果\", \"score\": (请评估简历中的描述是否大量使用了具体数字来量化工作成果，给出0-5分)},\n"
+        "    {\"name\": \"简历专业性\", \"score\": (请评估简历的整体排版、措辞和专业度，有无错别字等，给出0-5分)}\n"
+        "  ],\n"
+
         "  \"keyword_analysis\": {\n"
-        "    \"jd_keywords\": [\"从JD中提取出5-8个最核心的技能/经验关键词\"],\n"
+        "    \"jd_keywords\": [\"从JD中提取出5-8个最核心的技术/经验关键词\"],\n"
         "    \"matched_keywords\": [\"在简历中明确匹配到的JD关键词\"],\n"
         "    \"missing_keywords\": [\"简历中缺失的、但JD中很重要的关键词\"]\n"
         "  },\n"
         "  \"strengths_analysis\": [\n"
-        "    \"(列出2-3条简历中最突出的、与JD高度匹配的亮点，例如：'项目经历中的XX技术栈与JD要求完全吻合')\"\n"
+        "    \"(分点列出2-3条简历中最突出的、与JD高度匹配的亮点)\"\n"
         "  ],\n"
         "  \"weaknesses_analysis\": [\n"
-        "    \"(列出2-3条简历中明显的不足或与JD不匹配之处，例如：'缺乏JD中要求的XX项目管理经验')\"\n"
+        "    \"(分点列出2-3条简历中明显的不足或与JD不匹配之处)\"\n"
         "  ],\n"
         "  \"suggestions\": [\n"
         "    {\n"
-        "      \"module\": \"(建议修改的简历模块名，如：'项目经历', '专业技能', '自我评价')\",\n"
-        "      \"suggestion\": \"(提供一条非常具体、可执行的修改建议，例如：'在AI模拟面试平台的项目描述中，增加关于并发处理或性能优化的具体数据，以呼应JD中的高并发要求。')\"\n"
+        "      \"module\": \"(建议修改的简历模块名，如：'项目经历', '专业技能')\",\n"
+        "      \"suggestion\": \"(提供一条非常具体、可执行的修改建议，例如：'在AI模拟面试平台的项目描述中，将“提升了页面加载速度”具体化为“通过代码分割和图片懒加载，将首页的LCP时间从3.2s优化至1.8s”。')\"\n"
         "    }\n"
         "  ]\n"
         "}"
@@ -329,7 +346,24 @@ def analyze_resume_against_jd(resume_text: str, jd_text: str, user: User) -> dic
     try:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         analysis_report = _call_openai_api(api_key, model, messages, 3072, 0.6)
+
+        # --- 【核心新增】添加数据清洗逻辑，确保分数是数字 ---
+        if 'overall_score' in analysis_report and not isinstance(analysis_report['overall_score'], int):
+            try:
+                analysis_report['overall_score'] = int(analysis_report['overall_score'])
+            except (ValueError, TypeError):
+                analysis_report['overall_score'] = 0
+
+        if 'ability_scores' in analysis_report and isinstance(analysis_report.get('ability_scores'), list):
+            for item in analysis_report['ability_scores']:
+                if 'score' in item and not isinstance(item['score'], (int, float)):
+                    try:
+                        item['score'] = float(item['score'])
+                    except (ValueError, TypeError):
+                        item['score'] = 0
+
         return analysis_report
+
     except Exception as e:
         print(f"调用 AI 进行简历分析时发生错误: {e}")
         return {"error": f"分析失败，AI服务暂时不可用: {e}"}
@@ -394,7 +428,7 @@ def generate_resume_by_ai(name: str, position: str, experience_years: str, keywo
         "      \"props\": {\n"
         "        \"show\": true,\n"
         "        \"title\": \"自我评价\",\n"
-        "        \"summary\": \"(生成一段2-3句话的、高度概括的自我评价)\"\n"
+        "        \"summary\": \"(生成一段2-3句话分点的、高度概括的自我评价)\"\n"
         "      }\n"
         "    },\n"
         "    {\n"
@@ -411,7 +445,7 @@ def generate_resume_by_ai(name: str, position: str, experience_years: str, keywo
         "            \"company\": \"(虚构一个知名的相关公司)\",\n"
         "            \"position\": \"(相关职位)\",\n"
         "            \"dateRange\": [\"(合理的开始年份)\", \"(合理的结束年份)\"],\n"
-        "            \"description\": \"(使用STAR法则生成一段非常有吸引力的工作描述，包含量化结果)\"\n"
+        "            \"description\": \"(使用STAR法则分点生成一段非常有吸引力的工作描述，包含量化结果)\"\n"
         "          }\n"
         "        ]\n"
         "      }\n"
@@ -430,7 +464,7 @@ def generate_resume_by_ai(name: str, position: str, experience_years: str, keywo
         "            \"name\": \"(虚构一个亮眼的相关项目)\",\n"
         "            \"role\": \"(核心角色)\",\n"
         "            \"dateRange\": [\"(合理的开始年份)\", \"(合理的结束年份)\"],\n"
-        "            \"description\": \"(使用STAR法则生成一段非常有吸引力的项目描述)\",\n"
+        "            \"description\": \"(使用STAR法则分点生成一段非常有吸引力的项目描述)\",\n"
         "            \"techStack\": \"(项目使用的技术栈)\"\n"
         "          }\n"
         "        ]\n"

@@ -46,6 +46,11 @@ export const polishDescriptionApi = (html_content: string, job_position?: string
 // 定义分析报告的类型结构，以便获得完整的 TypeScript 类型提示
 export interface AnalysisReport {
   overall_score: number;
+   // 新增 ability_scores 类型定义
+  ability_scores: {
+    name: string;
+    score: number;
+  }[];
   keyword_analysis: {
     jd_keywords: string[];
     matched_keywords: string[];

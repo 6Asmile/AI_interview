@@ -11,10 +11,10 @@ from .models import InterviewSession
 @shared_task
 def cleanup_stale_interviews():
     """
-    一个定时任务，用于将超过2小时未活动的“进行中”面试标记为“已取消”。
+    一个定时任务，用于将超过半小时未活动的“进行中”面试标记为“已取消”。
     """
-    # 定义超时阈值为2小时前
-    timeout_threshold = timezone.now() - timedelta(hours=2)
+    # 定义超时阈值为半小时前
+    timeout_threshold = timezone.now() - timedelta(minutes=30)
 
     # 查找所有状态为 'running' 且最后更新时间在2小时前的面试会话
     # `updated_at__lt` 的意思是 "updated_at less than"

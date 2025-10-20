@@ -318,6 +318,8 @@ CELERY_BEAT_SCHEDULE = {
         # 指向我们刚刚创建的任务，格式为: 'app_name.tasks.task_function_name'
         'task': 'interviews.tasks.cleanup_stale_interviews',
         # 'schedule': crontab(minute='*/30'), # 每30分钟执行一次
-        'schedule': 1800.0, # 为简单起见，我们也可以设置为每 1800 秒执行一次
+        'schedule': 900, # 为简单起见，我们也可以设置为每 900秒执行一次
     },
 }
+#celery -A ai_interview_backend worker -l info -P gevent
+# celery -A ai_interview_backend beat -l info

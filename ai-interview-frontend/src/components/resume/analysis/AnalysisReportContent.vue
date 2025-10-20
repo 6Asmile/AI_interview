@@ -16,7 +16,17 @@
         </div>
       </div>
     </el-card>
-
+    <!-- 【核心新增】能力维度分析 -->
+<el-card shadow="never" class="report-section">
+  <template #header><h3>能力维度雷达图</h3></template>
+  <!-- 这里未来可以放一个 ECharts 的雷达图 -->
+  <div class="ability-scores">
+    <div v-for="ability in report.ability_scores" :key="ability.name" class="ability-item">
+        <span>{{ ability.name }}</span>
+        <el-rate :model-value="ability.score" disabled :max="5" show-score text-color="#ff9900" score-template="{value} 分" />
+    </div>
+  </div>
+</el-card>
     <!-- 2. 关键词分析 -->
     <el-card shadow="never" class="report-section">
       <template #header><h3>关键词匹配分析</h3></template>
@@ -98,4 +108,15 @@ ul { padding-left: 20px; margin: 0; }
 li { margin-bottom: 8px; }
 .suggestion-item { border-bottom: 1px solid #f0f0f0; padding-bottom: 12px; margin-bottom: 12px; }
 .suggestion-item:last-child { border-bottom: none; margin-bottom: 0; }
+/* 在 <style scoped> 中添加 */
+.ability-scores {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+.ability-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 </style>
