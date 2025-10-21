@@ -1,4 +1,4 @@
-/* src/assets/styles/global.css */
+src/assets/styles/global.css
 
 /* ----- 通用认证页面容器 ----- */
 .auth-container {
@@ -64,3 +64,47 @@
   align-items: center;
 }
 
+/* src/assets/styles/global.css */
+
+/* [UI/UX 升级] 1. 为整个应用设置优雅的渐变背景 */
+body {
+  background: linear-gradient(to bottom right, #e7f194, #f3f4f6, #ffffff);
+  min-height: 100vh;
+}
+
+/* ----- 通用认证页面容器 ----- */
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  padding: 20px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 450px;
+  background-color: rgba(255, 255, 255, 0.7);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+/* src/assets/styles/global.css */
+
+/* [UI/UX 升级] 为整个应用设置优雅的渐变背景 */
+body {
+  background: linear-gradient(to bottom right, #FEFDE8, #aaf2b2, #8ceaee);
+  min-height: 100vh;
+}
+
+.auth-container { display: flex; justify-content: center; align-items: center; height: 100%; padding: 20px; }
+.auth-card { width: 100%; max-width: 450px; background-color: rgba(255, 255, 255, 0.7); border-radius: 16px; box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); border: 1px solid rgba(255, 255, 255, 0.2); }
+.auth-card .card-header { text-align: center; }
+.auth-card .card-header h2 { font-size: 1.75rem; color: #333; }
+.auth-card .auth-footer { text-align: center; margin-top: 20px; }
+.beautiful-button { width: 100%; height: 40px; border: none; border-radius: 8px; background: linear-gradient(45deg, #409EFF, #79bbff); color: white; font-size: 16px; font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 15px 0 rgba(64, 158, 255, 0.3); }
+.beautiful-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px 0 rgba(64, 158, 255, 0.4); }
+.page-container { padding: 20px; }
+.page-card-header { display: flex; justify-content: space-between; align-items: center; }

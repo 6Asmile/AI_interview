@@ -1,15 +1,14 @@
 import { ref, onUnmounted } from 'vue';
 import { ElMessage } from 'element-plus';
 
-// 将 synth 实例放在函数外部，使其成为一个单例，防止重复初始化
 const synth = window.speechSynthesis;
 
 export function useTTS() {
   const isSupported = 'speechSynthesis' in window;
   const isSpeaking = ref(false);
+  const isPaused = ref(false);
 
-  // 定义一个队列来处理语音请求，虽然在这个场景下，我们总是优先播放最新的
-  let utteranceQueue: SpeechSynthesisUtterance[] = [];
+  let currentUtterance: SpeechSynthesisUtterance | null = null;
 
   const speak = (text: string) => {
     if (!isSupported || !synth) {
@@ -17,47 +16,63 @@ export function useTTS() {
       return;
     }
     
-    // 【核心修正】在播放新语音前，先确保完全停止当前的语音
-    // 这能有效防止 'interrupted' 错误
     if (synth.speaking) {
       synth.cancel();
     }
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    currentUtterance = new SpeechSynthesisUtterance(text);
     const voices = synth.getVoices();
     const chineseVoice = voices.find(voice => voice.lang.startsWith('zh-CN'));
     if (chineseVoice) {
-      utterance.voice = chineseVoice;
+      currentUtterance.voice = chineseVoice;
     }
 
-    utterance.onstart = () => {
+    currentUtterance.onstart = () => {
       isSpeaking.value = true;
+      isPaused.value = false;
     };
 
-    utterance.onend = () => {
+    currentUtterance.onend = () => {
       isSpeaking.value = false;
+      isPaused.value = false;
+      currentUtterance = null;
     };
-
-    // utterance.onerror 事件在某些浏览器上并不可靠，
-    // interrupted 错误通常不是一个需要向用户报告的严重问题。
-    utterance.onerror = (event) => {
+    
+    currentUtterance.onerror = (event) => {
       if (event.error !== 'interrupted') {
         console.error('语音合成错误:', event.error);
         ElMessage.error('播放问题时出错。');
       }
       isSpeaking.value = false;
+      isPaused.value = false;
     };
     
-    // 在一个微任务后执行 speak，确保 cancel 操作已完成
     setTimeout(() => {
-        synth.speak(utterance);
+        synth.speak(currentUtterance!);
     }, 0);
+  };
+
+  // [核心新增] 暂停功能
+  const pause = () => {
+    if (synth.speaking && !synth.paused) {
+      synth.pause();
+      isPaused.value = true;
+    }
+  };
+
+  // [核心新增] 恢复功能
+  const resume = () => {
+    if (synth.paused) {
+      synth.resume();
+      isPaused.value = false;
+    }
   };
 
   const cancel = () => {
     if (isSupported && synth) {
       synth.cancel();
       isSpeaking.value = false;
+      isPaused.value = false;
     }
   };
 
@@ -67,7 +82,10 @@ export function useTTS() {
 
   return {
     isSpeaking,
+    isPaused, // 暴露暂停状态
     speak,
+    pause,    // 暴露暂停方法
+    resume,   // 暴露恢复方法
     cancel,
   };
 }

@@ -1,64 +1,38 @@
-<!-- src/layouts/Layout.vue -->
 <template>
   <el-container class="app-layout">
     <el-header class="app-header">
-      <div class="header-content">
-        <div class="logo-area" @click="navigateTo('Dashboard')">
-          <img alt="logo" src="@/assets/images/logo.png" class="logo-img" />
-          <span class="logo-title">IFaceOff</span>
-        </div>
-
-        <div class="nav-menu">
-          <router-link to="/dashboard" class="nav-item-wrapper">
-            <span class="nav-item">仪表盘</span>
-          </router-link>
-          
-          <el-dropdown trigger="hover" class="nav-dropdown">
-            <span class="nav-item-wrapper">
-              <span class="nav-item">
-                简历中心 <el-icon class="icon-down"><arrow-down /></el-icon>
-              </span>
-            </span>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="navigateTo('ResumeManagement')">我的简历</el-dropdown-item>
-                 <el-dropdown-item @click="navigateTo('ResumeGenerator')">AI 简历生成</el-dropdown-item>
-                <el-dropdown-item @click="navigateTo('ResumeAIDiagnosis')">AI 简历诊断</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-
-          <el-dropdown trigger="hover" class="nav-dropdown">
-            <span class="nav-item-wrapper">
-              <span class="nav-item">
-                我的面试 <el-icon class="icon-down"><arrow-down /></el-icon>
-              </span>
-            </span>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="navigateTo('History', { tab: 'interviews' })">面试记录</el-dropdown-item>
-                <el-dropdown-item @click="navigateTo('History', { tab: 'analysis' })">分析报告</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-
-        <div class="user-area">
-          <el-dropdown trigger="click">
-            <span class="el-dropdown-link">
-              <el-avatar :src="authStore.avatar" :size="32">{{ authStore.username?.charAt(0) }}</el-avatar>
-              <span class="username">{{ authStore.username || '用户' }}</span>
-              <el-icon class="icon-down"><arrow-down /></el-icon>
-            </span>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="navigateTo('Profile')">个人中心</el-dropdown-item>
-                <el-dropdown-item @click="navigateTo('Settings')">AI 设置</el-dropdown-item>
-                <el-dropdown-item divided @click="authStore.logout">退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
+      <div class="logo-container" @click="() => router.push('/')">
+        <span class="logo-text">IFaceOff</span>
+      </div>
+      <el-menu mode="horizontal" :router="true" :default-active="activeMenu" class="app-menu" background-color="transparent">
+        <el-menu-item index="/dashboard">仪表盘</el-menu-item>
+        <el-sub-menu index="/resume">
+          <template #title>简历中心</template>
+          <el-menu-item index="/dashboard/resumes">我的简历</el-menu-item>
+          <el-menu-item index="/dashboard/generate-resume">AI 简历生成</el-menu-item>
+          <el-menu-item index="/dashboard/ai-diagnosis">AI 简历诊断</el-menu-item>
+        </el-sub-menu>
+        <el-sub-menu index="/interview">
+          <template #title>我的面试</template>
+          <el-menu-item index="/dashboard/history">面试记录</el-menu-item>
+          <el-menu-item index="/dashboard/history">简历评估</el-menu-item>
+        </el-sub-menu>
+      </el-menu>
+      <div class="user-profile">
+        <el-dropdown>
+          <span class="el-dropdown-link">
+            <el-avatar :size="32" class="user-avatar">{{ authStore.username?.charAt(0).toUpperCase() }}</el-avatar>
+            <span class="username">{{ authStore.username || '用户' }}</span>
+            <el-icon class="el-icon--right"><arrow-down /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="() => router.push('/dashboard/profile')">个人中心</el-dropdown-item>
+              <el-dropdown-item @click="() => router.push('/dashboard/settings')">AI 设置</el-dropdown-item>
+              <el-dropdown-item divided @click="authStore.logout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </el-header>
     <el-main class="app-main">
@@ -68,46 +42,38 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '@/store/modules/auth';
-import { useRouter } from 'vue-router';
-// --- 【核心修复】从 vue-router 导入需要的类型 ---
-import type { RouteParamsRaw, LocationQueryRaw } from 'vue-router';
+import { ElContainer, ElHeader, ElMain, ElMenu, ElMenuItem, ElSubMenu, ElDropdown, ElDropdownMenu, ElDropdownItem, ElAvatar, ElIcon } from 'element-plus';
 import { ArrowDown } from '@element-plus/icons-vue';
 
-const authStore = useAuthStore();
 const router = useRouter();
+const route = useRoute();
+const authStore = useAuthStore();
 
-// --- 【核心修复】使用更精确的类型来定义参数 ---
-const navigateTo = (routeName: string, params: RouteParamsRaw | LocationQueryRaw = {}) => {
-  // 检查是 query 还是 params
-  // 这是一个简单的约定：如果路由是 History，我们就用 query，否则用 params
-  if (routeName === 'History') {
-      router.push({ name: routeName, query: params as LocationQueryRaw });
-  } else {
-      router.push({ name: routeName, params: params as RouteParamsRaw });
+const activeMenu = computed(() => {
+  const { path } = route;
+  if (path.startsWith('/dashboard/resumes') || path.startsWith('/dashboard/generate-resume') || path.startsWith('/dashboard/ai-diagnosis')) {
+    return '/resume';
   }
-};
+  if (path.startsWith('/dashboard/history')) {
+    return '/interview';
+  }
+  return path;
+});
 </script>
 
 <style scoped>
-/* 样式与之前版本完全相同，无需修改 */
 .app-layout { height: 100vh; }
-.app-header { background-color: #fff; border-bottom: 1px solid #dcdfe6; padding: 0 24px; }
-.header-content { display: flex; align-items: center; height: 100%; }
-.logo-area { display: flex; align-items: center; cursor: pointer; }
-.logo-img { height: 32px; margin-right: 12px; }
-.logo-title { font-size: 20px; font-weight: bold; color: #303133; }
-.nav-menu { margin-left: 50px; display: flex; align-items: center; gap: 10px; height: 100%; }
-.nav-item-wrapper { padding: 0 20px; height: 100%; display: flex; align-items: center; text-decoration: none; border-bottom: 2px solid transparent; transition: all 0.2s; }
-.nav-item-wrapper:hover, .router-link-active { border-bottom-color: var(--el-color-primary); background-color: #f5f7fa; }
-.nav-item { color: #303133; font-size: 16px; display: flex; align-items: center; cursor: pointer; }
-.router-link-active .nav-item { color: var(--el-color-primary); font-weight: 500; }
-.nav-dropdown { height: 100%; }
-.nav-dropdown .nav-item-wrapper { outline: none; }
-.icon-down { margin-left: 6px; transition: transform 0.2s; }
-.nav-item-wrapper:hover .icon-down { transform: rotate(180deg); }
-.user-area { margin-left: auto; }
-.el-dropdown-link { display: flex; align-items: center; cursor: pointer; }
-.username { margin: 0 8px; }
-.app-main { background-color: #f7f8fa; padding: 0; }
+.app-header { display: flex; align-items: center; justify-content: space-between; background-color: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid #e4e7ed; padding: 0 20px; }
+.logo-container { display: flex; align-items: center; cursor: pointer; }
+.logo-text { font-size: 20px; font-weight: bold; }
+.app-menu { flex-grow: 1; border-bottom: none; margin-left: 50px; }
+.user-profile { display: flex; align-items: center; }
+.el-dropdown-link { cursor: pointer; display: flex; align-items: center; }
+.user-avatar { margin-right: 8px; }
+.username { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* [UI/UX 升级] 确保主区域背景透明 */
+.app-main { background-color: transparent; padding: 0; }
 </style>

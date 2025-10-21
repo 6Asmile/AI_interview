@@ -14,11 +14,8 @@
 
     <div ref="reportContentRef">
       <div v-if="reportData && sessionInfo">
-        <!-- 为了方便导出，我们将 el-card 结构扁平化，并用普通 div 模拟 -->
         <div class="el-card mb-6 page-break-inside-avoid">
-          <div class="el-card__header">
-            <h1 class="text-2xl font-bold text-gray-800">AI 面试评估报告</h1>
-          </div>
+          <div class="el-card__header"><h1 class="text-2xl font-bold text-gray-800">AI 面试评估报告</h1></div>
           <div class="el-card__body">
             <div class="meta-info text-sm text-gray-500">
               <span>面试用户: {{ sessionInfo?.user?.username || 'N/A' }}</span>
@@ -37,8 +34,8 @@
             <div class="el-card__header"><div class="font-semibold text-lg">能力维度分析</div></div>
             <div class="el-card__body">
                 <el-row :gutter="20" align="middle">
-                    <el-col :xs="24" :sm="12" :md="10"><AbilityRadarChart :ability-scores="reportData.ability_scores" /></el-col>
-                    <el-col :xs="24" :sm="12" :md="14"><el-table :data="reportData.ability_scores" style="width: 100%;"><el-table-column prop="name" label="能力项" /><el-table-column prop="score" label="得分 (0-5)"><template #default="scope"><el-rate v-model="scope.row.score" disabled :max="5" :allow-half="true" /></template></el-table-column></el-table></el-col>
+                    <el-col :xs="24" :sm="12" :md="10"><AbilityRadarChart :ability-scores="reportData.ability_scores || []" /></el-col>
+                    <el-col :xs="24" :sm="12" :md="14"><el-table :data="reportData.ability_scores || []" style="width: 100%;"><el-table-column prop="name" label="能力项" /><el-table-column prop="score" label="得分 (0-5)"><template #default="scope"><el-rate v-model="scope.row.score" disabled :max="5" :allow-half="true" /></template></el-table-column></el-table></el-col>
                 </el-row>
             </div>
         </div>
@@ -47,9 +44,9 @@
 
         <div class="el-card mb-6 page-break-inside-avoid"><div class="el-card__header"><div class="font-semibold text-lg">待改进点</div></div><div class="el-card__body"><div class="text-yellow-700 whitespace-pre-wrap" v-html="formatText(reportData.weakness_analysis)"></div></div></div>
 
-        <div class="el-card mb-6 page-break-inside-avoid"><div class="el-card__header"><div class="font-semibold text-lg">改进建议</div></div><div class="el-card__body"><el-timeline class="pl-2"><el-timeline-item v-for="(suggestion, index) in reportData.improvement_suggestions" :key="index" type="primary" hollow><p class="font-medium">建议 {{ index + 1 }}</p><p class="text-gray-600">{{ suggestion }}</p></el-timeline-item></el-timeline></div></div>
+        <div class="el-card mb-6 page-break-inside-avoid"><div class="el-card__header"><div class="font-semibold text-lg">改进建议</div></div><div class="el-card__body"><el-timeline class="pl-2"><el-timeline-item v-for="(suggestion, index) in (reportData.improvement_suggestions || [])" :key="index" type="primary" hollow><p class="font-medium">建议 {{ index + 1 }}</p><p class="text-gray-600">{{ suggestion }}</p></el-timeline-item></el-timeline></div></div>
 
-        <div class="el-card mb-6 page-break-inside-avoid" v-if="reportData.keyword_analysis"><div class="el-card__header"><div class="font-semibold text-lg">关键词分析</div></div><div class="el-card__body"><div><p class="font-medium mb-2">匹配的关键词:</p><el-tag v-for="kw in reportData.keyword_analysis.matched_keywords" :key="kw" type="success" class="mr-2 mb-2">{{ kw }}</el-tag></div><el-divider /><div><p class="font-medium mb-2">建议补充的关键词:</p><el-tag v-for="kw in reportData.keyword_analysis.missing_keywords" :key="kw" type="warning" class="mr-2 mb-2">{{ kw }}</el-tag></div><p class="text-sm text-gray-600 mt-4">{{ reportData.keyword_analysis.analysis_comment }}</p></div></div>
+        <div class="el-card mb-6 page-break-inside-avoid" v-if="reportData.keyword_analysis"><div class="el-card__header"><div class="font-semibold text-lg">关键词分析</div></div><div class="el-card__body"><div><p class="font-medium mb-2">匹配的关键词:</p><el-tag v-for="kw in (reportData.keyword_analysis.matched_keywords || [])" :key="kw" type="success" class="mr-2 mb-2">{{ kw }}</el-tag></div><el-divider /><div><p class="font-medium mb-2">建议补充的关键词:</p><el-tag v-for="kw in (reportData.keyword_analysis.missing_keywords || [])" :key="kw" type="warning" class="mr-2 mb-2">{{ kw }}</el-tag></div><p class="text-sm text-gray-600 mt-4">{{ reportData.keyword_analysis.analysis_comment }}</p></div></div>
 
         <div class="el-card mb-6 page-break-inside-avoid"><div class="el-card__header"><div class="font-semibold text-lg">STAR 法则分析</div></div><div class="el-card__body"><el-table :data="starAnalysisWithQuestionText" style="width: 100%" row-key="question_sequence"><el-table-column type="expand"><template #default="props"><div class="p-4 bg-gray-50 rounded-md"><div v-if="props.row.is_behavioral_question"><h4 class="text-base font-semibold mb-3 text-gray-700">深度分析</h4><p class="text-sm text-gray-600 mb-4"><strong>总体评价:</strong> {{ props.row.overall_star_feedback }}</p><div class="space-y-3"><div class="analysis-item"><strong class="text-blue-600">S (Situation):</strong><p class="text-gray-700 pl-2 border-l-2 border-blue-200 ml-1">{{ props.row.situation_analysis }}</p></div><div class="analysis-item"><strong class="text-green-600">T (Task):</strong><p class="text-gray-700 pl-2 border-l-2 border-green-200 ml-1">{{ props.row.task_analysis }}</p></div><div class="analysis-item"><strong class="text-purple-600">A (Action):</strong><p class="text-gray-700 pl-2 border-l-2 border-purple-200 ml-1">{{ props.row.action_analysis }}</p></div><div class="analysis-item"><strong class="text-red-600">R (Result):</strong><p class="text-gray-700 pl-2 border-l-2 border-red-200 ml-1">{{ props.row.result_analysis }}</p></div></div></div><div v-else class="text-gray-500"><p>该问题非典型的行为面试题，不适用 STAR 法则进行深度分析。</p></div></div></template></el-table-column><el-table-column label="问题" prop="question_text" min-width="300" /><el-table-column label="是否行为题" prop="is_behavioral_question" width="120" align="center"><template #default="scope"><el-tag :type="scope.row.is_behavioral_question ? 'success' : 'info'" size="small">{{ scope.row.is_behavioral_question ? '是' : '否' }}</el-tag></template></el-table-column><el-table-column label="STAR 法则符合度" prop="conforms_to_star" width="150" align="center"><template #default="scope"><el-tag :type="scope.row.conforms_to_star ? 'success' : 'warning'">{{ scope.row.conforms_to_star ? '符合' : '待改进' }}</el-tag></template></el-table-column></el-table></div></div>
         
@@ -116,8 +113,12 @@ const handleCollapseChange = (value: CollapseModelValue) => {
   }, 300);
 };
 
-const formatText = (text: string | undefined | null) => {
+// [核心修正] 增加健壮性，处理数组和字符串两种情况
+const formatText = (text: string | string[] | undefined | null) => {
   if (!text) return '';
+  if (Array.isArray(text)) {
+    return text.join('<br>');
+  }
   return text.replace(/\n/g, '<br>');
 };
 
@@ -162,7 +163,7 @@ onMounted(async () => {
       handleCollapseChange(activeCollapse.value);
     }
   } catch (error) {
-    console.error("加载报告数据失败", error);
+    console.error("加载报告数据失败:", error);
     ElMessage.error("加载报告数据失败，请稍后重试。");
   } finally {
     isLoading.value = false;
@@ -202,5 +203,9 @@ const starAnalysisWithQuestionText = computed(() => {
 }
 .page-break-inside-avoid {
   break-inside: avoid;
+}
+.whitespace-pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
