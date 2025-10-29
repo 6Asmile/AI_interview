@@ -25,6 +25,7 @@ urlpatterns = [
         path('', include('resumes.urls')),
         path('', include('interviews.urls')),
         path('', include('system.urls')),
+        path('', include('blog.urls')),
         # 【新增】添加通用的文件上传路由
         path('upload/', FileUploadView.as_view(), name='file-upload'),
         path('', include('reports.urls')),

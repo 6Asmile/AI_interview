@@ -6,12 +6,14 @@
       </div>
       <el-menu mode="horizontal" :router="true" :default-active="activeMenu" class="app-menu" background-color="transparent">
         <el-menu-item index="/dashboard">仪表盘</el-menu-item>
+        <el-menu-item index="/dashboard/blog">博客社区</el-menu-item>
         <el-sub-menu index="/resume">
           <template #title>简历中心</template>
           <el-menu-item index="/dashboard/resumes">我的简历</el-menu-item>
           <el-menu-item index="/dashboard/generate-resume">AI 简历生成</el-menu-item>
           <el-menu-item index="/dashboard/ai-diagnosis">AI 简历诊断</el-menu-item>
         </el-sub-menu>
+        
         <el-sub-menu index="/interview">
           <template #title>我的面试</template>
           <el-menu-item index="/dashboard/history">面试记录</el-menu-item>
@@ -20,8 +22,11 @@
       </el-menu>
       <div class="user-profile">
         <el-dropdown>
-          <span class="el-dropdown-link">
-            <el-avatar :size="32" class="user-avatar">{{ authStore.username?.charAt(0).toUpperCase() }}</el-avatar>
+           <span class="el-dropdown-link">
+            <!-- [核心修正] 恢复 :src 绑定，并正确处理 null 值 -->
+            <el-avatar :size="32" class="user-avatar" :src="authStore.avatar ?? undefined">
+                {{ authStore.username?.charAt(0).toUpperCase() }}
+            </el-avatar>
             <span class="username">{{ authStore.username || '用户' }}</span>
             <el-icon class="el-icon--right"><arrow-down /></el-icon>
           </span>

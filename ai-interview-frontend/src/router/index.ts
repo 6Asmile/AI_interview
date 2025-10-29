@@ -62,6 +62,23 @@ const routes: Array<RouteRecordRaw> = [
         name: 'ResumeGenerator',
          component: () => import('@/views/ResumeGenerator.vue') 
         },
+         { 
+            path: 'blog', 
+            name: 'BlogHome', 
+            component: () => import('@/views/blog/BlogHome.vue') 
+        },
+         { 
+        path: 'blog/:id', 
+        name: 'PostDetail', 
+        component: () => import('@/views/blog/PostDetail.vue'),
+        props: true
+    },
+    {
+        path: 'blog/edit/:id?',
+        name: 'PostEditor',
+        component: () => import('@/views/blog/PostEditor.vue'),
+        props: true
+    },
     ],
   },
 ];
