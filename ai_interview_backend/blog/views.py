@@ -1,7 +1,7 @@
 from rest_framework import viewsets, permissions
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from django.db.models import F
+from django.db.models import F, Q
 from .models import Post, Category, Tag, Comment
 from .serializers import (
     PostListSerializer, PostDetailSerializer, CategorySerializer,
@@ -27,10 +27,20 @@ class PostViewSet(viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return Post.objects.all().select_related('author', 'category').prefetch_related('tags')
-        return Post.objects.filter(status='published').select_related('author', 'category').prefetch_related('tags')
+        # [核心修正] 重写查询逻辑
+        queryset = Post.objects.select_related('author', 'category').prefetch_related('tags')
 
+        # 对于列表视图，只显示已发布的文章
+        if self.action == 'list':
+            return queryset.filter(status='published')
+
+        # 对于详情、更新、删除等操作，允许作者访问自己的非公开文章
+        if self.request.user.is_authenticated:
+            # 用户可以看到已发布的，或者作者是自己的
+            return queryset.filter(Q(status='published') | Q(author=self.request.user))
+
+        # 默认（未登录用户访问详情）只返回已发布的
+        return queryset.filter(status='published')
     def get_serializer_class(self):
         if self.action == 'list':
             return PostListSerializer

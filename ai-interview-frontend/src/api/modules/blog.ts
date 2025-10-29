@@ -9,6 +9,8 @@ export interface PostDetail extends PostListItem { content: string; word_count: 
 export type PostFormData = Partial<Omit<PostDetail, 'cover_image'>> & { cover_image_file?: File | null; cover_image?: string | null; };
 export interface CommentItem { id: number; author: Author; content: string; created_at: string; parent: number | null; replies: CommentItem[]; }
 
+
+
 const createOrUpdatePost = (url: string, method: 'post' | 'patch', data: PostFormData): Promise<PostDetail> => {
   const coverImageFile = data.cover_image_file;
 
@@ -51,6 +53,7 @@ export const updatePostApi = (id: number, data: PostFormData): Promise<PostDetai
 };
 
 // ... 其他 API 函数保持不变 ...
+
 export const getPostListApi = (params?: any): Promise<PostListItem[]> => { return request({ url: '/posts/', method: 'get', params, }); };
 export const getPostDetailApi = (id: number): Promise<PostDetail> => { return request({ url: `/posts/${id}/`, method: 'get', }); };
 export const getPostCommentsApi = (postId: number): Promise<CommentItem[]> => { return request({ url: `/posts/${postId}/comments/`, method: 'get', }); };
