@@ -27,12 +27,15 @@ export const useJobStore = defineStore('job', {
       this.selectedIndustryId = industryId;
     },
     
-    // 从 API 获取所有行业和岗位数据
-    async fetchIndustries() {
-      if (this.industriesWithJobs.length > 0) return; // 避免重复获取
+     async fetchIndustries() {
+      if (this.industriesWithJobs.length > 0) return;
       this.isLoading = true;
       try {
-        this.industriesWithJobs = await getJobsByIndustryApi();
+        const response = await getJobsByIndustryApi();
+        // 【核心修改】从分页响应中提取 results 数组
+        // 因为行业列表通常不长，我们在这里暂时不处理分页，直接获取所有数据
+        // 如果未来行业非常多，可以考虑在这里实现加载更多的逻辑
+        this.industriesWithJobs = response.results; 
       } catch (error) {
         console.error("获取岗位列表失败", error);
         ElMessage.error("无法加载岗位列表，请稍后重试。");

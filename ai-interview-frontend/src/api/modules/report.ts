@@ -1,6 +1,8 @@
 import request from '@/api/request';
 import type { AnalysisReport } from './resumeEditor'; // 导入类型
 import type { InterviewSessionItem, AnalysisFrame } from './interview'; // 【新增】导入 AnalysisFrame
+// 【核心修改】导入通用分页类型
+import type { PaginatedResponse } from '@/types/api';
 // --- 类型定义 ---
 export interface AbilityScore {
   name: string;
@@ -49,8 +51,9 @@ export interface InterviewReport {
 }
 
 // --- API 函数 (保持不变) ---
-export const getInterviewHistoryApi = (): Promise<InterviewSessionItem[]> => {
-  return request({ url: '/interviews/', method: 'get' });
+// 【核心修复】为函数添加 params 参数
+export const getInterviewHistoryApi = (params?: any): Promise<PaginatedResponse<InterviewSessionItem>> => {
+  return request({ url: '/interviews/', method: 'get', params });
 };
 
 export const getInterviewReportApi = (sessionId: string): Promise<InterviewReport> => {
@@ -68,10 +71,11 @@ export interface ResumeAnalysisReportItem {
     created_at: string;
 }
 
-// 获取所有分析报告历史
-export const getAnalysisHistoryApi = (): Promise<ResumeAnalysisReportItem[]> => {
-    return request({ url: '/analysis-reports/', method: 'get' });
+// 【核心修复】为函数添加 params 参数
+export const getAnalysisHistoryApi = (params?: any): Promise<PaginatedResponse<ResumeAnalysisReportItem>> => {
+    return request({ url: '/analysis-reports/', method: 'get', params });
 };
+
 
 // 获取单个分析报告详情
 export const getAnalysisReportDetailApi = (reportId: string): Promise<ResumeAnalysisReportItem> => {

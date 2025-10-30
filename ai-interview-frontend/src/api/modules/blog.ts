@@ -1,5 +1,6 @@
 import request from '@/api/request';
-
+// 【核心修改】导入通用分页类型
+import type { PaginatedResponse } from '@/types/api';
 // ... 类型定义保持不变 ...
 export interface Author { id: number; username: string; avatar: string | null; }
 export interface Category { id: number; name: string; slug: string; }
@@ -8,7 +9,13 @@ export interface PostListItem { id: number; title: string; author: Author; cover
 export interface PostDetail extends PostListItem { content: string; word_count: number; read_time: number; }
 export type PostFormData = Partial<Omit<PostDetail, 'cover_image'>> & { cover_image_file?: File | null; cover_image?: string | null; };
 export interface CommentItem { id: number; author: Author; content: string; created_at: string; parent: number | null; replies: CommentItem[]; }
-
+// 【核心新增】定义分页响应的类型接口
+export interface PaginatedPostList {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: PostListItem[];
+}
 
 
 const createOrUpdatePost = (url: string, method: 'post' | 'patch', data: PostFormData): Promise<PostDetail> => {
@@ -54,8 +61,10 @@ export const updatePostApi = (id: number, data: PostFormData): Promise<PostDetai
 
 // ... 其他 API 函数保持不变 ...
 
-export const getPostListApi = (params?: any): Promise<PostListItem[]> => { return request({ url: '/posts/', method: 'get', params, }); };
-export const getPostDetailApi = (id: number): Promise<PostDetail> => { return request({ url: `/posts/${id}/`, method: 'get', }); };
+// 【核心修改】更新 getPostListApi 的返回类型为通用分页类型
+export const getPostListApi = (params?: any): Promise<PaginatedResponse<PostListItem>> => { 
+  return request({ url: '/posts/', method: 'get', params }); 
+};
 export const getPostCommentsApi = (postId: number): Promise<CommentItem[]> => { return request({ url: `/posts/${postId}/comments/`, method: 'get', }); };
 export const createCommentApi = (postId: number, data: { content: string; parent?: number | null }): Promise<CommentItem> => { return request({ url: `/posts/${postId}/comments/`, method: 'post', data, }); };
 export const getCategoryListApi = (): Promise<Category[]> => { return request({ url: '/categories/', method: 'get', }); };

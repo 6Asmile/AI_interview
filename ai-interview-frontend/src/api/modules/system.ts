@@ -1,4 +1,6 @@
 import request from '@/api/request';
+// 【核心修改】导入通用分页类型
+import type { PaginatedResponse } from '@/types/api';
 
 // --- AI 设置相关 (保持不变) ---
 // --- AI 模型相关 (新增) ---
@@ -67,8 +69,9 @@ export interface IndustryWithJobsItem {
   job_positions: JobPositionItem[]; // 嵌套岗位列表
 }
 
-// 更新 API 函数，指向新的 URL 并返回新的数据类型
-export const getJobsByIndustryApi = (): Promise<IndustryWithJobsItem[]> => {
+// 【核心修改】更新 getJobsByIndustryApi 的返回类型，因为它现在也受全局分页影响
+// 虽然我们可能不需要它的分页功能，但类型必须正确
+export const getJobsByIndustryApi = (): Promise<PaginatedResponse<IndustryWithJobsItem>> => {
   return request({
     url: '/jobs-by-industry/',
     method: 'get',

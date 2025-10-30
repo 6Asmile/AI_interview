@@ -1,6 +1,8 @@
 // src/api/modules/resume.ts
 import request from '@/api/request';
 import { ResumeLayout } from '@/store/modules/resumeEditor';
+// 【核心修改】导入通用分页类型
+import type { PaginatedResponse } from '@/types/api';
 
 // --- 【核心修改】将所有简历相关的类型定义集中在此 ---
 
@@ -49,11 +51,12 @@ export interface StructuredResume extends ResumeItem {
 
 // --- API 函数 ---
 
-// 获取简历列表
-export const getResumeListApi = (): Promise<ResumeItem[]> => {
+// 【核心修复】为函数添加 params 参数
+export const getResumeListApi = (params?: any): Promise<PaginatedResponse<ResumeItem>> => {
   return request({
     url: '/resumes/',
     method: 'get',
+    params, // <-- 确保 params 被传递
   });
 };
 

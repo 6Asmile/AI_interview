@@ -100,9 +100,15 @@ const uploadForm = reactive({
 const fetchResumeList = async () => {
   isLoading.value = true;
   try {
-    resumeList.value = await getResumeListApi();
-  } catch (error) { console.error(error); ElMessage.error('获取简历列表失败'); } 
-  finally { isLoading.value = false; }
+    // 【核心修改】处理分页响应
+    const response = await getResumeListApi();
+    resumeList.value = response.results;
+  } catch (error) {
+    console.error("获取简历列表失败:", error);
+    ElMessage.error('简历列表加载失败');
+  } finally {
+    isLoading.value = false;
+  }
 };
 
 onMounted(fetchResumeList);
@@ -120,7 +126,7 @@ const handleDelete = async (id: number) => {
 const isOnlineResume = (status: string): boolean => status === 'draft' || status === 'published';
 const handleEdit = (id: number) => router.push({ name: 'ResumeEditor', params: { id } });
 const handlePreview = (row: ResumeItem) => {
-  // ... (此函数逻辑保持不变)
+
   if ((row.status === 'parsed' || row.status === 'failed') && row.file_url) {
     const baseUrl = import.meta.env.VITE_API_BASE_URL;
     if (!baseUrl) { ElMessage.error('系统配置错误，无法生成预览链接。'); return; }

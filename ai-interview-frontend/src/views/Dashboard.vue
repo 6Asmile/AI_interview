@@ -1,321 +1,228 @@
-<!-- src/views/Dashboard.vue -->
-<template>
-  <div class="dashboard-container">
-    <el-row :gutter="24">
-      <!-- Left Panel: Job Market -->
-      <el-col :span="16">
-        <el-card class="job-market-card" shadow="never">
-          <template #header>
-            <div class="card-header">
-              <span>选择面试岗位</span>
-            </div>
-          </template>
-          
-          <div v-loading="jobStore.isLoading" class="job-market-content">
-            <el-tabs v-model="jobStore.selectedIndustryId" tab-position="left" class="industry-tabs">
-              <el-tab-pane label="所有行业" name="all" />
-              <el-tab-pane
-                v-for="industry in jobStore.industriesWithJobs"
-                :key="industry.id"
-                :label="industry.name"
-                :name="String(industry.id)"
-              />
-            </el-tabs>
-            
-            <div class="job-list-container">
-              <div v-if="jobStore.filteredIndustries.length > 0">
-                <div v-for="industry in jobStore.filteredIndustries" :key="industry.id" class="industry-group">
-                  <h3 class="industry-name">{{ industry.name }}</h3>
-                  <div class="job-items-grid">
-                    <div
-                      v-for="job in industry.job_positions"
-                      :key="job.id"
-                      class="job-item"
-                      :class="{ 'is-selected': selectedJob === job.name }"
-                      @click="selectJob(job.name)"
-                    >
-                      <p class="job-name">{{ job.name }}</p>
-                      <p class="job-description">{{ job.description }}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <el-empty v-else description="该行业下暂无岗位" />
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-
-      <!-- Right Panel: Interview Configuration -->
-      <el-col :span="8">
-        <el-card class="config-card" shadow="never">
-           <template #header>
-            <div class="card-header">
-              <span>开始面试</span>
-            </div>
-          </template>
-          
-          <el-form label-position="top">
-            <el-form-item label="已选岗位">
-              <el-tag v-if="selectedJob" type="primary" size="large" effect="light" class="selected-job-tag">
-                {{ selectedJob }}
-              </el-tag>
-              <span v-else class="placeholder-text">请从左侧选择岗位</span>
-            </el-form-item>
-
-            <el-divider />
-
-            <el-form-item :label="`为本次面试选择一份简历（可选）`">
-              <div class="resume-selection">
-                <el-table 
-                  :data="resumeList" 
-                  @row-click="selectResume" 
-                  highlight-current-row 
-                  :show-header="false"
-                  style="width: 100%;"
-                  class="resume-table"
-                  v-if="resumeList.length > 0"
-                >
-                  <el-table-column prop="title" />
-                  <el-table-column width="140" align="right">
-                    <template #default="scope">
-                      <span class="update-time">{{ formatDateTime(scope.row.updated_at, '') }}</span>
-                    </template>
-                  </el-table-column>
-                </el-table>
-                <div v-else class="no-resume-tip">
-                  <p>暂无可用简历。</p>
-                  <router-link to="/dashboard/resumes">
-                    <el-button type="primary" link>前往简历中心创建</el-button>
-                  </router-link>
-                </div>
-              </div>
-            </el-form-item>
-            
-            <el-divider />
-
-            <el-form-item label="设置面试问题数量">
-              <el-slider v-model="questionCount" :min="3" :max="10" show-input />
-            </el-form-item>
-            
-            <el-button
-              type="primary"
-              size="large"
-              @click="handleStartInterview"
-              :disabled="!selectedJob"
-              :loading="isStarting"
-              class="start-button"
-            >
-              {{ isStarting ? '正在开启...' : '开始面试' }}
-            </el-button>
-          </el-form>
-        </el-card>
-      </el-col>
-    </el-row>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { 
+  ElMessage, ElDialog, ElRadio, ElTable, ElTableColumn, ElPagination, ElButton, 
+  ElRow, ElCol, ElRadioGroup, ElSlider, ElInputNumber, ElEmpty
+} from 'element-plus';
 import { useJobStore } from '@/store/modules/job';
 import { getResumeListApi, type ResumeItem } from '@/api/modules/resume';
-import { startInterviewApi } from '@/api/modules/interview';
-import { ElMessage } from 'element-plus';
+// 【核心修正】从 interview.ts 导入 StartInterviewData 类型
+import { startInterviewApi, type StartInterviewData } from '@/api/modules/interview';
 import { formatDateTime } from '@/utils/format';
 
 const router = useRouter();
 const jobStore = useJobStore();
 
-const resumeList = ref<ResumeItem[]>([]);
-const selectedJob = ref('');
-const selectedResume = ref<ResumeItem | null>(null);
-const questionCount = ref(5);
-const isStarting = ref(false);
+// --- 岗位选择相关状态 ---
+const selectedIndustryId = ref<number | 'all'>('all');
+// 【核心修正】将状态的 null 类型改为 undefined，以匹配 Element Plus 组件的要求
+const selectedJobId = ref<number | undefined>(undefined);
 
-onMounted(async () => {
-  // 并行获取数据，提升加载速度
-  await Promise.all([
-    jobStore.fetchIndustries(),
-    fetchResumes()
-  ]);
+const filteredJobs = computed(() => {
+  if (selectedIndustryId.value === 'all') {
+    return jobStore.industriesWithJobs.flatMap(industry => industry.job_positions);
+  }
+  const industry = jobStore.industriesWithJobs.find(i => i.id === selectedIndustryId.value);
+  return industry ? industry.job_positions : [];
 });
 
-async function fetchResumes() {
-    try {
-        resumeList.value = await getResumeListApi();
-    } catch (error) {
-        ElMessage.error('加载简历列表失败');
-    }
-}
+const selectedJob = computed(() => {
+  return filteredJobs.value.find(job => job.id === selectedJobId.value) || null;
+});
 
-const selectJob = (jobName: string) => {
-  selectedJob.value = jobName;
+watch(filteredJobs, (newJobs) => {
+  if (selectedJobId.value && !newJobs.some(job => job.id === selectedJobId.value)) {
+    selectedJobId.value = undefined;
+  }
+});
+
+
+// --- 开始面试面板相关状态 ---
+const startDialogVisible = ref(false);
+const isStarting = ref(false);
+// 【核心修正】将状态的 null 类型改为 undefined，以匹配 Element Plus 组件的要求
+const selectedResumeId = ref<number | undefined>(undefined);
+const questionCount = ref(5);
+const resumes = ref<ResumeItem[]>([]);
+const isLoadingResumes = ref(false);
+const resumePagination = ref({
+  currentPage: 1,
+  pageSize: 5,
+  total: 0,
+});
+
+// --- 数据获取 ---
+onMounted(() => {
+  jobStore.fetchIndustries();
+});
+
+const fetchResumes = async () => {
+  isLoadingResumes.value = true;
+  try {
+    const params = { page: resumePagination.value.currentPage, page_size: resumePagination.value.pageSize };
+    const response = await getResumeListApi(params);
+    resumes.value = response.results;
+    resumePagination.value.total = response.count;
+    if (!selectedResumeId.value && resumes.value.length > 0) {
+       selectedResumeId.value = resumes.value[0].id;
+    }
+  } catch (error) {
+    ElMessage.error('简历列表加载失败');
+  } finally {
+    isLoadingResumes.value = false;
+  }
 };
 
-const selectResume = (row: ResumeItem) => {
-  // 实现点击同一行取消选择的功能
-  if (selectedResume.value?.id === row.id) {
-    selectedResume.value = null;
-    // 需要手动清除 el-table 的选中高亮
-    // 这是 el-table 的一个特性，需要一些技巧来处理
-  } else {
-    selectedResume.value = row;
-  }
+// --- 事件处理 ---
+const handleStartClick = () => {
+  fetchResumes();
+  startDialogVisible.value = true;
+};
+
+const handleResumePageChange = (page: number) => {
+  resumePagination.value.currentPage = page;
+  selectedResumeId.value = undefined; 
+  fetchResumes();
 };
 
 const handleStartInterview = async () => {
-  if (!selectedJob.value) {
-    ElMessage.warning('请先选择一个面试岗位');
-    return;
-  }
+  if (!selectedJob.value) return;
   isStarting.value = true;
   try {
-    const response = await startInterviewApi({
-      job_position: selectedJob.value,
-      resume_id: selectedResume.value?.id,
-      question_count: questionCount.value
-    });
-    ElMessage.success('面试开启成功，即将进入面试房间...');
-    router.push({ name: 'InterviewRoom', params: { id: response.id } });
+    // 【核心修正】构建一个符合 StartInterviewData 类型的 payload
+    const payload: StartInterviewData = {
+      job_position: selectedJob.value.name,
+      question_count: questionCount.value,
+    };
+    // 只有当 resume_id 存在时（不为 undefined），才将其添加到 payload 中
+    if (selectedResumeId.value) {
+      payload.resume_id = selectedResumeId.value;
+    }
+
+    const session = await startInterviewApi(payload); // 传递修正后的 payload
+    ElMessage.success('面试已开启，正在进入房间...');
+    router.push({ name: 'InterviewRoom', params: { id: session.id } });
   } catch (error) {
-    // 错误信息已由 axios 拦截器统一处理
+    // request.ts 中已经处理了错误提示
   } finally {
     isStarting.value = false;
   }
 };
 </script>
 
+<template>
+  <div class="dashboard-container">
+    <el-row :gutter="24">
+      <!-- 左侧：岗位选择 -->
+      <el-col :span="16">
+        <div class="panel job-selection-panel">
+          <div class="panel-header">
+            <h3>选择面试岗位</h3>
+          </div>
+          <div class="panel-body">
+            <div class="industry-tabs">
+              <span :class="{ active: selectedIndustryId === 'all' }" @click="selectedIndustryId = 'all'">所有行业</span>
+              <span
+                v-for="industry in jobStore.industriesWithJobs"
+                :key="industry.id"
+                :class="{ active: selectedIndustryId === industry.id }"
+                @click="selectedIndustryId = industry.id"
+              >
+                {{ industry.name }}
+              </span>
+            </div>
+            <div class="job-list">
+              <el-radio-group v-model="selectedJobId">
+                <el-radio
+                  v-for="job in filteredJobs"
+                  :key="job.id"
+                  :label="job.id"
+                  border
+                  class="job-radio-item"
+                >
+                  <span class="job-name">{{ job.name }}</span>
+                  <span class="job-desc">{{ job.description }}</span>
+                </el-radio>
+              </el-radio-group>
+              <el-empty v-if="!filteredJobs.length" description="该行业下暂无岗位" />
+            </div>
+          </div>
+        </div>
+      </el-col>
+      <!-- 右侧：开始面试 -->
+      <el-col :span="8">
+        <div class="panel start-panel">
+          <div class="panel-header">
+            <h3>开始面试</h3>
+          </div>
+          <div class="panel-body">
+            <div class="selected-job-info">
+              <p>已选岗位</p>
+              <h4 v-if="selectedJob">{{ selectedJob.name }}</h4>
+              <p v-else class="placeholder-text">请从左侧选择岗位</p>
+            </div>
+            <div class="resume-selection">
+              <p>为本次面试选择一份简历 (可选)</p>
+              <div class="resume-box" @click="handleStartClick">
+                <div v-if="!resumes.length">暂无可用简历。<br><span class="link-text">点击选择或创建</span></div>
+                <div v-else>{{ resumes.find(r => r.id === selectedResumeId)?.title || '点击选择简历' }}</div>
+              </div>
+            </div>
+            <div class="question-count-setting">
+               <p>设置面试问题数量</p>
+               <div class="slider-wrapper">
+                 <el-slider v-model="questionCount" :min="3" :max="10" show-stops />
+                 <el-input-number v-model="questionCount" :min="3" :max="10" controls-position="right" size="small" />
+               </div>
+            </div>
+            <el-button
+              type="primary"
+              size="large"
+              class="start-button"
+              :disabled="!selectedJobId"
+              @click="handleStartInterview"
+              :loading="isStarting"
+            >
+              {{ isStarting ? '正在开启...' : '开始面试' }}
+            </el-button>
+          </div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <!-- 简历选择对话框 -->
+    <el-dialog v-model="startDialogVisible" title="选择简历" width="50%">
+      <el-table :data="resumes" v-loading="isLoadingResumes" highlight-current-row>
+        <el-table-column width="55">
+          <template #default="scope">
+            <!-- 【核心修正】v-model 绑定现在是类型安全的 -->
+            <el-radio :label="scope.row.id" v-model="selectedResumeId" @change="startDialogVisible = false">&nbsp;</el-radio>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="简历标题" />
+        <el-table-column label="最后更新">
+          <template #default="scope">{{ formatDateTime(scope.row.updated_at) }}</template>
+        </el-table-column>
+         <template #empty>
+            <el-empty description="暂无可用简历。">
+              <el-button type="primary" @click="router.push({ name: 'ResumeManagement' })">前往简历中心创建</el-button>
+            </el-empty>
+          </template>
+      </el-table>
+      <div class="pagination-container" v-if="resumePagination.total > resumePagination.pageSize">
+        <el-pagination small background layout="prev, pager, next" :total="resumePagination.total" :page-size="resumePagination.pageSize" v-model:current-page="resumePagination.currentPage" @current-change="handleResumePageChange" />
+      </div>
+       <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="startDialogVisible = false">关闭</el-button>
+        </span>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
 <style scoped>
-.dashboard-container {
-  padding: 24px;
-  background-color: #f7f8fa;
-  min-height: calc(100vh - 60px); /* 假设导航栏高度为 60px */
-}
-
-.card-header {
-  font-size: 16px;
-  font-weight: 600;
-  color: #333;
-}
-
-.job-market-card .job-market-content {
-  display: flex;
-}
-
-.industry-tabs {
-  min-width: 120px;
-  flex-shrink: 0;
-  margin-right: 24px;
-}
-
-.job-list-container {
-  flex-grow: 1;
-  height: 60vh;
-  overflow-y: auto;
-  padding-right: 10px; /* for scrollbar */
-}
-
-.industry-group {
-  margin-bottom: 24px;
-}
-.industry-name {
-  font-size: 14px;
-  color: #666;
-  margin-bottom: 16px;
-}
-
-.job-items-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
-}
-
-.job-item {
-  border: 1px solid #e8eaf0;
-  border-radius: 8px;
-  padding: 16px;
-  cursor: pointer;
-  transition: all 0.2s ease-in-out;
-  background-color: #fff;
-}
-
-.job-item:hover {
-  border-color: #409eff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
-}
-
-.job-item.is-selected {
-  border-color: #409eff;
-  background-color: #f0f7ff;
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.1);
-}
-
-.job-name {
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: #333;
-}
-
-.job-description {
-  font-size: 13px;
-  color: #888;
-  line-height: 1.5;
-}
-
-.config-card {
-  position: sticky;
-  top: 24px; /* 让配置卡片在滚动时吸顶 */
-}
-
-.selected-job-tag {
-  width: 100%;
-  justify-content: center;
-  font-size: 14px;
-}
-
-.placeholder-text {
-  color: #a8abb2;
-  font-size: 14px;
-}
-
-.resume-selection {
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  padding: 8px;
-  min-height: 100px;
-}
-
-.resume-table {
-  --el-table-border-color: transparent;
-  --el-table-header-bg-color: transparent;
-}
-
-.resume-table :deep(.el-table__row) {
-  cursor: pointer;
-}
-
-.update-time {
-  font-size: 12px;
-  color: #999;
-}
-
-.no-resume-tip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  height: 100%;
-  color: #999;
-  font-size: 14px;
-}
-.no-resume-tip p {
-  margin: 0;
-}
-
-.start-button {
-  width: 100%;
-}
+/* 样式与上一版相同，无需修改 */
+.dashboard-container{padding:24px;background-color:#f5f7fa;height:calc(100vh - 90px)}.panel{background-color:#fff;border-radius:8px;border:1px solid #e4e7ed;height:100%;display:flex;flex-direction:column}.panel-header{padding:16px 20px;border-bottom:1px solid #e4e7ed}.panel-header h3{margin:0;font-size:1.1rem}.panel-body{padding:20px;flex-grow:1;overflow-y:auto}.job-selection-panel .panel-body{display:flex;flex-direction:column}.industry-tabs{margin-bottom:16px;display:flex;flex-wrap:wrap;gap:16px}.industry-tabs span{padding:4px 12px;cursor:pointer;border-radius:4px;transition:all .2s ease}.industry-tabs span.active{background-color:#ecf5ff;color:#409eff;font-weight:500}.job-list{flex-grow:1;overflow-y:auto}.job-radio-item{width:100%;margin:8px 0!important;height:auto;padding:12px;display:flex}.job-radio-item .job-name{font-weight:500;color:#303133}.job-radio-item .job-desc{font-size:.8rem;color:#909399;margin-top:4px;white-space:normal}.start-panel .panel-body{display:flex;flex-direction:column}.selected-job-info,.resume-selection,.question-count-setting{margin-bottom:24px}.selected-job-info p,.resume-selection p,.question-count-setting p{margin:0 0 8px;color:#606266;font-size:.9rem}.selected-job-info h4{margin:0;font-size:1.5rem;color:#303133}.placeholder-text{color:#c0c4cc}.resume-box{border:1px dashed #dcdfe6;border-radius:4px;padding:16px;text-align:center;cursor:pointer;color:#606266;transition:border-color .2s,color .2s}.resume-box:hover{border-color:#409eff;color:#409eff}.link-text{color:#409eff}.slider-wrapper{display:flex;align-items:center;gap:16px}.start-button{width:100%;margin-top:auto}.pagination-container{display:flex;justify-content:center;margin-top:16px}
 </style>

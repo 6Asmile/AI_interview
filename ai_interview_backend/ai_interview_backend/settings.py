@@ -174,6 +174,8 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+    #添加这一行来全局启用分页
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardResultsSetPagination',
 }
 
 # Simple JWT 配置
