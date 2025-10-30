@@ -8,6 +8,8 @@ from .serializers import (
     TagSerializer, CommentSerializer, PostCreateUpdateSerializer,
 )
 from .permissions import IsOwnerOrReadOnly # [核心新增] 导入自定义权限类
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """获取分类列表"""
     queryset = Category.objects.all()
@@ -25,6 +27,11 @@ class PostViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
     # [核心修正] 同时支持三种解析器
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    # [核心修正] 配置过滤器和排序
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['category__slug', 'tags__slug']  # 允许按分类slug和标签slug过滤
+    ordering_fields = ['published_at', 'view_count', 'like_count']  # 允许按这些字段排序
 
     def get_queryset(self):
         # [核心修正] 重写查询逻辑

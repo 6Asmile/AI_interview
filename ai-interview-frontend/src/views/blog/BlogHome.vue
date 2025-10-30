@@ -1,163 +1,398 @@
-<template>
-  <div class="blog-home-container max-w-screen-xl mx-auto py-8 px-4">
-    
-    <div class="glass-card mb-6 p-3">
-      <div class="flex items-center gap-2 text-sm font-medium text-gray-600">
-        <el-button type="primary" link class="active-tab">全部</el-button>
-        <el-button type="primary" link>最新</el-button>
-        <el-button type="primary" link>热门</el-button>
-      </div>
-    </div>
-
-    <div class="main-grid">
-      <aside class="left-sidebar space-y-6">
-        <div class="glass-card p-4">
-          <h3 class="font-semibold mb-4 text-gray-700 border-l-4 border-blue-500 pl-3">文章分类</h3>
-          <ul class="space-y-1 text-sm text-gray-600">
-            <li v-for="cat in categoryList" :key="cat.id" class="category-item">
-              {{ cat.name }}
-            </li>
-          </ul>
-        </div>
-      </aside>
-
-      <main class="center-content space-y-5">
-        <div 
-          v-loading="isLoading"
-          v-for="post in postList" 
-          :key="post.id" 
-          class="post-list-item-card glass-card flex gap-6 p-5"
-          @click="goToDetail(post.id)"
-        >
-          <div class="flex-grow flex flex-col">
-            <h2 class="text-xl font-bold text-gray-800 mb-2 line-clamp-1">
-              {{ post.title }}
-            </h2>
-            <p class="text-sm text-gray-500 line-clamp-2 mb-4 flex-grow">
-              {{ post.excerpt || '暂无摘要...' }}
-            </p>
-            <div class="flex items-center text-xs text-gray-400 gap-5 mt-auto">
-              <div class="flex items-center gap-2 author-tag">
-                <el-avatar :size="24" :src="post.author.avatar ?? undefined">{{ post.author.username.charAt(0).toUpperCase() }}</el-avatar>
-                <span>{{ post.author.username }}</span>
-              </div>
-              <span>{{ formatDate(post.published_at) }}</span>
-              <div class="flex items-center gap-4 ml-auto">
-                <span class="flex items-center gap-1"><el-icon><View /></el-icon> {{ post.view_count }}</span>
-                <span class="flex items-center gap-1"><el-icon><Pointer /></el-icon> {{ post.like_count }}</span>
-                <span class="flex items-center gap-1"><el-icon><ChatDotSquare /></el-icon> {{ post.comment_count }}</span>
-              </div>
-            </div>
-          </div>
-          <div v-if="post.cover_image" class="flex-shrink-0 w-48 h-32 overflow-hidden rounded-md">
-            <img :src="post.cover_image" class="w-full h-full object-cover transition-transform duration-500" alt="Cover"/>
-          </div>
-        </div>
-        <el-empty v-if="!isLoading && postList.length === 0" description="暂无已发布的文章" />
-      </main>
-
-      <aside class="right-sidebar space-y-6">
-        <div class="glass-card p-4">
-          <h3 class="font-semibold mb-4 text-gray-700 border-l-4 border-blue-500 pl-3">创作者中心</h3>
-          <el-button type="primary" class="w-full" size="large" @click="goToEditor()">
-            <el-icon class="mr-2"><EditPen /></el-icon> 发布文章
-          </el-button>
-        </div>
-        <div class="glass-card p-4">
-          <h3 class="font-semibold mb-4 text-gray-700 border-l-4 border-blue-500 pl-3">热门文章</h3>
-          <ul class="space-y-4 text-sm text-gray-600">
-            <li v-for="(item, index) in hotList" :key="item.id" class="hot-post-item" @click="goToDetail(item.id)">
-              <span :class="['rank', `rank-${index + 1}`]">{{ index + 1 }}</span>
-              <span class="line-clamp-1">{{ item.title }}</span>
-            </li>
-          </ul>
-        </div>
-        <div class="glass-card p-4">
-          <h3 class="font-semibold mb-4 text-gray-700 border-l-4 border-blue-500 pl-3">热门标签</h3>
-          <div class="flex flex-wrap gap-2">
-            <el-tag v-for="tag in tagList" :key="tag.id" effect="light" round class="cursor-pointer hover:opacity-80 transition-opacity">{{ tag.name }}</el-tag>
-          </div>
-        </div>
-      </aside>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import { useRouter } from 'vue-router';
-import { getPostListApi, getTagListApi, getCategoryListApi, type PostListItem, type Tag, type Category } from '@/api/modules/blog';
-import { ElCard, ElAvatar, ElIcon, ElEmpty, ElButton, ElTag } from 'element-plus';
-import { View, ChatDotSquare, Pointer, EditPen } from '@element-plus/icons-vue';
-import dayjs from 'dayjs';
-import 'dayjs/locale/zh-cn';
-import relativeTime from 'dayjs/plugin/relativeTime';
+import { ref, onMounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { ElMessage, ElSkeleton, ElSkeletonItem, ElButton, ElTag, ElRow, ElCol, ElIcon } from 'element-plus';
+import { EditPen, View as ViewIcon, Pointer, ChatDotRound } from '@element-plus/icons-vue';
+import { getPostListApi, getCategoryListApi, getTagListApi } from '@/api/modules/blog';
+import type { PostListItem, Category, Tag } from '@/api/modules/blog';
+import { formatDateTime } from '@/utils/format';
+import { useAuthStore } from '@/store/modules/auth';
 
-dayjs.extend(relativeTime);
-dayjs.locale('zh-cn');
+// --- 响应式状态定义 ---
+const posts = ref<PostListItem[]>([]);
+const categories = ref<Category[]>([]);
+const tags = ref<Tag[]>([]);
+const hotPosts = ref<PostListItem[]>([]);
+const isLoading = ref(true);
 
 const router = useRouter();
-const isLoading = ref(true);
-const postList = ref<PostListItem[]>([]);
-const tagList = ref<Tag[]>([]);
-const categoryList = ref<Category[]>([]);
+const route = useRoute();
+const authStore = useAuthStore(); // 获取认证状态
 
-const hotList = computed(() => [...postList.value].sort((a, b) => b.view_count - a.view_count).slice(0, 5));
+const activeSlug = ref<{ type: 'category' | 'tag' | null, value: string | null }>({
+  type: route.query.type as any || null,
+  value: route.query.slug as string || null
+});
 
-const fetchInitialData = async () => {
+
+// --- 数据获取逻辑 ---
+const fetchPosts = async () => {
   isLoading.value = true;
   try {
-    const [postsRes, tagsRes, catsRes] = await Promise.all([
-      getPostListApi(),
-      getTagListApi(),
-      getCategoryListApi(),
-    ]);
-    postList.value = postsRes;
-    tagList.value = tagsRes;
-    categoryList.value = catsRes;
+    const params: any = { ordering: '-published_at' };
+    if (activeSlug.value.type === 'category' && activeSlug.value.value) {
+      params.category__slug = activeSlug.value.value;
+    } else if (activeSlug.value.type === 'tag' && activeSlug.value.value) {
+      params.tags__slug = activeSlug.value.value;
+    }
+    posts.value = await getPostListApi(params);
   } catch (error) {
-    console.error("Failed to fetch initial data:", error);
+    ElMessage.error('文章列表加载失败');
+    console.error(error);
   } finally {
     isLoading.value = false;
   }
 };
 
-const formatDate = (dateString: string) => {
-  if (!dateString) return '';
-  return dayjs(dateString).fromNow();
+const fetchSidebarData = async () => {
+  try {
+    [categories.value, tags.value, hotPosts.value] = await Promise.all([
+      getCategoryListApi(),
+      getTagListApi(),
+      getPostListApi({ ordering: '-view_count', limit: 5 })
+    ]);
+  } catch (error) {
+    ElMessage.error('侧边栏信息加载失败');
+    console.error(error);
+  }
 };
 
-const goToDetail = (id: number) => router.push({ name: 'PostDetail', params: { id } });
-const goToEditor = () => router.push({ name: 'PostEditor' });
+// --- 交互处理 ---
+const handleFilterClick = (type: 'category' | 'tag' | null, slug: string | null) => {
+  activeSlug.value = { type, value: slug };
+  router.push({ query: slug ? { type, slug } : {} });
+};
 
+
+// --- 生命周期与侦听器 ---
 onMounted(() => {
-  fetchInitialData();
+  fetchPosts();
+  fetchSidebarData();
 });
+
+watch(
+  () => route.query,
+  (newQuery) => {
+    activeSlug.value = {
+        type: (newQuery.type as 'category' | 'tag' | null) || null,
+        value: (newQuery.slug as string | null) || null,
+    };
+    fetchPosts();
+  }
+);
 </script>
 
+<template>
+  <div class="blog-home-container">
+    <!-- 核心修复: 将页面标题栏移出 el-row，使其成为独立的、横跨整个页面的部分 -->
+    <div class="page-header">
+      <h2 class="page-title">社区文章</h2>
+      <router-link :to="{ name: 'PostEditor' }" v-if="authStore.isAuthenticated">
+        <el-button type="primary" :icon="EditPen">写文章</el-button>
+      </router-link>
+    </div>
+
+    <el-row :gutter="20">
+      <!-- 主内容区域：文章列表 -->
+      <el-col :xs="24" :sm="18">
+        <div class="posts-list">
+          <div v-if="isLoading">
+            <el-skeleton v-for="n in 5" :key="n" style="margin-bottom: 1px;" animated>
+               <template #template>
+                  <div style="display: flex; align-items: center; padding: 20px; background: #fff; border-bottom: 1px solid #f0f2f5;">
+                    <div style="flex: 1;">
+                      <el-skeleton-item variant="p" style="width: 50%; margin-bottom: 10px;" />
+                      <el-skeleton-item variant="text" style="width: 80%;" />
+                      <el-skeleton-item variant="text" style="width: 30%; margin-top: 10px;" />
+                    </div>
+                    <el-skeleton-item variant="image" style="width: 150px; height: 100px; margin-left: 20px;" />
+                  </div>
+                </template>
+            </el-skeleton>
+          </div>
+          <template v-else>
+            <router-link v-for="post in posts" :key="post.id" :to="{ name: 'PostDetail', params: { id: post.id } }" class="post-card-link">
+               <div class="post-card">
+                 <div class="card-body">
+                   <h3 class="card-title">{{ post.title }}</h3>
+                   <p class="card-excerpt">{{ post.excerpt }}</p>
+                   <!-- 核心修复: 添加点赞、评论、浏览量显示 -->
+                   <div class="card-meta">
+                      <span class="meta-author">{{ post.author.username || "佚名" }}</span>
+                      <span class="meta-date">{{ formatDateTime(post.published_at, 'yyyy-MM-dd') }}</span>
+                      <div class="meta-stats">
+                        <span class="stat-item"><el-icon><ViewIcon /></el-icon>{{ post.view_count }}</span>
+                        <span class="stat-item"><el-icon><Pointer /></el-icon>{{ post.like_count }}</span>
+                        <span class="stat-item"><el-icon><ChatDotRound /></el-icon>{{ post.comment_count }}</span>
+                      </div>
+                   </div>
+                 </div>
+                 <div v-if="post.cover_image" class="card-cover">
+                   <img :src="post.cover_image" alt="文章封面" class="cover-image">
+                 </div>
+               </div>
+            </router-link>
+            <div v-if="!posts.length && !isLoading" class="no-posts">
+              <p>暂无文章</p>
+            </div>
+          </template>
+        </div>
+      </el-col>
+
+      <!-- 侧边栏 -->
+      <el-col :xs="24" :sm="6">
+        <div class="sidebar">
+          <div class="sidebar-module">
+            <h4 class="module-title">分类</h4>
+            <ul class="category-list">
+              <li
+                :class="{ active: activeSlug.type === null }"
+                @click="handleFilterClick(null, null)">
+                全部
+              </li>
+              <li
+                v-for="cat in categories"
+                :key="cat.id"
+                :class="{ active: activeSlug.type === 'category' && activeSlug.value === cat.slug }"
+                @click="handleFilterClick('category', cat.slug)">
+                {{ cat.name }}
+              </li>
+            </ul>
+          </div>
+          
+          <div class="sidebar-module">
+            <h4 class="module-title">标签</h4>
+            <div class="tag-cloud">
+               <el-tag
+                  v-for="tag in tags"
+                  :key="tag.id"
+                  class="tag-item"
+                  :effect="activeSlug.type === 'tag' && activeSlug.value === tag.slug ? 'dark' : 'plain'"
+                  @click="handleFilterClick('tag', tag.slug)">
+                  {{ tag.name }}
+                </el-tag>
+            </div>
+          </div>
+
+          <div class="sidebar-module">
+            <h4 class="module-title">热门推荐</h4>
+            <ul class="hot-posts-list">
+              <li v-for="hot in hotPosts" :key="hot.id">
+                <router-link :to="{ name: 'PostDetail', params: { id: hot.id } }" class="hot-post-link">{{ hot.title }}</router-link>
+              </li>
+            </ul>
+          </div>
+          <div class="sidebar-module">
+            <h4 class="module-title">友情链接</h4>
+            <ul class="friend-links">
+              <li><a href="https://csdn.net" target="_blank">CSDN</a></li>
+              <li><a href="https://juejin.cn" target="_blank">掘金</a></li>
+            </ul>
+          </div>
+        </div>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
 <style scoped>
-/* [核心修正] 整体布局与卡片样式 */
-.main-grid { display: grid; grid-template-columns: 200px 1fr 280px; gap: 1.5rem; }
-.glass-card { background: rgba(255, 255, 255, 0.65); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1); }
+.blog-home-container {
+  padding: 20px;
+  background-color: #f5f7fa; /* 浅灰色背景，提升质感 */
+}
 
-/* 主内容区卡片样式 */
-.post-list-item-card { cursor: pointer; display: flex; align-items: stretch; min-height: 11rem; }
-.post-list-item-card:hover { transform: translateY(-5px) scale(1.02); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12); }
-.post-list-item-card:hover img { transform: scale(1.1); }
+/* 页面头部样式 */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
 
-/* 左侧分类样式 */
-.category-item { padding: 8px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease; }
-.category-item:hover { background-color: rgba(60, 130, 255, 0.1); color: #3375b9; }
+.page-title {
+  font-size: 1.75rem;
+  color: #303133;
+  margin: 0;
+}
 
-/* 右侧热门文章样式 */
-.hot-post-item { display: flex; align-items: center; gap: 10px; padding: 4px 0; cursor: pointer; transition: color 0.2s ease; }
-.hot-post-item:hover { color: #3375b9; }
-.rank { font-style: italic; font-weight: bold; width: 20px; text-align: center; color: #9ca3af; }
-.rank-1, .rank-2, .rank-3 { color: #ef4444; }
+/* 文章列表容器 */
+.posts-list {
+  background-color: #fff;
+  border-radius: 4px;
+  overflow: hidden; /* 保证内部的边框不会溢出 */
+  border: 1px solid #e4e7ed;
+}
 
-/* 响应式布局 */
-@media (max-width: 1024px) {
-  .main-grid { grid-template-columns: 1fr; }
-  .left-sidebar, .right-sidebar { display: none; }
+.post-card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.post-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start; /* 顶部对齐 */
+  padding: 24px;
+  border-bottom: 1px solid #f0f2f5;
+  transition: background-color 0.3s ease;
+}
+
+.post-card:last-child {
+  border-bottom: none;
+}
+
+.post-card:hover {
+  background-color: #fafcff;
+}
+
+.card-body {
+  flex: 1;
+  padding-right: 24px;
+  min-width: 0;
+}
+
+.card-cover {
+  flex-shrink: 0;
+  width: 180px;
+  height: 120px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+
+.card-title {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #303133;
+}
+
+.card-excerpt {
+  margin: 0 0 16px; /* 增加与meta的间距 */
+  color: #606266;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 2.8rem; 
+}
+
+/* Meta 数据样式 */
+.card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* 允许换行 */
+  gap: 16px; /* 统一间距 */
+  font-size: 0.85rem;
+  color: #909399;
+}
+.meta-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto; /* 核心：将统计数据推到最右侧 */
+}
+.stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-item .el-icon {
+  font-size: 1.1em;
+}
+
+.no-posts {
+  text-align: center;
+  padding: 60px;
+  color: #909399;
+  font-size: 1rem;
+}
+
+/* 侧边栏样式 */
+.sidebar {
+  padding: 24px;
+  background-color: #fff;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+}
+
+.sidebar-module {
+  margin-bottom: 30px;
+}
+.sidebar-module:last-child {
+  margin-bottom: 0;
+}
+
+.module-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.category-list, .hot-posts-list, .friend-links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.category-list li {
+  padding: 10px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.2s, background-color 0.2s;
+  font-size: 0.95rem;
+  color: #606266;
+}
+
+.category-list li:hover {
+  background-color: #f5f7fa;
+  color: #409eff;
+}
+
+.category-list li.active {
+  color: #409eff;
+  font-weight: 600;
+}
+
+.tag-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-item {
+  cursor: pointer;
+}
+
+.hot-post-link, .friend-links a {
+  text-decoration: none;
+  color: #606266;
+  font-size: 0.9rem;
+  display: block;
+  padding: 6px 0;
+  transition: color 0.2s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hot-post-link:hover, .friend-links a:hover {
+  color: #409eff;
 }
 </style>

@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'allauth.socialaccount.providers.github',  # GitHub 提供商
     'dj_rest_auth',  # 新增
     'dj_rest_auth.registration',  # 新增
+    'django_filters',
     # Local apps
     'users',
     'resumes',

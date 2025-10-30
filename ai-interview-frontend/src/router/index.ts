@@ -79,6 +79,20 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@/views/blog/PostEditor.vue'),
         props: true
     },
+      // 新增：按分类筛选的路由
+      {
+        path: 'blog/category/:categorySlug',
+        name: 'BlogCategory',
+        component: () => import('@/views/blog/BlogHome.vue'),
+        props: true // <-- 关键：将 URL 参数 (categorySlug)作为 props 传递给组件
+      },
+      // 新增：按标签筛选的路由
+      {
+        path: 'blog/tag/:tagSlug',
+        name: 'BlogTag',
+        component: () => import('@/views/blog/BlogHome.vue'),
+        props: true // <-- 关键：将 URL 参数 (tagSlug) 作为 props 传递给组件
+      },
     ],
   },
 ];
