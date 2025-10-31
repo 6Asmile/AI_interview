@@ -5,7 +5,7 @@ import {
   ElMessage, ElInput, ElForm, ElFormItem, ElButton, ElSelect, ElOption, ElUpload, 
   ElIcon, ElContainer, ElHeader, ElAside, ElMain, ElCard, ElRow, ElCol, ElEmpty
 } from 'element-plus';
-import { ArrowLeft, ArrowRight, Plus, MagicStick, Files, Operation } from '@element-plus/icons-vue';
+import { ArrowLeft, ArrowRight, Plus, MagicStick, Files, Operation, CaretTop, CaretBottom } from '@element-plus/icons-vue';
 import type { UploadRequestOptions } from 'element-plus';
 import { 
   getPostDetailApi, createPostApi, updatePostApi, 
@@ -15,6 +15,14 @@ import type { PostFormData, Category, Tag } from '@/api/modules/blog';
 import MarkdownEditor from '@/components/common/MarkdownEditor.vue';
 import { useEditorStore } from '@/store/modules/editor';
 import { useSystemStore } from '@/store/modules/system';
+
+// 【核心新增】定义大纲条目的类型
+interface TocItem {
+  text: string;
+  level: number;
+  lineIndex: number;
+  indent: number;
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -38,6 +46,8 @@ const postData = reactive<PostFormData>({
 const categories = ref<Category[]>([]);
 const tags = ref<Tag[]>([]);
 const isLoading = ref(true);
+const isSettingsCollapsed = ref(false);
+const catalogue = ref<TocItem[]>([]); // 【核心新增】用于存储大纲数据
 
 const wordCount = computed(() => postData.content?.length || 0);
 
@@ -88,17 +98,36 @@ const customHttpRequest = (options: UploadRequestOptions): Promise<void> => {
 const handleSave = async (status: 'draft' | 'published') => {
   postData.status = status;
   try {
+    let newPostId: number | null = null;
     if (isNewPost.value) {
       const newPost = await createPostApi(postData);
-      ElMessage.success(status === 'draft' ? '草稿已保存' : '文章已发布');
-      router.push({ name: 'PostDetail', params: { id: newPost.id } });
+      newPostId = newPost.id;
     } else {
       await updatePostApi(postId.value!, postData);
-      ElMessage.success('文章已更新');
-      router.push({ name: 'PostDetail', params: { id: postId.value! } });
+      newPostId = postId.value;
+    }
+    ElMessage.success(status === 'draft' ? '草稿已保存' : '文章已发布');
+    if (newPostId) {
+      router.push({ name: 'PostDetail', params: { id: newPostId } });
+    } else {
+      router.push({ name: 'BlogHome' });
     }
   } catch (error) {
     ElMessage.error('操作失败');
+  }
+};
+
+// 【核心新增】接收编辑器传递出来的大纲数据
+const handleGetCatalogue = (toc: TocItem[]) => {
+  catalogue.value = toc;
+};
+
+// 【核心新增】处理大纲点击事件
+const handleAnchorClick = (item: TocItem) => {
+  // `v-md-editor` 会在预览区的标题上自动生成 id, 格式为 `line-数字`
+  const heading = document.querySelector(`#line-${item.lineIndex}`);
+  if (heading) {
+    heading.scrollIntoView({ behavior: 'smooth' });
   }
 };
 </script>
@@ -121,7 +150,19 @@ const handleSave = async (status: 'draft' | 'published') => {
         <el-aside width="240px" class="left-aside">
           <div class="sidebar-content">
             <h4>大纲</h4>
-            <el-empty description="暂无大纲" :image-size="80" />
+            <!-- 【核心新增】渲染大纲列表 -->
+            <ul v-if="catalogue.length" class="catalogue-list">
+              <li
+                v-for="item in catalogue"
+                :key="item.lineIndex"
+                :class="`level-${item.level}`"
+                :style="{ paddingLeft: `${(item.level - 1) * 16}px` }"
+                @click="handleAnchorClick(item)"
+              >
+                {{ item.text }}
+              </li>
+            </ul>
+            <el-empty v-else description="暂无大纲" :image-size="80" />
           </div>
         </el-aside>
         
@@ -131,41 +172,55 @@ const handleSave = async (status: 'draft' | 'published') => {
 
         <el-main class="main-content">
           <div class="editor-area">
-            <MarkdownEditor v-model="postData.content" />
+            <!-- 【核心新增】监听 @get-catalogue 事件 -->
+            <MarkdownEditor v-model="postData.content" @get-catalogue="handleGetCatalogue" />
           </div>
           
-          <el-card class="publish-settings-card" header="发布设置">
-            <el-form :model="postData" label-position="top">
-              <el-row :gutter="40">
-                <el-col :span="8">
-                  <el-form-item label="分类">
-                    <el-select v-model="postData.category" placeholder="选择文章分类" clearable>
-                      <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="16">
-                  <el-form-item label="标签">
-                    <el-select v-model="postData.tags" multiple filterable placeholder="添加文章标签">
-                       <el-option v-for="tag in tags" :key="tag.id" :label="tag.name" :value="tag.id" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="8">
-                  <el-form-item label="封面图">
-                    <el-upload class="cover-uploader" action="#" :show-file-list="false" :http-request="customHttpRequest">
-                      <img v-if="postData.cover_image" :src="postData.cover_image" class="cover-image" />
-                      <el-icon v-else class="cover-uploader-icon"><Plus /></el-icon>
-                    </el-upload>
-                  </el-form-item>
-                </el-col>
-                 <el-col :span="16">
-                  <el-form-item label="文章摘要">
-                    <el-input v-model="postData.excerpt" type="textarea" :rows="5" placeholder="输入文章摘要..." maxlength="256" show-word-limit />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-            </el-form>
+          <el-card class="publish-settings-card">
+            <template #header>
+              <div class="card-header">
+                <span>发布设置</span>
+                <el-button text class="collapse-btn" @click="isSettingsCollapsed = !isSettingsCollapsed">
+                  {{ isSettingsCollapsed ? '展开' : '收起' }}
+                  <el-icon><CaretTop v-if="!isSettingsCollapsed" /><CaretBottom v-else /></el-icon>
+                </el-button>
+              </div>
+            </template>
+            <el-collapse-transition>
+              <div v-show="!isSettingsCollapsed">
+                <el-form :model="postData" label-position="top">
+                  <el-row :gutter="40">
+                    <el-col :span="8">
+                      <el-form-item label="分类">
+                        <el-select v-model="postData.category" placeholder="选择文章分类" clearable>
+                          <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="16">
+                      <el-form-item label="标签">
+                        <el-select v-model="postData.tags" multiple filterable placeholder="添加文章标签">
+                           <el-option v-for="tag in tags" :key="tag.id" :label="tag.name" :value="tag.id" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="8">
+                      <el-form-item label="封面图">
+                        <el-upload class="cover-uploader" action="#" :show-file-list="false" :http-request="customHttpRequest">
+                          <img v-if="postData.cover_image" :src="postData.cover_image" class="cover-image" />
+                          <el-icon v-else class="cover-uploader-icon"><Plus /></el-icon>
+                        </el-upload>
+                      </el-form-item>
+                    </el-col>
+                     <el-col :span="16">
+                      <el-form-item label="文章摘要">
+                        <el-input v-model="postData.excerpt" type="textarea" :rows="5" placeholder="输入文章摘要..." maxlength="256" show-word-limit />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </el-form>
+              </div>
+            </el-collapse-transition>
           </el-card>
         </el-main>
 
@@ -274,25 +329,36 @@ const handleSave = async (status: 'draft' | 'published') => {
   transition: right 0.3s ease;
 }
 
-/* --- 核心修复 --- */
 .main-content {
-  padding: 0;
+  padding: 10px;
   margin: 0 10px;
   height: 100%;
-  overflow-y: auto; /* el-main 负责滚动 */
+  overflow-y: auto; 
+  background-color: #fff;
   display: flex;
   flex-direction: column;
 }
 .editor-area {
-  flex-grow: 1; /* 占据所有可用空间 */
-  min-height: 80vh; /* 保证编辑器初始高度足够大 */
+  flex-grow: 1;
+  min-height: 80vh;
   display: flex;
 }
-/* --- 核心修复结束 --- */
+:deep(.v-md-editor) {
+  flex-grow: 1 !important;
+  box-shadow: none !important;
+}
 
 .publish-settings-card {
   margin-top: 20px;
-  flex-shrink: 0; /* 防止卡片被压缩 */
+  flex-shrink: 0; 
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.collapse-btn {
+  font-size: 0.9rem;
 }
 .publish-settings-card .el-select { 
   width: 100%; 
@@ -356,5 +422,25 @@ const handleSave = async (status: 'draft' | 'published') => {
   font-size: 0.8rem; 
   color: #909399; 
   margin: 0 0 16px; 
+}
+
+/* --- 核心新增：大纲样式 --- */
+.catalogue-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.9rem;
+}
+.catalogue-list li {
+  padding: 6px 0;
+  cursor: pointer;
+  color: #606266;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s;
+}
+.catalogue-list li:hover {
+  color: var(--el-color-primary);
 }
 </style>
