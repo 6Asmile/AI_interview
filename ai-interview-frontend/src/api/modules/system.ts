@@ -11,8 +11,8 @@ export interface AIModelItem {
   description: string;
 }
 
-// API: 获取所有可用的 AI 模型
-export const getAIModelsApi = (): Promise<AIModelItem[]> => {
+// 【核心修改】更新 getAIModelsApi 的返回类型
+export const getAIModelsApi = (): Promise<PaginatedResponse<AIModelItem>> => {
   return request({
     url: '/ai-models/',
     method: 'get',

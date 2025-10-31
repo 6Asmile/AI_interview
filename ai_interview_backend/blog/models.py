@@ -7,7 +7,8 @@ class Category(models.Model):
     name = models.CharField(max_length=50, unique=True, verbose_name="分类名称")
     slug = models.SlugField(unique=True, help_text="用于URL的唯一标识, 建议使用英文或拼音")
     description = models.TextField(blank=True, verbose_name="分类描述")
-
+    # 【核心新增】添加默认排序
+    ordering = ['name']
     class Meta:
         verbose_name = "文章分类"
         verbose_name_plural = verbose_name
@@ -19,7 +20,8 @@ class Category(models.Model):
 class Tag(models.Model):
     name = models.CharField(max_length=50, unique=True, verbose_name="标签名称")
     slug = models.SlugField(unique=True, help_text="用于URL的唯一标识, 建议使用英文或拼音")
-
+    # 【核心新增】添加默认排序
+    ordering = ['name']
     class Meta:
         verbose_name = "文章标签"
         verbose_name_plural = verbose_name
