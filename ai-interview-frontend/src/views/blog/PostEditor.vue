@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed, reactive } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { 
   ElMessage, ElInput, ElForm, ElFormItem, ElButton, ElSelect, ElOption, ElUpload, 
-  ElIcon, ElContainer, ElHeader, ElAside, ElMain, ElCard, ElRow, ElCol, ElEmpty
+  ElIcon, ElContainer, ElHeader, ElAside, ElMain, ElCard, ElRow, ElCol, ElEmpty, ElCollapseTransition
 } from 'element-plus';
 import { ArrowLeft, ArrowRight, Plus, MagicStick, Files, Operation, CaretTop, CaretBottom } from '@element-plus/icons-vue';
 import type { UploadRequestOptions } from 'element-plus';
@@ -16,12 +16,10 @@ import MarkdownEditor from '@/components/common/MarkdownEditor.vue';
 import { useEditorStore } from '@/store/modules/editor';
 import { useSystemStore } from '@/store/modules/system';
 
-// 【核心新增】定义大纲条目的类型
-interface TocItem {
+interface CatalogItem {
   text: string;
   level: number;
-  lineIndex: number;
-  indent: number;
+  id: string; // 注意：md-editor-v3 生成的 id 是标题的文本内容
 }
 
 const route = useRoute();
@@ -47,9 +45,28 @@ const categories = ref<Category[]>([]);
 const tags = ref<Tag[]>([]);
 const isLoading = ref(true);
 const isSettingsCollapsed = ref(false);
-const catalogue = ref<TocItem[]>([]); // 【核心新增】用于存储大纲数据
+const catalog = ref<CatalogItem[]>([]);
 
 const wordCount = computed(() => postData.content?.length || 0);
+
+// 【核心修复】修正事件名称并正确接收
+const onGetCatalog = (list: CatalogItem[]) => {
+  catalog.value = list;
+};
+
+// 【核心修复】修正滚动逻辑
+const handleAnchorClick = (anchor: CatalogItem) => {
+  const preview = document.querySelector('.md-editor-preview-wrapper');
+  if (preview) {
+    const heading = preview.querySelector(`[id="${anchor.text}"]`) as HTMLElement;
+    if (heading) {
+      preview.scrollTo({
+        top: heading.offsetTop,
+        behavior: 'smooth',
+      });
+    }
+  }
+};
 
 const fetchData = async () => {
   isLoading.value = true;
@@ -97,8 +114,9 @@ const customHttpRequest = (options: UploadRequestOptions): Promise<void> => {
 
 const handleSave = async (status: 'draft' | 'published') => {
   postData.status = status;
+  let newPostId: number | null = null;
+  
   try {
-    let newPostId: number | null = null;
     if (isNewPost.value) {
       const newPost = await createPostApi(postData);
       newPostId = newPost.id;
@@ -106,28 +124,16 @@ const handleSave = async (status: 'draft' | 'published') => {
       await updatePostApi(postId.value!, postData);
       newPostId = postId.value;
     }
-    ElMessage.success(status === 'draft' ? '草稿已保存' : '文章已发布');
-    if (newPostId) {
-      router.push({ name: 'PostDetail', params: { id: newPostId } });
-    } else {
-      router.push({ name: 'BlogHome' });
-    }
   } catch (error) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败，请检查网络或联系管理员');
+    return;
   }
-};
 
-// 【核心新增】接收编辑器传递出来的大纲数据
-const handleGetCatalogue = (toc: TocItem[]) => {
-  catalogue.value = toc;
-};
-
-// 【核心新增】处理大纲点击事件
-const handleAnchorClick = (item: TocItem) => {
-  // `v-md-editor` 会在预览区的标题上自动生成 id, 格式为 `line-数字`
-  const heading = document.querySelector(`#line-${item.lineIndex}`);
-  if (heading) {
-    heading.scrollIntoView({ behavior: 'smooth' });
+  ElMessage.success(status === 'draft' ? '草稿已保存' : '文章已发布');
+  if (newPostId) {
+    router.push({ name: 'PostDetail', params: { id: newPostId } });
+  } else {
+    router.push({ name: 'BlogHome' });
   }
 };
 </script>
@@ -150,18 +156,17 @@ const handleAnchorClick = (item: TocItem) => {
         <el-aside width="240px" class="left-aside">
           <div class="sidebar-content">
             <h4>大纲</h4>
-            <!-- 【核心新增】渲染大纲列表 -->
-            <ul v-if="catalogue.length" class="catalogue-list">
-              <li
-                v-for="item in catalogue"
-                :key="item.lineIndex"
-                :class="`level-${item.level}`"
-                :style="{ paddingLeft: `${(item.level - 1) * 16}px` }"
-                @click="handleAnchorClick(item)"
+            <div v-if="catalog.length > 0" class="outline-list">
+              <div
+                v-for="anchor in catalog"
+                :key="anchor.text"
+                :style="{ paddingLeft: `${(anchor.level - 1) * 15}px` }"
+                class="outline-item"
+                @click="handleAnchorClick(anchor)"
               >
-                {{ item.text }}
-              </li>
-            </ul>
+                <a>{{ anchor.text }}</a>
+              </div>
+            </div>
             <el-empty v-else description="暂无大纲" :image-size="80" />
           </div>
         </el-aside>
@@ -172,8 +177,7 @@ const handleAnchorClick = (item: TocItem) => {
 
         <el-main class="main-content">
           <div class="editor-area">
-            <!-- 【核心新增】监听 @get-catalogue 事件 -->
-            <MarkdownEditor v-model="postData.content" @get-catalogue="handleGetCatalogue" />
+            <MarkdownEditor v-model="postData.content" @onGetCatalog="onGetCatalog" />
           </div>
           
           <el-card class="publish-settings-card">
@@ -343,7 +347,7 @@ const handleAnchorClick = (item: TocItem) => {
   min-height: 80vh;
   display: flex;
 }
-:deep(.v-md-editor) {
+.editor-area > :deep(.v-md-editor) {
   flex-grow: 1 !important;
   box-shadow: none !important;
 }
@@ -364,7 +368,28 @@ const handleAnchorClick = (item: TocItem) => {
   width: 100%; 
 }
 
-/* Collapsed Styles */
+.outline-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.outline-item {
+  padding: 6px 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.outline-item a {
+  font-size: 0.9rem;
+  color: #606266;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.outline-item:hover a {
+  color: var(--el-color-primary);
+}
+
 .left-collapsed .left-aside { 
   margin-left: -240px; 
 }
@@ -422,25 +447,5 @@ const handleAnchorClick = (item: TocItem) => {
   font-size: 0.8rem; 
   color: #909399; 
   margin: 0 0 16px; 
-}
-
-/* --- 核心新增：大纲样式 --- */
-.catalogue-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  font-size: 0.9rem;
-}
-.catalogue-list li {
-  padding: 6px 0;
-  cursor: pointer;
-  color: #606266;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.2s;
-}
-.catalogue-list li:hover {
-  color: var(--el-color-primary);
 }
 </style>

@@ -3,12 +3,13 @@
     v-model="text"
     :theme="theme"
     @onUploadImg="handleUploadImage"
+    @onGetCatalog="emit('onGetCatalog', $event)"
     style="height: 100%; border: none;"
   />
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch } from 'vue';
 import { MdEditor } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { ElMessage } from 'element-plus';
@@ -21,10 +22,11 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['update:modelValue']);
+// 【核心修正】在 emits 中声明 onGetCatalog 事件
+const emit = defineEmits(['update:modelValue', 'onGetCatalog']);
 
 const text = ref(props.modelValue);
-const theme = ref<'light' | 'dark'>('light'); // 简单实现一个主题，可以后续扩展
+const theme = ref<'light' | 'dark'>('light');
 
 watch(() => props.modelValue, (newValue) => {
   if (newValue !== text.value) {
@@ -41,7 +43,7 @@ const handleUploadImage = async (files: File[], callback: (urls: string[]) => vo
   
   const uploadPromises = files.map(async (file) => {
     const formData = new FormData();
-    formData.append('avatar', file); // 复用上传接口
+    formData.append('avatar', file);
     try {
       const res = await uploadAvatarApi(formData);
       return res.avatar_url;
