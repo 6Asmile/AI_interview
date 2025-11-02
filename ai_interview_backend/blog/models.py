@@ -119,3 +119,16 @@ class Comment(models.Model):
         author_name = getattr(self.author, 'username', '未知用户')
         post_title = getattr(self.post, 'title', '未知文章')
         return f"{author_name} 对《{post_title}》的评论"
+
+
+# 【核心新增】每日数据快照模型
+class DailyPostStats(models.Model):
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='daily_stats')
+    date = models.DateField(db_index=True, verbose_name="日期")
+    views = models.PositiveIntegerField(default=0, verbose_name="当日浏览量")
+    likes = models.PositiveIntegerField(default=0, verbose_name="当日点赞量")
+
+    class Meta:
+        verbose_name = "文章每日统计"
+        verbose_name_plural = verbose_name
+        unique_together = ('post', 'date')  # 确保每篇文章每天只有一条记录

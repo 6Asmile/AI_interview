@@ -1,19 +1,22 @@
-from rest_framework import viewsets, permissions, generics, status  # <-- 新增 generics
+from datetime import timedelta
+from django.utils import timezone
+from django.db.models import F, Q, Sum
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from django.utils import timezone # 【核心新增】导入 timezone 模块
-from django.db.models import F, Q
-from .models import Post, Category, Tag, Comment
+from rest_framework.request import Request  # 导入 Request 类型
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import OrderingFilter
+
+from interactions.models import Bookmark
+from .models import Post, Category, Tag, Comment, DailyPostStats
 from .serializers import (
     PostListSerializer, PostDetailSerializer, CategorySerializer,
     TagSerializer, CommentSerializer, PostCreateUpdateSerializer,
 )
-from .permissions import IsOwnerOrReadOnly # [核心新增] 导入自定义权限类
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import OrderingFilter
-from rest_framework.decorators import action  # 确保导入 action
-from django.db.models import Sum, Count # 导入 Sum 和 Count
-from interactions.models import Bookmark # 导入 Bookmark 模型
+from .permissions import IsOwnerOrReadOnly
+
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """获取分类列表"""
@@ -21,146 +24,177 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
 
+
 class TagViewSet(viewsets.ReadOnlyModelViewSet):
     """获取标签列表"""
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
     permission_classes = [permissions.AllowAny]
 
-# [核心修改] 将 PostViewSet 升级为 ModelViewSet
+
 class PostViewSet(viewsets.ModelViewSet):
+    """
+    一个集成了文章列表、详情、创建、更新、删除以及自定义功能的视图集。
+    """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
-    # [核心修正] 同时支持三种解析器
     parser_classes = [MultiPartParser, FormParser, JSONParser]
-
-    # [核心修正] 配置过滤器和排序
     filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ['category__slug', 'tags__slug']  # 允许按分类slug和标签slug过滤
-    ordering_fields = ['published_at', 'view_count', 'like_count']  # 允许按这些字段排序
-    ordering = ['-published_at']  # 【推荐】为列表视图添加一个默认排序
+    filterset_fields = ['category__slug', 'tags__slug']
+    ordering_fields = ['published_at', 'view_count', 'like_count']
+    ordering = ['-published_at']
 
-    # 【核心修复】添加类型注解，告诉 IDE self.action 的存在和类型
+    # 为动态属性 action 添加类型注解以消除 IDE 警告
     action: str
 
     def get_queryset(self):
-        # 【核心修改】为 my_posts 和 my_stats action 单独处理查询集
-        if self.action in ['my_posts', 'my_stats']:
-            # 在这些 action 中，我们需要访问所有状态的文章
-            return Post.objects.select_related('author', 'category').prefetch_related('tags')
-
-        # --- 以下是处理默认 action (list, retrieve, etc.) 的逻辑 ---
+        """
+        根据不同的 action 返回不同的查询集，实现权限控制。
+        """
         queryset = Post.objects.select_related('author', 'category').prefetch_related('tags')
 
-        # 公开的列表只显示已发布的
-        if self.action == 'list':
+        # 对于非管理员用户，进行权限过滤
+        if not self.request.user.is_staff:
+            # 一个普通登录用户，可以看到所有已发布的文章，以及他自己的所有文章（无论状态）
+            if self.request.user.is_authenticated:
+                return queryset.filter(Q(status='published') | Q(author=self.request.user)).distinct()
+            # 未登录用户，只能看到已发布的文章
             return queryset.filter(status='published')
 
-        # 详情页等允许作者查看自己的草稿
-        if self.request.user.is_authenticated:
-            return queryset.filter(Q(status='published') | Q(author=self.request.user))
+        # 管理员可以看到所有文章
+        return queryset
 
-        # 未登录用户只能看已发布的
-        return queryset.filter(status='published')
     def get_serializer_class(self):
-        if self.action == 'list':
+        """
+        根据不同的 action 返回不同的序列化器。
+        """
+        if self.action == 'list' or self.action == 'my_posts':
             return PostListSerializer
         if self.action in ['create', 'update', 'partial_update']:
             return PostCreateUpdateSerializer
         return PostDetailSerializer
 
     def retrieve(self, request, *args, **kwargs):
+        """
+        在获取单篇文章详情时，增加浏览量。
+        """
         instance = self.get_object()
+        # 只有已发布的公开文章才增加浏览量
         if instance.status == 'published':
+            # 使用 F 对象避免竞态条件
             instance.view_count = F('view_count') + 1
             instance.save(update_fields=['view_count'])
             instance.refresh_from_db()
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
 
-        # 【核心修改】重写 perform_create
-
     def perform_create(self, serializer):
-        # 如果创建时状态就是 'published'，则记录发布时间
+        """
+        在创建文章时，自动关联作者，并根据状态设置发布时间。
+        """
         if serializer.validated_data.get('status') == 'published':
             serializer.save(author=self.request.user, published_at=timezone.now())
         else:
             serializer.save(author=self.request.user)
 
-        # 【核心修改】重写 perform_update
-
     def perform_update(self, serializer):
+        """
+        在更新文章时，处理从草稿变为发布状态的逻辑。
+        """
         instance = self.get_object()
-        # 仅当文章是从非发布状态 -> 'published' 状态时，才记录发布时间
-        # 这可以防止每次编辑已发布的文章时都更新发布时间
+        # 仅当文章首次从非发布状态变为“published”时，才记录发布时间
         if not instance.published_at and serializer.validated_data.get('status') == 'published':
             serializer.save(published_at=timezone.now())
         else:
             serializer.save()
 
-            # 【核心新增】一个专门用于获取当前用户所有文章的 action
-
-    @action(detail=False, methods=['get'], url_path='my-posts')
-    def my_posts(self, request):
-            # 获取 URL 查询参数中的 status
-            status_filter = request.query_params.get('status', None)
-
-            # 从基础查询集开始，只筛选当前用户的文章
-            queryset = self.get_queryset().filter(author=request.user)
-
-            if status_filter in ['published', 'draft']:
-                queryset = queryset.filter(status=status_filter)
-
-            # 手动应用分页
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-
-            serializer = self.get_serializer(queryset, many=True)
-            return Response(serializer.data)
-
-            # 【核心修复】重写 destroy 方法以确保权限和清晰的返回
-
     def destroy(self, request, *args, **kwargs):
+        """
+        重写删除方法，确保只有作者本人能删除，并返回标准状态码。
+        """
         instance = self.get_object()
-
-        # 手动进行权限检查
         if instance.author != request.user:
             return Response(
                 {"detail": "You do not have permission to perform this action."},
                 status=status.HTTP_403_FORBIDDEN
             )
-
         self.perform_destroy(instance)
-        # 返回一个 204 No Content 状态码，这是 RESTful API 删除成功的标准实践
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # 【核心新增】一个专门用于获取当前用户文章统计数据的 action
+    @action(detail=False, methods=['get'], url_path='my-posts')
+    def my_posts(self, request: Request):
+        """
+        获取当前登录用户的所有文章，支持按状态筛选。
+        """
+        status_filter = request.query_params.get('status', None)
+
+        # 直接从 Post 模型查询，不再依赖 get_queryset，逻辑更清晰
+        queryset = Post.objects.filter(author=request.user)
+
+        if status_filter in ['published', 'draft']:
+            queryset = queryset.filter(status=status_filter)
+
+        # 手动应用分页
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['get'], url_path='my-stats')
-    def my_stats(self, request):
+    def my_stats(self, request: Request):
+        """
+        获取当前登录用户所有文章的总数据统计。
+        """
         user = request.user
-
-        # 聚合用户的文章数据
-        # 注意：这里的统计是总数，而非“今日”。实现“今日”需要更复杂的数据模型。
         post_stats = Post.objects.filter(author=user).aggregate(
             total_views=Sum('view_count'),
             total_likes=Sum('like_count'),
             total_comments=Sum('comment_count')
         )
-
-        # 统计用户的文章被收藏的总数
         total_bookmarks = Bookmark.objects.filter(post__author=user).count()
 
-        # 构造返回数据
         stats_data = {
             "total_views": post_stats.get('total_views') or 0,
             "total_likes": post_stats.get('total_likes') or 0,
             "total_comments": post_stats.get('total_comments') or 0,
             "total_bookmarks": total_bookmarks
         }
-
         return Response(stats_data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='my-daily-stats')
+    def my_daily_stats(self, request: Request):
+        """
+        获取当前登录用户文章在过去N天的每日数据趋势。
+        """
+        user = request.user
+        try:
+            days = int(request.query_params.get('days', 7))
+        except (ValueError, TypeError):
+            days = 7
+
+        today = timezone.now().date()
+        start_date = today - timedelta(days=days - 1)
+        dates = [start_date + timedelta(days=i) for i in range(days)]
+
+        stats = DailyPostStats.objects.filter(
+            post__author=user,
+            date__range=[start_date, today]
+        ).values('date').annotate(
+            daily_views=Sum('views'),
+            daily_likes=Sum('likes')
+        ).order_by('date')
+
+        stats_map = {item['date']: item for item in stats}
+
+        result = {
+            "labels": [d.strftime('%m-%d') for d in dates],
+            "views": [stats_map.get(d, {}).get('daily_views', 0) for d in dates],
+            "likes": [stats_map.get(d, {}).get('daily_likes', 0) for d in dates],
+        }
+        return Response(result)
+
 
 class CommentViewSet(viewsets.ModelViewSet):
     """

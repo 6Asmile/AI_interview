@@ -326,6 +326,10 @@ CELERY_BEAT_SCHEDULE = {
         # 'schedule': crontab(minute='*/30'), # 每30分钟执行一次
         'schedule': 900, # 为简单起见，我们也可以设置为每 900秒执行一次
     },
+    'record-daily-post-stats-nightly': {
+        'task': 'blog.tasks.record_daily_stats',
+        'schedule': crontab(hour=23, minute=50),  # 每天晚上 23:50 执行
+    },
 }
 #celery -A ai_interview_backend worker -l info -P gevent
 # celery -A ai_interview_backend beat -l info
