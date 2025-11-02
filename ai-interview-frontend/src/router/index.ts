@@ -93,6 +93,13 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@/views/blog/BlogHome.vue'),
         props: true // <-- 关键：将 URL 参数 (tagSlug) 作为 props 传递给组件
       },
+      // 【核心新增】
+      {
+        path: 'my-posts',
+        name: 'MyPosts',
+        component: () => import('@/views/blog/MyPosts.vue'),
+        meta: { requiresAuth: true }
+      },
     ],
   },
 ];

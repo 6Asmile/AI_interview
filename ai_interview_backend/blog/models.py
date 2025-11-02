@@ -1,3 +1,5 @@
+# ai-interview-backend/blog/models.py
+
 from django.db import models
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericRelation
@@ -7,11 +9,11 @@ class Category(models.Model):
     name = models.CharField(max_length=50, unique=True, verbose_name="分类名称")
     slug = models.SlugField(unique=True, help_text="用于URL的唯一标识, 建议使用英文或拼音")
     description = models.TextField(blank=True, verbose_name="分类描述")
-    # 【核心新增】添加默认排序
-    ordering = ['name']
+
     class Meta:
         verbose_name = "文章分类"
         verbose_name_plural = verbose_name
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -20,11 +22,11 @@ class Category(models.Model):
 class Tag(models.Model):
     name = models.CharField(max_length=50, unique=True, verbose_name="标签名称")
     slug = models.SlugField(unique=True, help_text="用于URL的唯一标识, 建议使用英文或拼音")
-    # 【核心新增】添加默认排序
-    ordering = ['name']
+
     class Meta:
         verbose_name = "文章标签"
         verbose_name_plural = verbose_name
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -63,7 +65,14 @@ class Post(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     published_at = models.DateTimeField(blank=True, null=True, verbose_name="预定发布时间", db_index=True)
 
-    notifications = GenericRelation('notifications.Notification', related_query_name='post')
+    # 【核心修复】明确指定 content_type_field 和 object_id_field
+    # 当 Post 是通知的 'target' (目标对象) 时
+    notifications = GenericRelation(
+        'notifications.Notification',
+        content_type_field='target_content_type',
+        object_id_field='target_object_id',
+        related_query_name='post'
+    )
 
     class Meta:
         verbose_name = "文章"
@@ -86,7 +95,20 @@ class Comment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    notifications = GenericRelation('notifications.Notification', related_query_name='comment')
+    # 【核心修复】明确指定 content_type_field 和 object_id_field
+    # 当 Comment 是通知的 'target' 或 'action_object' 时
+    notifications_as_target = GenericRelation(
+        'notifications.Notification',
+        content_type_field='target_content_type',
+        object_id_field='target_object_id',
+        related_query_name='comment'
+    )
+    notifications_as_action_object = GenericRelation(
+        'notifications.Notification',
+        content_type_field='action_object_content_type',
+        object_id_field='action_object_object_id',
+        related_query_name='comment_action'
+    )
 
     class Meta:
         verbose_name = "评论"

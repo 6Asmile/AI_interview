@@ -54,3 +54,22 @@ export const getPostCommentsApi = (postId: number): Promise<CommentItem[]> => re
 export const createCommentApi = (postId: number, data: { content: string; parent?: number | null }): Promise<CommentItem> => request({ url: `/posts/${postId}/comments/`, method: 'post', data });
 export const getCategoryListApi = (): Promise<PaginatedResponse<Category>> => request({ url: '/categories/', method: 'get' });
 export const getTagListApi = (): Promise<PaginatedResponse<Tag>> => request({ url: '/tags/', method: 'get' });
+// 【核心修正】修正 URL 路径
+export const getMyPostsApi = (params?: any): Promise<PaginatedResponse<PostListItem>> => { 
+  return request({ url: '/posts/my-posts/', method: 'get', params }); // my_posts -> my-posts
+};
+    
+    // 【核心新增】删除文章的API
+export const deletePostApi = (id: number) => {
+      return request({ url: `/posts/${id}/`, method: 'delete' });
+    };
+
+// 【核心新增】获取我的文章统计数据
+export const getMyPostStatsApi = (): Promise<{
+  total_views: number;
+  total_likes: number;
+  total_comments: number;
+  total_bookmarks: number;
+}> => {
+  return request({ url: '/posts/my-stats/', method: 'get' });
+};

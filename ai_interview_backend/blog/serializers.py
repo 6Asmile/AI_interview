@@ -62,26 +62,23 @@ class PostDetailSerializer(PostListSerializer):
 # 用于创建和更新文章的序列化器
 # 【核心修改】创建/更新文章的序列化器
 class PostCreateUpdateSerializer(serializers.ModelSerializer):
-    # 【核心修改】这两个字段现在只在写入时使用，并期望接收主键 (ID)
     category = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
         required=False,
-        allow_null=True,
-        # source='category' # 默认就是 category，可以不写
+        allow_null=True
     )
     tags = serializers.PrimaryKeyRelatedField(
         queryset=Tag.objects.all(),
         many=True,
-        required=False,
-        # source='tags'
+        required=False
     )
 
     class Meta:
         model = Post
-        # 在 fields 中包含 'category' 和 'tags' 以便写入
         fields = [
             'title', 'content', 'status', 'excerpt', 'category', 'tags',
-            'cover_image', 'published_at'
+            'cover_image'
+            # 移除 'published_at'，使其不能被直接写入
         ]
-        # author 等字段是只读的，在 perform_create 中自动设置
-        read_only_fields = ['author', 'word_count', 'read_time']
+        # 【核心新增】将 published_at 添加到 read_only_fields
+        read_only_fields = ['author', 'word_count', 'read_time', 'published_at']

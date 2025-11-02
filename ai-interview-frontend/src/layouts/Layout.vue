@@ -33,6 +33,9 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item @click="() => router.push('/dashboard/profile')">个人中心</el-dropdown-item>
+              <el-dropdown-item>
+                <router-link to="/dashboard/my-posts" class="dropdown-link">我的文章</router-link>
+              </el-dropdown-item>
               <el-dropdown-item @click="() => router.push('/dashboard/settings')">AI 设置</el-dropdown-item>
               <el-dropdown-item divided @click="authStore.logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
