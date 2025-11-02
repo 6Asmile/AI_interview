@@ -5,7 +5,8 @@ import {
   ElMessage, ElInput, ElForm, ElFormItem, ElButton, ElSelect, ElOption, ElUpload, 
   ElIcon, ElContainer, ElHeader, ElAside, ElMain, ElCard, ElRow, ElCol, ElEmpty, ElCollapseTransition
 } from 'element-plus';
-import { ArrowLeft, ArrowRight, Plus, MagicStick, Files, Operation, CaretTop, CaretBottom } from '@element-plus/icons-vue';
+// 【核心修正】移除未使用的 Files 和 Operation
+import { ArrowLeft, ArrowRight, Plus, MagicStick, CaretTop, CaretBottom } from '@element-plus/icons-vue';
 import type { UploadRequestOptions } from 'element-plus';
 import { 
   getPostDetailApi, createPostApi, updatePostApi, 

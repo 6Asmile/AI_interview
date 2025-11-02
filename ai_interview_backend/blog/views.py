@@ -92,3 +92,4 @@ class CommentViewSet(viewsets.ModelViewSet):
         # 创建评论时，自动关联当前登录用户和文章
         post_pk = self.kwargs.get('post_pk')
         serializer.save(author=self.request.user, post_id=post_pk)
+
