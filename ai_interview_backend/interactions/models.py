@@ -33,3 +33,4 @@ class Follow(models.Model):
         unique_together = ('follower', 'followed')
         verbose_name = "关注关系"
         verbose_name_plural = verbose_name
+

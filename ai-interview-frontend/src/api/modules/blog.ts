@@ -6,7 +6,15 @@ export interface Author { id: number; username: string; avatar: string | null; }
 export interface Category { id: number; name: string; slug: string; }
 export interface Tag { id: number; name: string; slug: string; }
 export interface PostListItem { id: number; title: string; author: Author; cover_image: string | null; excerpt: string; category: Category | null; tags: Tag[]; view_count: number; like_count: number; comment_count: number; published_at: string; status: 'draft' | 'published' | 'private'; }
-export interface PostDetail extends PostListItem { content: string; word_count: number; read_time: number; }
+// 【核心修复】在 PostDetail 接口中添加新的属性
+export interface PostDetail extends PostListItem { 
+  content: string; 
+  word_count: number; 
+  read_time: number;
+  is_liked: boolean;
+  is_bookmarked: boolean;
+  is_author_followed: boolean;
+}
 
 // PostFormData 用于创建和更新文章时发送给 API 的数据结构
 export interface PostFormData {

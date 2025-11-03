@@ -1,4 +1,6 @@
 from rest_framework import serializers
+
+from interactions.models import Like, Bookmark, Follow
 from .models import Post, Category, Tag, Comment
 from users.models import User
 
@@ -57,9 +59,35 @@ class PostListSerializer(serializers.ModelSerializer):
 
 # 用于文章详情的完整版序列化器
 class PostDetailSerializer(PostListSerializer):
-    class Meta(PostListSerializer.Meta):
-        fields = PostListSerializer.Meta.fields + ['content', 'word_count', 'read_time']
+    # 【核心新增】添加三个 SerializerMethodField 来动态计算状态
+    is_liked = serializers.SerializerMethodField()
+    is_bookmarked = serializers.SerializerMethodField()
+    is_author_followed = serializers.SerializerMethodField()
 
+    class Meta(PostListSerializer.Meta):
+        # 【核心新增】将新字段添加到 fields 列表
+        fields = PostListSerializer.Meta.fields + [
+            'content', 'word_count', 'read_time',
+            'is_liked', 'is_bookmarked', 'is_author_followed'
+        ]
+
+    def get_is_liked(self, obj):
+        user = self.context['request'].user
+        if user.is_authenticated:
+            return Like.objects.filter(post=obj, user=user).exists()
+        return False
+
+    def get_is_bookmarked(self, obj):
+        user = self.context['request'].user
+        if user.is_authenticated:
+            return Bookmark.objects.filter(post=obj, user=user).exists()
+        return False
+
+    def get_is_author_followed(self, obj):
+        user = self.context['request'].user
+        if user.is_authenticated and user != obj.author:
+            return Follow.objects.filter(follower=user, followed=obj.author).exists()
+        return False
 
 # 用于创建和更新文章的序列化器
 # 【核心修改】创建/更新文章的序列化器

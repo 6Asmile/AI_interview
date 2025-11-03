@@ -1,0 +1,15 @@
+Django
+djangorestframework
+django-cors-headers
+mysqlclient
+celery
+redis
+django-redis
+python-dotenv
+openai
+pypdf
+python-docx
+djangorestframework-simplejwt
+dj-rest-auth
+django-allauth
+drf-nested-routers

@@ -302,8 +302,11 @@ REST_AUTH = {
 
 # --- CELERY SETTINGS ---
 # 指定消息中间件(Broker)的地址，我们使用 Redis 的 2 号数据库
-# 避免与缓存使用的 1 号数据库冲突
-CELERY_BROKER_URL = 'redis://127.0.0.1:6379/2'
+# # 避免与缓存使用的 1 号数据库冲突
+# CELERY_BROKER_URL = 'redis://127.0.0.1:6379/2'
+# 添加 RabbitMQ 的配置
+# amqp://guest:guest@localhost:5672// 是 RabbitMQ 的默认连接地址
+CELERY_BROKER_URL = 'amqp://guest:guest@localhost:5672//'
 # 指定结果后端(Result Backend)的地址，用于存储任务执行结果
 CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/2'
 # 接受的内容类型

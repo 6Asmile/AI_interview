@@ -5,11 +5,10 @@ import {
   ElMessage, ElSkeleton, ElRow, ElCol, ElCard, ElAvatar, 
   ElButton, ElTag, ElIcon 
 } from 'element-plus';
-import { Calendar, Timer } from '@element-plus/icons-vue';
+import { Calendar, Timer, Pointer, Star, ChatDotRound } from '@element-plus/icons-vue';
 import { getPostDetailApi, type PostDetail } from '@/api/modules/blog';
+import { toggleLikeApi, toggleBookmarkApi, toggleFollowApi } from '@/api/modules/interactions';
 import { formatDateTime } from '@/utils/format';
-
-// 【核心修正】从 md-editor-v3 导入预览和目录组件
 import { MdPreview, MdCatalog } from 'md-editor-v3';
 import 'md-editor-v3/lib/preview.css';
 
@@ -18,13 +17,23 @@ const postId = computed(() => Number(route.params.id));
 
 const post = ref<PostDetail | null>(null);
 const isLoading = ref(true);
-const editorId = 'post-detail-preview'; // 给预览组件一个唯一的ID
+const editorId = 'post-detail-preview';
+
+// 响应式状态，用于控制按钮的激活状态
+const isLiked = ref(false);
+const isBookmarked = ref(false);
+const isAuthorFollowed = ref(false);
 
 const fetchData = async () => {
   if (!postId.value) return;
   isLoading.value = true;
   try {
-    post.value = await getPostDetailApi(postId.value);
+    const postData = await getPostDetailApi(postId.value);
+    post.value = postData;
+    // 用 API 返回的数据初始化状态
+    isLiked.value = postData.is_liked;
+    isBookmarked.value = postData.is_bookmarked;
+    isAuthorFollowed.value = postData.is_author_followed;
   } catch (error) {
     ElMessage.error('文章加载失败');
   } finally {
@@ -33,11 +42,39 @@ const fetchData = async () => {
 };
 
 onMounted(fetchData);
+
+// 处理交互的函数
+const handleLike = async () => {
+  if (!post.value) return;
+  try {
+    await toggleLikeApi(post.value.id);
+    isLiked.value = !isLiked.value;
+    // 乐观更新点赞数
+    post.value.like_count += isLiked.value ? 1 : -1;
+  } catch { ElMessage.error('操作失败，请先登录'); }
+};
+
+const handleBookmark = async () => {
+  if (!post.value) return;
+  try {
+    await toggleBookmarkApi(post.value.id);
+    isBookmarked.value = !isBookmarked.value;
+    ElMessage.success(isBookmarked.value ? '收藏成功' : '已取消收藏');
+  } catch { ElMessage.error('操作失败，请先登录'); }
+};
+
+const handleFollow = async () => {
+  if (!post.value?.author) return;
+  try {
+    await toggleFollowApi(post.value.author.id);
+    isAuthorFollowed.value = !isAuthorFollowed.value;
+  } catch { ElMessage.error('操作失败，请先登录'); }
+};
 </script>
 
 <template>
   <div class="post-detail-container">
-    <el-row :gutter="20">
+    <el-row :gutter="30">
       <!-- 主内容区 -->
       <el-col :xs="24" :sm="24" :md="18">
         <el-card v-if="isLoading" shadow="never" class="main-card">
@@ -61,7 +98,6 @@ onMounted(fetchData);
           </template>
           
           <div class="post-content">
-            <!-- 【核心修正】使用 MdPreview 组件渲染文章内容 -->
             <MdPreview :editorId="editorId" :modelValue="post.content" />
           </div>
 
@@ -84,7 +120,14 @@ onMounted(fetchData);
              <div class="author-card">
                 <el-avatar :size="50" :src="post.author.avatar || ''" />
                 <span class="author-name-sidebar">{{ post.author.username }}</span>
-                <el-button type="primary" plain size="small">关注</el-button>
+                <el-button 
+                  :type="isAuthorFollowed ? 'primary' : 'default'" 
+                  :plain="!isAuthorFollowed"
+                  size="small"
+                  @click="handleFollow"
+                >
+                  {{ isAuthorFollowed ? '已关注' : '关注' }}
+                </el-button>
              </div>
           </el-card>
 
@@ -93,17 +136,155 @@ onMounted(fetchData);
               <strong>文章大纲</strong>
             </template>
             <div class="catalog-wrapper">
-              <!-- 【核心修正】使用 MdCatalog 组件，并通过 editorId 与预览组件关联 -->
               <MdCatalog :editorId="editorId" :scrollElement="'.el-main'" />
             </div>
           </el-card>
         </div>
       </el-col>
     </el-row>
+
+    <!-- 悬浮操作栏 -->
+    <div class="action-bar" v-if="post">
+      <div class="action-item" @click="handleLike">
+        <el-button :type="isLiked ? 'primary' : 'default'" circle size="large">
+          <el-icon size="24"><Pointer /></el-icon>
+        </el-button>
+        <span class="count">{{ post.like_count }}</span>
+      </div>
+      <div class="action-item">
+        <el-button circle size="large">
+          <el-icon size="24"><ChatDotRound /></el-icon>
+        </el-button>
+        <span class="count">{{ post.comment_count }}</span>
+      </div>
+      <div class="action-item" @click="handleBookmark">
+        <el-button :type="isBookmarked ? 'warning' : 'default'" circle size="large">
+          <el-icon size="24"><Star /></el-icon>
+        </el-button>
+        <span class="count">收藏</span>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* 样式与上一版完全相同，无需修改 */
-.post-detail-container{padding:20px 8%;background-color:#f4f5f5}.main-card{border-radius:4px}.post-header{padding-bottom:20px;border-bottom:1px solid #e5e6eb}.post-title{font-size:2.2rem;font-weight:600;margin:0 0 24px}.author-meta{display:flex;align-items:center}.author-info{margin-left:12px}.author-name{font-weight:500;font-size:1rem}.meta-line{display:flex;align-items:center;gap:16px;margin-top:4px;font-size:.85rem;color:#909399}.meta-line span{display:inline-flex;align-items:center;gap:4px}.post-content{padding:20px 0}:deep(.md-editor-preview){font-size:16px;line-height:1.7}.post-footer{padding-top:20px}.tags-line{display:flex;flex-wrap:wrap;gap:8px}.post-tag{cursor:pointer}.sticky-sidebar{position:sticky;top:20px}.sidebar-card{margin-bottom:20px;border-radius:4px}.author-card{display:flex;flex-direction:column;align-items:center;gap:10px}.author-name-sidebar{font-weight:600}.catalog-wrapper{max-height:60vh;overflow-y:auto}
+.post-detail-container {
+  padding: 20px 8%;
+  background-color: #f4f5f5;
+  position: relative; /* 为悬浮操作栏定位 */
+}
+
+.main-card {
+  border-radius: 4px;
+}
+
+.post-header {
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e6eb;
+}
+
+.post-title {
+  font-size: 2.2rem;
+  font-weight: 600;
+  margin: 0 0 24px;
+}
+
+.author-meta {
+  display: flex;
+  align-items: center;
+}
+
+.author-info {
+  margin-left: 12px;
+}
+
+.author-name {
+  font-weight: 500;
+  font-size: 1rem;
+}
+
+.meta-line {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+  font-size: 0.85rem;
+  color: #909399;
+}
+
+.meta-line span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.post-content {
+  padding: 20px 0;
+}
+
+:deep(.md-editor-preview) {
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.post-footer {
+  padding-top: 20px;
+}
+.tags-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.post-tag {
+  cursor: pointer;
+}
+
+.sticky-sidebar {
+  position: sticky;
+  top: 80px; /* 适配顶部导航栏高度 */
+}
+.sidebar-card {
+  margin-bottom: 20px;
+  border-radius: 4px;
+}
+.author-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.author-name-sidebar {
+  font-weight: 600;
+}
+.catalog-wrapper {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+/* 优化大纲样式 */
+:deep(.md-editor-catalog-link span) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-bar {
+  position: fixed;
+  top: 200px;
+  /* 动态计算位置，使其在主内容区左侧 */
+  left: max(20px, calc((100vw - 1200px) / 2 - 80px)); 
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.action-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+}
+.action-item .count {
+  font-size: 13px;
+  color: #909399;
+  margin-top: 6px;
+}
 </style>
