@@ -89,7 +89,14 @@ const handleFollow = async () => {
                 <div class="author-info">
                   <span class="author-name">{{ post.author.username }}</span>
                   <div class="meta-line">
-                    <span><el-icon><Calendar /></el-icon> 发布于 {{ formatDateTime(post.published_at, 'YYYY-MM-DD') }}</span>
+                   <!-- 【核心优化】只有当 published_at 存在时，才显示发布时间 -->
+                    <span v-if="post.published_at">
+                      <el-icon><Calendar /></el-icon> 发布于 {{ formatDateTime(post.published_at, 'YYYY-MM-DD') }}
+                    </span>
+                    <!-- 也可以显示更新时间作为替代 -->
+                    <span v-else>
+                      <el-icon><EditPen /></el-icon> 更新于 {{ formatDateTime(post.updated_at, 'YYYY-MM-DD') }}
+                    </span>
                     <span><el-icon><Timer /></el-icon> 阅读约 {{ post.read_time }} 分钟</span>
                   </div>
                 </div>
