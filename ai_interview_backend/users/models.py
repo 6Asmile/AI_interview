@@ -45,6 +45,8 @@ class User(AbstractUser):
     # 我们使用 date_joined 作为 created_at，并添加一个 updated_at 字段
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
+
+
     # 指定使用 email 字段作为用户名字段进行认证
     USERNAME_FIELD = 'email'
     # 创建超级用户时需要填写的字段，移除 username

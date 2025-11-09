@@ -1,211 +1,254 @@
+# iFaceOff - 您的 AI 求职赋能平台
 
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Repo-blue?logo=github)](https://github.com/6Asmile/AI_interview.git)
 
-# iFaceOff - AI 模拟面试平台
+**还在为简历石沉大海而烦恼吗？面对技术面试官的深度追问，你是否感到紧张，无法完美展现自己的实力？**
 
-**iFaceOff** 是一个功能强大的全栈 AI 模拟面试平台，旨在通过先进的人工智能技术，为求职者提供一个集**练习、反馈、学习**于一体的个人求职赋能中心。
-
-![img](https://private-user-images.githubusercontent.com/167274430/502959840-3afa115b-203f-411a-95ca-df95fc5f4e87.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NjIwNzk0ODgsIm5iZiI6MTc2MjA3OTE4OCwicGF0aCI6Ii8xNjcyNzQ0MzAvNTAyOTU5ODQwLTNhZmExMTViLTIwM2YtNDExYS05NWNhLWRmOTVmYzVmNGU4Ny5wbmc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjUxMTAyJTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI1MTEwMlQxMDI2MjhaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT0yNDdmYWQ5YTdmZjMzZDNjMDFiNTQ5Y2I3Y2E3ZTViYWNmYzkwZGU5MGMzZTRkMzZkMDRjZTdjOGI1ZGY4NDEyJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCJ9.66FudoxsYw-pyEt-_mm1TQXwITiSW8MGw8S4wZUjQFA)
-
----
-
-## ✨ 核心功能
-
-*   **🤖 AI 模拟面试**: 用户可选择目标岗位，与 AI 进行多轮语音或文字面试，体验真实面试流程。
-*   **📊 实时多维度分析**: 在面试过程中，系统通过摄像头和麦克风实时分析用户的**面部情绪**和**语音语调**。
-*   **📝 深度面试报告**: 面试结束后，自动生成包含能力雷达图、情绪波动分析、关键词匹配、STAR 法则应用情况等全方位的综合评估报告。
-*   **📄 简历中心**:
-    *   强大的在线简历编辑器，支持模块化拖拽和多模板切换。
-    *   AI 简历诊断，上传简历与 JD (岗位描述) 进行匹配度分析和优化建议。
-    *   AI 一键生成简历初稿。
-*   **✍️ 内容社区 (博客)**: 一个功能完善的内容创作与分享平台，支持 Markdown、代码高亮、数学公式、Mermaid 图表和丰富的发布选项。
-*   **📈 个人文章管理**: 提供数据分析仪表盘，包含总览数据和每日数据趋势图表，帮助创作者追踪内容表现。
-
-## 🚀 技术栈
-
-本项目采用前后端分离架构。
-
-#### **前端 (ai-interview-frontend)**
-
-*   **核心框架**: Vue 3 (Composition API) + Vite
-*   **编程语言**: TypeScript
-*   **状态管理**: Pinia
-*   **路由**: Vue Router
-*   **UI 组件库**: Element Plus
-*   **Markdown 编辑器**: md-editor-v3
-*   **HTTP 请求**: Axios
-
-#### **后端 (ai-interview-backend)**
-
-*   **核心框架**: Django + Django REST Framework (DRF)
-*   **编程语言**: Python
-*   **数据库**: MySQL
-*   **异步任务队列**: Celery + Redis
-*   **缓存**: Redis
-*   **认证**: Simple JWT + Django Allauth (用于第三方登录)
-*   **AI 服务**: OpenAI SDK
+`iFaceOff` 是一个专为求职者打造的全栈 AI 模拟面试与简历优化平台。我们不仅仅是一个工具，更是一个集**练习、反馈、学习、分享**于一体的个人求职赋能中心，旨在通过 AI 技术，帮助您在求职的每一个环节都表现得无可挑剔。
 
 ---
 
-## 🔧 环境准备 (Prerequisites)
+## ✨ 功能亮点 (Core Features)
 
-在开始之前，请确保您的开发环境中已安装以下软件：
+平台围绕“**AI 模拟面试**”和“**简历中心**”两大核心，辅以强大的数据分析和内容社区，构成完整的求职闭环。
 
-*   **Node.js**: `v18.x` 或更高版本
-*   **Python**: `v3.10` 或更高版本
-*   **MySQL**: `v8.0` 或更高版本
-*   **Redis**: `v6.x` 或更高版本
-*   **Git**
+### 🤖 1. AI 模拟面试 (AI Mock Interview)
+
+*   **多岗位选择**：内置丰富的行业岗位供您选择，面试问题更具针对性。
+*   **简历追问**：支持上传您的个人简历，AI 面试官将基于您的简历内容进行深度追问。
+*   **实时交互**：通过语音识别与合成技术，实现与 AI 面试官的沉浸式对话体验。
+*   **多维度分析**：在面试过程中，通过摄像头实时捕捉您的**面部情绪**，并结合您的回答内容进行综合分析。
+*   **深度面试报告**：面试结束后，一键生成多维度分析报告，包含：
+    *   **能力雷达图**：从专业知识、沟通表达等多个维度对您进行评分。
+    *   **关键词分析**：对比您的回答与岗位 JD 的关键词匹配度。
+    *   **STAR 法则分析**：对您的行为面试题回答进行结构化分析与点评。
+    *   **情绪波动图**：以图表形式展示您在回答不同问题时的情绪变化。
+    *   **AI 参考答案**：为每个问题提供专家级的参考答案，助您复盘学习。
+
+### 📝 2. 简历中心 (Resume Center)
+
+*   **现代化在线编辑器**：无需本地软件，直接在线创建和编辑您的简历。支持模块化拖拽、多模板切换。
+*   **AI 简历诊断**：上传您的简历并粘贴目标岗位的 JD（职位描述），AI 将从**技能匹配度、项目经验量化、专业性**等多个角度为您的简历打分，并提供具体、可执行的修改建议。
+*   **AI 一键生成简历**：只需输入姓名、期望岗位、工作年限等核心信息，AI 即可为您生成一份专业、排版精美的完整简历初稿。
+*   **AI 文本润色**：在简历编辑器中，可以一键调用 AI 对您填写的工作/项目描述进行“润色”，使其更符合 STAR 法则，更具吸引力。
+
+### 社区与互动 (Community & Interaction)
+
+*   **内容社区**：一个类似 CSDN/掘金的博客平台，供用户分享面经、技术文章和求职感悟。
+*   **专业 Markdown 编辑器**：集成了代码高亮、数学公式 (KaTeX)、流程图 (Mermaid)、表情、图片粘贴/拖拽上传等所有现代化编辑功能。
+*   **互动系统**：支持对文章进行**点赞、评论、收藏**，以及**关注**您喜爱的作者。
+*   **实时消息通知**：当您的文章/评论被点赞或回复，或者您关注的作者发布了新文章时，右上角的“小铃铛”会实时亮起红点，为您推送最新动态。
 
 ---
 
-## ⚙️ 安装与启动 (Installation & Setup)
+## 🏗️ 项目结构 (Project Structure)
 
-请按照以下步骤在您的本地环境中部署和运行本项目。
+项目采用前后端分离架构。
 
-### **1. 克隆项目**
+.
+├── ai-interview-backend/         # Django 后端
+│   ├── ai_interview_backend/     # Django 项目配置
+│   ├── blog/                     # 博客应用
+│   ├── interactions/             # 互动（点赞/收藏/关注）应用
+│   ├── interviews/               # 面试核心应用
+│   ├── notifications/            # 通知应用
+│   ├── reports/                  # 报告应用
+│   ├── resumes/                  # 简历应用
+│   ├── system/                   # 系统配置（AI模型/岗位）应用
+│   ├── users/                    # 用户与认证应用
+│   ├── manage.py
+│   └── requirements.txt
+│
+└── ai-interview-frontend/        # Vue 前端
+    ├── public/
+    ├── src/
+    │   ├── api/                  # API 请求模块
+    │   ├── assets/               # 静态资源
+    │   ├── components/           # 可复用组件
+    │   ├── composables/          # Vue Composition API 工具函数
+    │   ├── layouts/              # 布局组件
+    │   ├── router/               # 路由配置
+    │   ├── store/                # Pinia 状态管理
+    │   ├── types/                # TypeScript 类型定义
+    │   ├── utils/                # 工具函数
+    │   └── views/                # 页面级组件
+    ├── index.html
+    ├── package.json
+    └── vite.config.ts
 
-```bash
-git clone https://github.com/6Asmile/AI_interview.git
-cd AI_interview
-```
 
-### **2. 后端 (ai-interview-backend) 启动步骤**
 
-1. **进入后端目录**
+## 🛠️ 技术栈 (Technology Stack)
+
+*   **前端**: `Vue 3` + `Vite` + `TypeScript` + `Pinia` + `Element Plus` + `Vue Router` + `Axios` + `ECharts` + `md-editor-v3`
+*   **后端**: `Django` + `Django REST Framework` + `MySQL` + `Redis` + `Celery` + `RabbitMQ` + `Simple JWT` + `Django Allauth`
+*   **核心 AI 服务**: `OpenAI API` (可替换为 DeepSeek, Kimi, Zhipu GLM 等任何兼容 OpenAI 接口的模型)
+*   **核心算法/库**: `face-api.js` (前端情绪识别), `Web Speech API` (前端语音识别)
+
+---
+
+## 🚀 本地部署指南 (Installation Guide)
+
+### 1. 环境准备 (Prerequisites)
+
+请确保您的本地环境中已安装以下软件：
+
+*   `Git`
+*   `Python` (3.10 或更高版本)
+*   `Node.js` (16.x 或更高版本)
+*   `MySQL` (5.7 或更高版本)
+*   `Redis`
+*   `RabbitMQ`
+
+### 2. 后端部署 (Backend Setup)
+
+1. **克隆仓库**
 
    ```bash
-   cd ai-interview-backend
+   git clone https://github.com/6Asmile/AI_interview.git
+   cd AI_interview/ai-interview-backend
    ```
 
-2. **创建并激活 Python 虚拟环境**
+2. **创建并激活虚拟环境**
 
-   * **Windows**:
-
-     ```bash
-     python -m venv .venv
-     .venv\Scripts\activate
-     ```
-
-   * **macOS / Linux**:
-
-     ```bash
-     python3 -m venv .venv
-     source .venv/bin/activate
-     ```
-
-3. **安装依赖**
-   *在后端目录下创建一个 `requirements.txt` 文件，并填入以下内容：*
-
-   ```txt
-   Django
-   djangorestframework
-   django-cors-headers
-   mysqlclient
-   celery
-   redis
-   django-redis
-   python-dotenv
-   openai
-   pypdf
-   python-docx
-   djangorestframework-simplejwt
-   dj-rest-auth
-   django-allauth
-   drf-nested-routers
+   ```bash
+   python -m venv venv
+   # Windows
+   .\venv\Scripts\activate
+   # macOS / Linux
+   source venv/bin/activate
    ```
 
-   *然后运行安装命令：*
+3. **安装 Python 依赖**
 
    ```bash
    pip install -r requirements.txt
    ```
 
 4. **配置环境变量**
-   *在 `ai-interview-backend` 目录下，创建一个 `.env` 文件，并根据您的本地环境填入以下内容：*
+
+   *   在 `ai-interview-backend` 根目录下，创建一个名为 `.env` 的文件。
+   *   将以下内容复制到 `.env` 文件中，并**填写您自己的配置信息**。
 
    ```env
-   # 数据库配置
-   DB_NAME=your_db_name
-   DB_USER=your_db_user
-   DB_PASSWORD=your_db_password
+   # .env
+   DB_NAME=ai_interview_db
+   DB_USER=root           # 您的 MySQL 用户名
+   DB_PASSWORD=your_password  # 您的 MySQL 密码
    DB_HOST=127.0.0.1
    DB_PORT=3306
    
-   # 邮箱配置 (用于发送注册验证码)
+   # --- EMAIL CONFIGURATION (用于注册验证码) ---
    EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
    EMAIL_HOST=smtp.qq.com
    EMAIL_PORT=587
-   EMAIL_HOST_USER=your_email@qq.com
-   EMAIL_HOST_PASSWORD=your_email_smtp_password # 注意：这不是邮箱密码，而是SMTP服务的授权码
    EMAIL_USE_TLS=True
+   EMAIL_HOST_USER=your_email@qq.com       # 您的 QQ 邮箱
+   EMAIL_HOST_PASSWORD=your_auth_code        # 您的16位邮箱授权码, 而不是登录密码
    
+   # --- GITHUB OAUTH (用于 GitHub 登录) ---
+   GITHUB_CLIENT_ID=your_github_client_id
+   GITHUB_CLIENT_SECRET=your_github_client_secret
    ```
 
-5. **数据库配置**
+   *   **重要**: 请先在您的 MySQL 中手动创建一个名为 `ai_interview_db` 的数据库。
 
-   * 请在您的 MySQL 中**手动创建一个数据库**，名称与 `.env` 文件中的 `DB_NAME` 一致。
+5. **数据库迁移**
 
-   * 执行数据库迁移：
+   ```bash
+   python manage.py makemigrations
+   python manage.py migrate
+   ```
 
-     ```bash
-     python manage.py makemigrations
-     python manage.py migrate
-     ```
+6. **启动后端服务** (在**第一个**终端窗口中)
 
-6. **启动后端服务**
+   ```bash
+   python manage.py runserver
+   ```
 
-   * **启动 Django 主服务** (需要一个终端):
+   服务将运行在 `http://127.0.0.1:8000`。
 
-     ```bash
-     python manage.py runserver
-     ```
+7. **启动 Celery Worker & Beat** (需要**两个新**的终端窗口)
 
-   * **启动 Celery Worker** (需要第二个终端):
+   * 确保您的 Redis 和 RabbitMQ 服务正在运行。
+
+   * 在**第二个**终端窗口中，启动 Celery Worker:
 
      ```bash
      celery -A ai_interview_backend worker -l info -P gevent
      ```
 
-   * **启动 Celery Beat (定时任务)** (需要第三个终端):
+   * 在**第三个**终端窗口中，启动 Celery Beat (用于定时任务):
 
      ```bash
      celery -A ai_interview_backend beat -l info
      ```
 
-   > ✅ 此时，您的后端服务应该已经在 `http://127.0.0.1:8000` 运行。
-
-### **3. 前端 (ai-interview-frontend) 启动步骤**
+### 3. 前端部署 (Frontend Setup)
 
 1. **进入前端目录**
 
    ```bash
+   # 在项目根目录 AI_interview/ 下
    cd ai-interview-frontend
    ```
 
-2. **安装依赖**
+2. **安装 Node.js 依赖**
 
    ```bash
    npm install
    ```
 
 3. **配置环境变量**
-   *在 `ai-interview-frontend` 目录下，创建一个 `.env.development` 文件，并填入以下内容：*
+
+   *   在 `ai-interview-frontend` 根目录下，创建一个名为 `.env.local` 的文件。
+   *   添加以下内容，指向您的后端 API 地址：
 
    ```env
-   # 后端 API 的基础 URL
+   # .env.local
    VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
    ```
 
-4. **启动前端开发服务器**
+4. **启动前端开发服务** (在**第四个**终端窗口中)
 
-   * (需要第四个终端)
+   ```bash
+   npm run dev
+   ```
 
-     ```bash
-     npm run dev
-     ```
+   服务将运行在 `http://localhost:5173` (或终端提示的其他端口)。
 
-   > ✅ 此时，您的前端应用应该已经在 `http://localhost:5173` (或终端提示的其他端口) 运行，并且可以与后端正常通信。
+现在，您可以打开浏览器访问 `http://localhost:5173`，开始使用 `iFaceOff` 平台了！
 
 ---
 
-现在，您已经成功在本地部署了 iFaceOff 平台！🎉
+## 📜 `requirements.txt`
+
+为了方便您部署，这里提供了一份完整的 `requirements.txt` 内容。您也可以在激活虚拟环境后，通过 `pip freeze > requirements.txt` 命令生成。
+
+Django==5.0.3
+djangorestframework==3.15.1
+celery==5.4.0
+redis==5.0.4
+django-redis==5.4.0
+mysqlclient==2.2.4
+python-dotenv==1.0.1
+djangorestframework-simplejwt==5.3.1
+django-allauth==0.61.1
+dj-rest-auth==5.1.0
+django-cors-headers==4.3.1
+django-filter==24.2
+pypdf==4.2.0
+python-docx==1.1.2
+gunicorn==22.0.0
+librabbitmq==2.0.0
+gevent==24.2.1
+
+---
+
+## 🤝 贡献 (Contributing)
+
+我们欢迎所有形式的贡献！如果您发现了 Bug 或有任何功能建议，请随时提交 [Issues](https://github.com/6Asmile/AI_interview/issues)。如果您想贡献代码，请 Fork 本仓库并提交 Pull Request。
+
+## 📄 许可证 (License)
+
+本项目采用 [MIT License](LICENSE) 开源。
