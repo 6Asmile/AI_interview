@@ -60,6 +60,8 @@ class Post(models.Model):
     view_count = models.PositiveIntegerField(default=0, editable=False, verbose_name="浏览量")
     like_count = models.PositiveIntegerField(default=0, editable=False, verbose_name="点赞数")
     comment_count = models.PositiveIntegerField(default=0, editable=False, verbose_name="评论数")
+    # 【核心新增】添加收藏计数字段
+    bookmark_count = models.PositiveIntegerField(default=0, editable=False, verbose_name="收藏数")
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

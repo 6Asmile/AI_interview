@@ -1,4 +1,4 @@
-<!-- src/components/blog/CommentBox.vue (重构版) -->
+<!-- src/components/blog/CommentBox.vue (终极完整版) -->
 <template>
   <div class="comment-box">
     <el-avatar :size="40" :src="authStore.avatar || ''" />
@@ -7,6 +7,7 @@
         v-model="content"
         :placeholder="placeholder"
         :toolbars="toolbars"
+        @onUploadImg="handleUploadImage"
         :preview="false"
         language="zh-CN"
         class="comment-editor"
@@ -30,8 +31,9 @@ import { MdEditor, type ToolbarNames } from 'md-editor-v3';
 import 'md-editor-v3/lib/style.css';
 import { Emoji } from '@vavt/v3-extension';
 import '@vavt/v3-extension/lib/asset/style.css';
+import { uploadFileApi } from '@/api/modules/common'; // 导入通用上传API
 
-defineProps<{
+const props = defineProps<{
   placeholder?: string;
   isSubmitting: boolean;
 }>();
@@ -41,10 +43,10 @@ const emit = defineEmits(['submit']);
 const authStore = useAuthStore();
 const content = ref('');
 
-const toolbars: ToolbarNames[] = ['bold', 'italic', 'strikeThrough', 'quote', 'link', 'codeRow'];
+const toolbars: ToolbarNames[] = ['bold', 'italic', 'strikeThrough', 'quote', 'link', 'codeRow', 'image'];
 
-const insertContent = (emoji: string) => {
-  content.value = `${content.value}${emoji}`;
+const insertContent = (val: string) => {
+  content.value += val;
 };
 
 const handleSubmit = () => {
@@ -56,11 +58,27 @@ const handleSubmit = () => {
     content.value = '';
   });
 };
+
+const handleUploadImage = async (files: File[], callback: (urls: string[]) => void) => {
+  const backendBaseUrl = import.meta.env.VITE_API_BASE_URL.replace('/api/v1', '');
+  const urls = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const res = await uploadFileApi(file, 'comment_images');
+        return `${backendBaseUrl}${res.file_url}`;
+      } catch (e) {
+        ElMessage.error('图片上传失败');
+        return '';
+      }
+    })
+  );
+  callback(urls.filter(url => url));
+};
 </script>
 
 <style scoped>
 .comment-box { display: flex; gap: 15px; }
 .editor-area { flex-grow: 1; }
 .actions { margin-top: 10px; text-align: right; }
-.comment-editor { height: 120px; }
+.comment-editor { height: 150px; }
 </style>

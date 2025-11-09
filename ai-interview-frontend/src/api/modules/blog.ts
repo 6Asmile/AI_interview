@@ -5,7 +5,21 @@ import type { PaginatedResponse } from '@/types/api';
 export interface Author { id: number; username: string; avatar: string | null; }
 export interface Category { id: number; name: string; slug: string; }
 export interface Tag { id: number; name: string; slug: string; }
-export interface PostListItem { id: number; title: string; author: Author; cover_image: string | null; excerpt: string; category: Category | null; tags: Tag[]; view_count: number; like_count: number; comment_count: number; published_at: string|null; status: 'draft' | 'published' | 'private';updated_at: string;  }
+export interface PostListItem { 
+  id: number;
+  title: string; 
+  author: Author;
+  cover_image: string | null; 
+  excerpt: string; category:Category | null;
+  tags: Tag[];
+  view_count: number;
+  like_count: number;
+  comment_count: number; 
+  published_at: string|null; 
+  status: 'draft' | 'published' | 'private';
+  updated_at: string;
+   bookmark_count: number; // <-- 添加此行
+  }
 // 【核心修复】在 PostDetail 接口中添加新的属性
 export interface PostDetail extends PostListItem { 
   content: string; 

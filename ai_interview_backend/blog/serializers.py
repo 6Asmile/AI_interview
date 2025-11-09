@@ -51,9 +51,12 @@ class PostListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'author', 'cover_image', 'excerpt',
             'category', 'tags', 'view_count', 'like_count',
-            'comment_count', 'published_at',
+            'comment_count',
+            'published_at',
+            'bookmark_count',  # 【核心新增】
             'status',  # 确保 status 字段存在
-            'updated_at' # 【核心修复】添加 updated_at 字段
+            'updated_at', # 【核心修复】添加 updated_at 字段
+
         ]
 
 

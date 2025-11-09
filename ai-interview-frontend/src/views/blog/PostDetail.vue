@@ -12,7 +12,6 @@ import { formatDateTime } from '@/utils/format';
 import { MdPreview, MdCatalog } from 'md-editor-v3';
 import 'md-editor-v3/lib/preview.css';
 
-// 导入新建的评论组件
 import CommentBox from '@/components/blog/CommentBox.vue';
 import CommentItem from '@/components/blog/CommentItem.vue';
 import { useAuthStore } from '@/store/modules/auth';
@@ -51,7 +50,6 @@ const fetchData = async () => {
 const fetchComments = async () => {
   isLoadingComments.value = true;
   try {
-    // 【核心修正】由于全局分页开启，API 返回的是分页对象
     const response = await getPostCommentsApi(postId.value);
     comments.value = response.results;
   } catch (error) {
@@ -89,6 +87,9 @@ const handleBookmark = async () => {
     await toggleBookmarkApi(post.value.id);
     isBookmarked.value = !isBookmarked.value;
     ElMessage.success(isBookmarked.value ? '收藏成功' : '已取消收藏');
+    if (post.value.bookmark_count !== undefined) {
+      post.value.bookmark_count += isBookmarked.value ? 1 : -1;
+    }
   } catch { ElMessage.error('操作失败'); }
 };
 
@@ -104,22 +105,16 @@ const handleFollow = async () => {
   } catch { ElMessage.error('操作失败'); }
 };
 
-
-
-// 【核心修复】增强发表评论的逻辑
 const handleCommentSubmit = async (content: string, clearContent: Function) => {
   isSubmittingComment.value = true;
   try {
     await createCommentApi(postId.value, { content });
     clearContent();
     ElMessage.success('评论发表成功');
-    
-    // 乐观更新评论数
     if (post.value) {
       post.value.comment_count += 1;
     }
-    
-    fetchComments(); // 重新加载评论列表
+    fetchComments();
   } catch (error) {
     ElMessage.error('评论发表失败');
   } finally {
@@ -127,21 +122,43 @@ const handleCommentSubmit = async (content: string, clearContent: Function) => {
   }
 };
 
-// 【核心新增】处理回复成功的逻辑
 const handleReplySuccess = () => {
   if (post.value) {
     post.value.comment_count += 1;
   }
-  fetchComments(); // 重新加载整个评论树
+  fetchComments();
 }
-
 </script>
 
 <template>
   <div class="post-detail-container">
-    <el-row :gutter="30">
+    <el-row :gutter="30" justify="center">
+      <!-- 【核心修复】左侧悬浮操作栏，作为一个独立的列 -->
+      <el-col :span="2" class="action-bar-col">
+        <div class="action-bar" v-if="post">
+          <div class="action-item" @click="handleLike">
+            <el-button :type="isLiked ? 'primary' : 'default'" circle size="large">
+              <el-icon size="24"><Pointer /></el-icon>
+            </el-button>
+            <span class="count">{{ post.like_count }}</span>
+          </div>
+          <div class="action-item">
+            <el-button circle size="large">
+              <el-icon size="24"><ChatDotRound /></el-icon>
+            </el-button>
+            <span class="count">{{ post.comment_count }}</span>
+          </div>
+          <div class="action-item" @click="handleBookmark">
+            <el-button :type="isBookmarked ? 'warning' : 'default'" circle size="large">
+              <el-icon size="24"><Star /></el-icon>
+            </el-button>
+            <span class="count">{{ post.bookmark_count ?? '收藏' }}</span>
+          </div>
+        </div>
+      </el-col>
+
       <!-- 主内容区 -->
-      <el-col :xs="24" :sm="24" :md="18">
+      <el-col :xs="24" :sm="24" :md="16">
         <el-card v-if="isLoading" shadow="never" class="main-card">
           <el-skeleton :rows="15" animated />
         </el-card>
@@ -179,7 +196,6 @@ const handleReplySuccess = () => {
             </template>
           </el-card>
 
-          <!-- 评论区模块 -->
           <el-card shadow="never" class="main-card comment-section">
             <h3>{{ post.comment_count }} 条评论</h3>
             <CommentBox 
@@ -235,36 +251,13 @@ const handleReplySuccess = () => {
         </div>
       </el-col>
     </el-row>
-
-    <!-- 悬浮操作栏 -->
-    <div class="action-bar" v-if="post">
-      <div class="action-item" @click="handleLike">
-        <el-button :type="isLiked ? 'primary' : 'default'" circle size="large">
-          <el-icon size="24"><Pointer /></el-icon>
-        </el-button>
-        <span class="count">{{ post.like_count }}</span>
-      </div>
-      <div class="action-item">
-        <el-button circle size="large">
-          <el-icon size="24"><ChatDotRound /></el-icon>
-        </el-button>
-        <span class="count">{{ post.comment_count }}</span>
-      </div>
-      <div class="action-item" @click="handleBookmark">
-        <el-button :type="isBookmarked ? 'warning' : 'default'" circle size="large">
-          <el-icon size="24"><Star /></el-icon>
-        </el-button>
-        <span class="count">收藏</span>
-      </div>
-    </div>
   </div>
 </template>
 
 <style scoped>
 .post-detail-container {
-  padding: 20px 8%;
+  padding: 20px 2%; /* 调整边距以适应三栏布局 */
   background-color: #f4f5f5;
-  position: relative;
 }
 
 .main-card {
@@ -299,6 +292,7 @@ const handleReplySuccess = () => {
 .meta-line {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 4px;
   font-size: 0.85rem;
@@ -350,7 +344,7 @@ const handleReplySuccess = () => {
   font-weight: 600;
 }
 .catalog-wrapper {
-  max-height: 60vh;
+  max-height: calc(100vh - 300px);
   overflow-y: auto;
 }
 :deep(.md-editor-catalog-link span) {
@@ -359,14 +353,20 @@ const handleReplySuccess = () => {
   text-overflow: ellipsis;
 }
 
+/* --- 核心修复 --- */
+.action-bar-col {
+  position: relative;
+}
 .action-bar {
-  position: fixed;
+  position: sticky;
   top: 200px;
-  left: max(20px, calc((100vw - 1200px) / 2 - 80px)); 
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 20px;
 }
+/* --- 核心修复结束 --- */
+
 .action-item {
   display: flex;
   flex-direction: column;
