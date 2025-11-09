@@ -69,7 +69,10 @@ export const getPostDetailApi = (id: number): Promise<PostDetail> => request({ u
 export const deletePostApi = (id: number) => request({ url: `/posts/${id}/`, method: 'delete' });
 
 // --- 评论、分类、标签 API ---
-export const getPostCommentsApi = (postId: number): Promise<CommentItem[]> => request({ url: `/posts/${postId}/comments/`, method: 'get' });
+// 【核心修正】更新 getPostCommentsApi 的返回类型
+export const getPostCommentsApi = (postId: number): Promise<PaginatedResponse<CommentItem>> => { 
+  return request({ url: `/posts/${postId}/comments/`, method: 'get' }); 
+};
 export const createCommentApi = (postId: number, data: { content: string; parent?: number | null }): Promise<CommentItem> => request({ url: `/posts/${postId}/comments/`, method: 'post', data });
 export const getCategoryListApi = (): Promise<PaginatedResponse<Category>> => request({ url: '/categories/', method: 'get' });
 export const getTagListApi = (): Promise<PaginatedResponse<Tag>> => request({ url: '/tags/', method: 'get' });

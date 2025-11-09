@@ -3,23 +3,31 @@ import { ref, onMounted, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { 
   ElMessage, ElSkeleton, ElRow, ElCol, ElCard, ElAvatar, 
-  ElButton, ElTag, ElIcon 
+  ElButton, ElTag, ElIcon, ElDivider, ElEmpty
 } from 'element-plus';
-import { Calendar, Timer, Pointer, Star, ChatDotRound } from '@element-plus/icons-vue';
-import { getPostDetailApi, type PostDetail } from '@/api/modules/blog';
+import { Calendar, Timer, Pointer, Star, ChatDotRound, EditPen } from '@element-plus/icons-vue';
+import { getPostDetailApi, getPostCommentsApi, createCommentApi, type PostDetail, type CommentItem as Comment } from '@/api/modules/blog';
 import { toggleLikeApi, toggleBookmarkApi, toggleFollowApi } from '@/api/modules/interactions';
 import { formatDateTime } from '@/utils/format';
 import { MdPreview, MdCatalog } from 'md-editor-v3';
 import 'md-editor-v3/lib/preview.css';
 
+// 导入新建的评论组件
+import CommentBox from '@/components/blog/CommentBox.vue';
+import CommentItem from '@/components/blog/CommentItem.vue';
+import { useAuthStore } from '@/store/modules/auth';
+
 const route = useRoute();
+const authStore = useAuthStore();
 const postId = computed(() => Number(route.params.id));
 
 const post = ref<PostDetail | null>(null);
+const comments = ref<Comment[]>([]);
 const isLoading = ref(true);
+const isLoadingComments = ref(true);
+const isSubmittingComment = ref(false);
 const editorId = 'post-detail-preview';
 
-// 响应式状态，用于控制按钮的激活状态
 const isLiked = ref(false);
 const isBookmarked = ref(false);
 const isAuthorFollowed = ref(false);
@@ -30,7 +38,6 @@ const fetchData = async () => {
   try {
     const postData = await getPostDetailApi(postId.value);
     post.value = postData;
-    // 用 API 返回的数据初始化状态
     isLiked.value = postData.is_liked;
     isBookmarked.value = postData.is_bookmarked;
     isAuthorFollowed.value = postData.is_author_followed;
@@ -41,35 +48,93 @@ const fetchData = async () => {
   }
 };
 
-onMounted(fetchData);
+const fetchComments = async () => {
+  isLoadingComments.value = true;
+  try {
+    // 【核心修正】由于全局分页开启，API 返回的是分页对象
+    const response = await getPostCommentsApi(postId.value);
+    comments.value = response.results;
+  } catch (error) {
+    ElMessage.error('评论加载失败');
+  } finally {
+    isLoadingComments.value = false;
+  }
+};
 
-// 处理交互的函数
+onMounted(() => {
+  fetchData();
+  fetchComments();
+});
+
 const handleLike = async () => {
+  if (!authStore.isAuthenticated) {
+    ElMessage.warning('请先登录');
+    return;
+  }
   if (!post.value) return;
   try {
     await toggleLikeApi(post.value.id);
     isLiked.value = !isLiked.value;
-    // 乐观更新点赞数
     post.value.like_count += isLiked.value ? 1 : -1;
-  } catch { ElMessage.error('操作失败，请先登录'); }
+  } catch { ElMessage.error('操作失败'); }
 };
 
 const handleBookmark = async () => {
+  if (!authStore.isAuthenticated) {
+    ElMessage.warning('请先登录');
+    return;
+  }
   if (!post.value) return;
   try {
     await toggleBookmarkApi(post.value.id);
     isBookmarked.value = !isBookmarked.value;
     ElMessage.success(isBookmarked.value ? '收藏成功' : '已取消收藏');
-  } catch { ElMessage.error('操作失败，请先登录'); }
+  } catch { ElMessage.error('操作失败'); }
 };
 
 const handleFollow = async () => {
+  if (!authStore.isAuthenticated) {
+    ElMessage.warning('请先登录');
+    return;
+  }
   if (!post.value?.author) return;
   try {
     await toggleFollowApi(post.value.author.id);
     isAuthorFollowed.value = !isAuthorFollowed.value;
-  } catch { ElMessage.error('操作失败，请先登录'); }
+  } catch { ElMessage.error('操作失败'); }
 };
+
+
+
+// 【核心修复】增强发表评论的逻辑
+const handleCommentSubmit = async (content: string, clearContent: Function) => {
+  isSubmittingComment.value = true;
+  try {
+    await createCommentApi(postId.value, { content });
+    clearContent();
+    ElMessage.success('评论发表成功');
+    
+    // 乐观更新评论数
+    if (post.value) {
+      post.value.comment_count += 1;
+    }
+    
+    fetchComments(); // 重新加载评论列表
+  } catch (error) {
+    ElMessage.error('评论发表失败');
+  } finally {
+    isSubmittingComment.value = false;
+  }
+};
+
+// 【核心新增】处理回复成功的逻辑
+const handleReplySuccess = () => {
+  if (post.value) {
+    post.value.comment_count += 1;
+  }
+  fetchComments(); // 重新加载整个评论树
+}
+
 </script>
 
 <template>
@@ -80,44 +145,65 @@ const handleFollow = async () => {
         <el-card v-if="isLoading" shadow="never" class="main-card">
           <el-skeleton :rows="15" animated />
         </el-card>
-        <el-card v-else-if="post" shadow="never" class="main-card">
-          <template #header>
-            <div class="post-header">
-              <h1 class="post-title">{{ post.title }}</h1>
-              <div class="author-meta">
-                <el-avatar :size="40" :src="post.author.avatar || ''" />
-                <div class="author-info">
-                  <span class="author-name">{{ post.author.username }}</span>
-                  <div class="meta-line">
-                   <!-- 【核心优化】只有当 published_at 存在时，才显示发布时间 -->
-                    <span v-if="post.published_at">
-                      <el-icon><Calendar /></el-icon> 发布于 {{ formatDateTime(post.published_at, 'YYYY-MM-DD') }}
-                    </span>
-                    <!-- 也可以显示更新时间作为替代 -->
-                    <span v-else>
-                      <el-icon><EditPen /></el-icon> 更新于 {{ formatDateTime(post.updated_at, 'YYYY-MM-DD') }}
-                    </span>
-                    <span><el-icon><Timer /></el-icon> 阅读约 {{ post.read_time }} 分钟</span>
+        <template v-else-if="post">
+          <el-card shadow="never" class="main-card">
+            <template #header>
+              <div class="post-header">
+                <h1 class="post-title">{{ post.title }}</h1>
+                <div class="author-meta">
+                  <el-avatar :size="40" :src="post.author.avatar || ''" />
+                  <div class="author-info">
+                    <span class="author-name">{{ post.author.username }}</span>
+                    <div class="meta-line">
+                      <span v-if="post.published_at"><el-icon><Calendar /></el-icon> 发布于 {{ formatDateTime(post.published_at, 'YYYY-MM-DD') }}</span>
+                      <span v-else><el-icon><EditPen /></el-icon> 更新于 {{ formatDateTime(post.updated_at, 'YYYY-MM-DD') }}</span>
+                      <span><el-icon><Timer /></el-icon> 阅读约 {{ post.read_time }} 分钟</span>
+                    </div>
                   </div>
                 </div>
               </div>
+            </template>
+            
+            <div class="post-content">
+              <MdPreview :editorId="editorId" :modelValue="post.content" />
             </div>
-          </template>
-          
-          <div class="post-content">
-            <MdPreview :editorId="editorId" :modelValue="post.content" />
-          </div>
 
-          <template #footer>
-            <div class="post-footer">
-              <div class="tags-line">
-                <el-tag v-for="tag in post.tags" :key="tag.id" type="info" size="small" class="post-tag">
-                  {{ tag.name }}
-                </el-tag>
+            <template #footer>
+              <div class="post-footer">
+                <div class="tags-line">
+                  <el-tag v-for="tag in post.tags" :key="tag.id" type="info" size="small" class="post-tag">
+                    {{ tag.name }}
+                  </el-tag>
+                </div>
               </div>
+            </template>
+          </el-card>
+
+          <!-- 评论区模块 -->
+          <el-card shadow="never" class="main-card comment-section">
+            <h3>{{ post.comment_count }} 条评论</h3>
+            <CommentBox 
+              v-if="authStore.isAuthenticated"
+              placeholder="发表你的看法..."
+              :is-submitting="isSubmittingComment"
+              @submit="handleCommentSubmit"
+            />
+            <div v-else class="login-prompt">
+              请<el-button text type="primary" @click="$router.push('/login')">登录</el-button>后发表评论
             </div>
-          </template>
-        </el-card>
+            <el-divider />
+            <div v-loading="isLoadingComments">
+              <CommentItem
+                v-for="comment in comments"
+                :key="comment.id"
+                :post-id="postId"
+                :comment="comment"
+                @reply-success="handleReplySuccess"
+              />
+              <el-empty v-if="!isLoadingComments && comments.length === 0" description="暂无评论，快来抢沙发吧！" />
+            </div>
+          </el-card>
+        </template>
       </el-col>
 
       <!-- 右侧边栏 -->
@@ -178,7 +264,7 @@ const handleFollow = async () => {
 .post-detail-container {
   padding: 20px 8%;
   background-color: #f4f5f5;
-  position: relative; /* 为悬浮操作栏定位 */
+  position: relative;
 }
 
 .main-card {
@@ -248,7 +334,7 @@ const handleFollow = async () => {
 
 .sticky-sidebar {
   position: sticky;
-  top: 80px; /* 适配顶部导航栏高度 */
+  top: 80px;
 }
 .sidebar-card {
   margin-bottom: 20px;
@@ -267,7 +353,6 @@ const handleFollow = async () => {
   max-height: 60vh;
   overflow-y: auto;
 }
-/* 优化大纲样式 */
 :deep(.md-editor-catalog-link span) {
   white-space: nowrap;
   overflow: hidden;
@@ -277,7 +362,6 @@ const handleFollow = async () => {
 .action-bar {
   position: fixed;
   top: 200px;
-  /* 动态计算位置，使其在主内容区左侧 */
   left: max(20px, calc((100vw - 1200px) / 2 - 80px)); 
   display: flex;
   flex-direction: column;
@@ -293,5 +377,19 @@ const handleFollow = async () => {
   font-size: 13px;
   color: #909399;
   margin-top: 6px;
+}
+
+.comment-section {
+  margin-top: 20px;
+}
+.comment-section h3 {
+  margin-bottom: 20px;
+}
+.login-prompt {
+  text-align: center;
+  padding: 20px;
+  color: #606266;
+  background-color: #f9f9f9;
+  border-radius: 4px;
 }
 </style>
