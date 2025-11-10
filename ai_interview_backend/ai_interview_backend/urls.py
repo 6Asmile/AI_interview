@@ -6,6 +6,8 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static # 确保导入 static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+# 【核心新增】导入 spectacular 的视图
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
 from interviews.views import GenerateResumeView
 from resumes.views_upload import FileUploadView
@@ -33,6 +35,12 @@ urlpatterns = [
         path('', include('reports.urls')),
         path('generate-resume/', GenerateResumeView.as_view(), name='generate-resume'),
     ])),
+    # 【核心新增】API Schema & 文档路由
+    path('api/v1/schema/', SpectacularAPIView.as_view(), name='schema'),
+    # Swagger UI:
+    path('api/v1/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    # Redoc UI:
+    path('api/v1/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 ]
 
 # 【核心修正】确保这行代码在主 urlpatterns 列表之外

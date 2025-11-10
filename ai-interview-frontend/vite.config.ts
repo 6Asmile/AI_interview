@@ -15,5 +15,16 @@ export default defineConfig({
       //    这是在 ESM 中替代 __dirname 的标准做法。
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
+  },
+   // 【核心新增】
+  server: {
+    proxy: {
+      '/api/v1': {
+        target: 'http://127.0.0.1:8000', // 您本地 Django 服务的地址
+        changeOrigin: true,
+      }
+    }
   }
+  
 })
+

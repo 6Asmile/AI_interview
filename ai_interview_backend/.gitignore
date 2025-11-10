@@ -1,33 +1,87 @@
-# .gitignore for Django/Python backend
-
-# IDE and OS files
-.idea/
-*.pyc
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.DS_Store
+*.py[cod]
+*$py.class
 
-# Virtual Environment
-venv/
-.venv/
-env/
-.env/
-*/activate
+# C extensions
+*.so
 
-# Sensitive Information
-# 绝对不要上传 .env 文件！
-.env
-*.env
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Django specific
+# PyInstaller
+# Usually these files are created by pyinstaller, if you are using it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
 *.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Media files (user uploads)
-# 用户上传的简历、头像等文件不应纳入版本控制
-/media/
+# Media files
+media/
 
-# Static files (collected)
-/static_root/
-/staticfiles/
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE files
+.idea/
+.vscode/
+
+# Operating System files
+.DS_Store
+
+# Environment variables
+# 永远不要上传包含敏感信息的 .env 文件！
+.env
+.env.*
+!.env.docker
+!.env.example
+
+# Docker
+docker-compose.override.yml

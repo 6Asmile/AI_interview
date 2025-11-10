@@ -9,7 +9,8 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
-
+#后台管理地址：http://localhost:8000/admin/
+#接口文档地址：http://127.0.0.1:8000/api/v1/schema/swagger-ui/
 import os
 from pathlib import Path
 from dotenv import load_dotenv # 添加这一行
@@ -22,17 +23,19 @@ load_dotenv(os.path.join(BASE_DIR, '.env')) # 添加这一行，加载 .env 文�
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-079&la)5-v(e1b0hf*p)@o)z#e6n2ot7_oa&c#&3)jx02#fh_9'
+SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'simpleui',  # 【核心新增】将 simpleui 放在第一行
+    'drf_spectacular',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -139,9 +142,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'zh-hans'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Shanghai'
 
 USE_I18N = True
 
@@ -176,6 +179,8 @@ REST_FRAMEWORK = {
     ],
     #添加这一行来全局启用分页
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardResultsSetPagination',
+# 【核心新增】告诉 DRF 使用 spectacular 来生成 API schema
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 # Simple JWT 配置
@@ -221,19 +226,21 @@ SIMPLE_JWT = {
 # --- CORS CONFIGURATION (Final Version) ---
 #
 # 允许所有来源（开发时方便，生产环境请使用下面的白名单）
-CORS_ALLOW_ALL_ORIGINS = True
-
+CORS_ALLOW_ALL_ORIGINS = False  # 生产环境绝不能允许所有
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+# 确保 CSRF 信任我们的前端来源
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 # 或者使用更安全的白名单模式
 # CORS_ALLOWED_ORIGINS = [
 #     "http://localhost:5173",
 #     "http://127.0.0.1:5173",
 # ]
 
-# 确保 CSRF 信任我们的前端来源
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-]
+# # 确保 CSRF 信任我们的前端来源
+# CSRF_TRUSTED_ORIGINS = [
+#     'http://localhost:5173',
+#     'http://127.0.0.1:5173',
+# ]
 
 
 # ---------------- MEDIA FILES CONFIGURATION ----------------
@@ -248,11 +255,14 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 
 # ---------------- CACHES CONFIGURATION ----------------
-#
+REDIS_HOST = os.getenv('REDIS_HOST', '127.0.0.1')
+REDIS_PORT = os.getenv('REDIS_PORT', '6379')
+
+
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1", # 使用 Redis 的 1 号数据库
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1", # 使用 Redis 的 1 号数据库
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
@@ -306,9 +316,12 @@ REST_AUTH = {
 # CELERY_BROKER_URL = 'redis://127.0.0.1:6379/2'
 # 添加 RabbitMQ 的配置
 # amqp://guest:guest@localhost:5672// 是 RabbitMQ 的默认连接地址
-CELERY_BROKER_URL = 'amqp://guest:guest@localhost:5672//'
+
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
+
+CELERY_BROKER_URL = f'amqp://guest:guest@{RABBITMQ_HOST}:5672//'
 # 指定结果后端(Result Backend)的地址，用于存储任务执行结果
-CELERY_RESULT_BACKEND = 'redis://127.0.0.1:6379/2'
+CELERY_RESULT_BACKEND = f"redis://{REDIS_HOST}:{REDIS_PORT}/2"
 # 接受的内容类型
 CELERY_ACCEPT_CONTENT = ['json']
 # 任务序列化方式
