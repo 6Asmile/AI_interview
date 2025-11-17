@@ -100,6 +100,20 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@/views/blog/MyPosts.vue'),
         meta: { requiresAuth: true }
       },
+       // 【核心新增】聊天页面路由
+      {
+        path: 'chat',
+        name: 'Chat',
+        component: () => import('@/views/chat/Chat.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'chat/:userId', // 可以通过 URL 直接与某人开启对话
+        name: 'ChatWithUser',
+        component: () => import('@/views/chat/Chat.vue'),
+        props: true,
+        meta: { requiresAuth: true }
+      },
     ],
   },
 ];

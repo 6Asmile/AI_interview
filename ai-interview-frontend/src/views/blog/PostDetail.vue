@@ -1,21 +1,22 @@
 <script setup lang="ts">
 import { ref, onMounted, computed ,watch } from 'vue';
-import { useRoute } from 'vue-router';
 import { 
   ElMessage, ElSkeleton, ElRow, ElCol, ElCard, ElAvatar, 
   ElButton, ElTag, ElIcon, ElDivider, ElEmpty
 } from 'element-plus';
-import { Calendar, Timer, Pointer, Star, ChatDotRound, EditPen } from '@element-plus/icons-vue';
+import { Calendar, Timer, Pointer, Star, ChatDotRound, EditPen,Promotion } from '@element-plus/icons-vue';
 import { getPostDetailApi, getPostCommentsApi, createCommentApi, type PostDetail, type CommentItem as Comment } from '@/api/modules/blog';
 import { toggleLikeApi, toggleBookmarkApi, toggleFollowApi } from '@/api/modules/interactions';
 import { formatDateTime } from '@/utils/format';
 import { MdPreview, MdCatalog } from 'md-editor-v3';
 import 'md-editor-v3/lib/preview.css';
-
+import { useRoute } from 'vue-router'; // <-- 导入 useRouter
 import CommentBox from '@/components/blog/CommentBox.vue';
 import CommentItem from '@/components/blog/CommentItem.vue';
 import { useAuthStore } from '@/store/modules/auth';
 import RecommendedPosts from '@/components/blog/RecommendedPosts.vue'; // <-- 导入推荐组件
+import router from '@/router';
+
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -89,6 +90,16 @@ onMounted(() => {
   fetchComments();
   fetchPost();
 });
+
+
+// 【核心新增】跳转到聊天页面的函数
+const startChat = (userId: number) => {
+  if (!authStore.isAuthenticated) {
+    ElMessage.warning('请先登录');
+    return;
+  }
+  router.push({ name: 'ChatWithUser', params: { userId } });
+};
 
 const handleLike = async () => {
   if (!authStore.isAuthenticated) {
@@ -272,6 +283,11 @@ watch(postId, (newId, oldId) => {
                   {{ isAuthorFollowed ? '已关注' : '关注' }}
                 </el-button>
              </div>
+             <!-- 【核心新增】私信按钮 -->
+                  <el-button class="w-full" @click="startChat(post.author.id)">
+                    <el-icon class="mr-1"><Promotion /></el-icon>
+                    私信
+                  </el-button>
           </el-card>
 
           <el-card shadow="never" class="sidebar-card">

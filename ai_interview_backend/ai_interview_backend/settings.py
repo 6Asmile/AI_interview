@@ -34,6 +34,7 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
 # Application definition
 
 INSTALLED_APPS = [
+    'channels',
     'simpleui',  # 【核心新增】将 simpleui 放在第一行
     'drf_spectacular',
     'django.contrib.admin',
@@ -64,7 +65,11 @@ INSTALLED_APPS = [
     'blog',
     'interactions',
     'notifications',
+   'chat',
 ]
+
+# 3. 将应用的入口指向 Channels 的 ASGI application
+ASGI_APPLICATION = 'ai_interview_backend.asgi.application'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -351,3 +356,15 @@ CELERY_BEAT_SCHEDULE = {
 }
 #celery -A ai_interview_backend worker -l info -P gevent
 # celery -A ai_interview_backend beat -l info
+
+# 4. 配置 Channel Layer，使用 Redis
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            # 使用 3 号数据库，与缓存(1)和Celery(2)区分开
+            "hosts": [(REDIS_HOST, REDIS_PORT)],
+            "db": 3,
+        },
+    },
+}

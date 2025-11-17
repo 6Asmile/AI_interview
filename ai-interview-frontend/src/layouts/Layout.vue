@@ -33,6 +33,11 @@ onMounted(() => {
       <el-menu :default-active="route.path" class="main-nav" mode="horizontal" router>
         <el-menu-item index="/dashboard">仪表盘</el-menu-item>
         <el-menu-item index="/dashboard/blog">博客社区</el-menu-item>
+        <!-- 【核心新增】聊天/私信入口 -->
+        <el-menu-item index="/dashboard/chat">
+          <el-icon><ChatLineRound /></el-icon>
+          <span>我的私信</span>
+        </el-menu-item>
         <el-sub-menu index="/resumes">
           <template #title>简历中心</template>
           <el-menu-item index="/dashboard/resumes">我的简历</el-menu-item>

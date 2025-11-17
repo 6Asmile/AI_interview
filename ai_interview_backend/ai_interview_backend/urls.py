@@ -30,6 +30,7 @@ urlpatterns = [
         path('', include('blog.urls')),
         path('', include('interactions.urls')),
         path('', include('notifications.urls')),
+        path('', include('chat.urls')),
         # 【新增】添加通用的文件上传路由
         path('upload/', FileUploadView.as_view(), name='file-upload'),
         path('', include('reports.urls')),
