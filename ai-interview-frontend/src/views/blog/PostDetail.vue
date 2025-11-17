@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed ,watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { 
   ElMessage, ElSkeleton, ElRow, ElCol, ElCard, ElAvatar, 
@@ -15,6 +15,7 @@ import 'md-editor-v3/lib/preview.css';
 import CommentBox from '@/components/blog/CommentBox.vue';
 import CommentItem from '@/components/blog/CommentItem.vue';
 import { useAuthStore } from '@/store/modules/auth';
+import RecommendedPosts from '@/components/blog/RecommendedPosts.vue'; // <-- 导入推荐组件
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -30,6 +31,10 @@ const editorId = 'post-detail-preview';
 const isLiked = ref(false);
 const isBookmarked = ref(false);
 const isAuthorFollowed = ref(false);
+
+// 【核心修复】声明 likeCount 和 bookmarkCount 响应式变量
+const likeCount = ref(0);
+const bookmarkCount = ref(0);
 
 const fetchData = async () => {
   if (!postId.value) return;
@@ -59,9 +64,30 @@ const fetchComments = async () => {
   }
 };
 
+const fetchPost = async () => {
+  if (!postId.value) return;
+  isLoading.value = true;
+  window.scrollTo(0, 0);
+  try {
+    const res = await getPostDetailApi(postId.value);
+    post.value = res;
+    isLiked.value = res.is_liked;
+    isBookmarked.value = res.is_bookmarked;
+    isAuthorFollowed.value = res.is_author_followed;
+    likeCount.value = res.like_count;
+    bookmarkCount.value = res.bookmark_count;
+  } catch (error) {
+    ElMessage.error('加载文章失败');
+    console.error(error);
+  } finally {
+    isLoading.value = false;
+  }
+};
+
 onMounted(() => {
   fetchData();
   fetchComments();
+  fetchPost();
 });
 
 const handleLike = async () => {
@@ -128,6 +154,12 @@ const handleReplySuccess = () => {
   }
   fetchComments();
 }
+// 【核心修复】监听 postId 的变化，以处理组件复用时的数据刷新
+watch(postId, (newId, oldId) => {
+  if (newId && newId !== oldId) {
+    fetchPost();
+  }
+});
 </script>
 
 <template>
@@ -196,6 +228,8 @@ const handleReplySuccess = () => {
             </template>
           </el-card>
 
+         
+
           <el-card shadow="never" class="main-card comment-section">
             <h3>{{ post.comment_count }} 条评论</h3>
             <CommentBox 
@@ -248,6 +282,12 @@ const handleReplySuccess = () => {
               <MdCatalog :editorId="editorId" :scrollElement="'.el-main'" />
             </div>
           </el-card>
+          
+          <el-card shadow="never" class="sidebar-card">
+           <!-- 【核心新增】推荐文章模块 -->
+          <RecommendedPosts v-if="post?.id" :post-id="post.id" />
+          </el-card>
+
         </div>
       </el-col>
     </el-row>

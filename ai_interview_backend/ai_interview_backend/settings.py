@@ -156,6 +156,8 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# 【核心新增】The absolute path to the directory where collectstatic will collect static files for deployment.
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 

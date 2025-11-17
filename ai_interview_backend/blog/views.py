@@ -1,8 +1,11 @@
+# ai-interview-backend/blog/views.py
+
 from datetime import timedelta
 from django.utils import timezone
 from django.db.models import F, Q, Sum
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from django.core.cache import cache # <-- 导入 cache
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.request import Request  # 导入 Request 类型
@@ -43,8 +46,7 @@ class PostViewSet(viewsets.ModelViewSet):
     ordering_fields = ['published_at', 'view_count', 'like_count']
     ordering = ['-published_at']
 
-    # 为动态属性 action 添加类型注解以消除 IDE 警告
-    action: str
+    # 【已修复】移除这行导致错误的类型注解 -> action: str
 
     def get_queryset(self):
         """
@@ -195,6 +197,35 @@ class PostViewSet(viewsets.ModelViewSet):
         }
         return Response(result)
 
+    @action(detail=True, methods=['get'], url_path='recommendations')
+    def recommendations(self, request, pk=None):
+        """
+        获取一篇文章的推荐文章列表。
+        """
+        post = self.get_object()
+        cache_key = f"recommendations:{post.id}"
+
+        # 1. 尝试从缓存中获取
+        recommended_ids = cache.get(cache_key)
+
+        # 2. 如果缓存未命中，则同步计算一次作为后备 (可选，但能提高鲁棒性)
+        if recommended_ids is None:
+            from .recommendations import calculate_recommendations
+            recommended_ids = calculate_recommendations(post)
+            cache.set(cache_key, recommended_ids, timeout=3600)  # 存入缓存1小时
+
+        if not recommended_ids:
+            return Response([], status=status.HTTP_200_OK)
+
+        # 3. 根据 ID 列表获取文章对象
+        # 使用 in_bulk() 减少数据库查询，并保持 ID 列表的顺序
+        posts_map = Post.objects.in_bulk(recommended_ids)
+        recommended_posts = [posts_map[id] for id in recommended_ids if id in posts_map]
+
+        # 4. 序列化并返回
+        serializer = PostListSerializer(recommended_posts, many=True, context={'request': request})
+        return Response(serializer.data)
+
 
 class CommentViewSet(viewsets.ModelViewSet):
     """
@@ -221,4 +252,3 @@ class CommentViewSet(viewsets.ModelViewSet):
         # 创建评论时，自动关联当前登录用户和文章
         post_pk = self.kwargs.get('post_pk')
         serializer.save(author=self.request.user, post_id=post_pk)
-

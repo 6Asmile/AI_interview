@@ -95,3 +95,11 @@ export const getTagListApi = (): Promise<PaginatedResponse<Tag>> => request({ ur
 export const getMyPostsApi = (params?: any): Promise<PaginatedResponse<PostListItem>> => request({ url: '/posts/my-posts/', method: 'get', params });
 export const getMyPostStatsApi = (): Promise<{ total_views: number; total_likes: number; total_comments: number; total_bookmarks: number; }> => request({ url: '/posts/my-stats/', method: 'get' });
 export const getMyDailyStatsApi = (days: number = 7): Promise<DailyStatsData> => request({ url: '/posts/my-daily-stats/', method: 'get', params: { days } });
+
+// --- 【核心新增】获取推荐文章 API ---
+export const getRecommendedPostsApi = (postId: number): Promise<PostListItem[]> => {
+  return request({
+    url: `/posts/${postId}/recommendations/`,
+    method: 'get'
+  });
+};

@@ -1,0 +1,77 @@
+services:
+  # 后端 Django 服务
+  backend:
+    build: ./ai_interview_backend
+    container_name: ai_interview_backend
+    command: gunicorn ai_interview_backend.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - ./ai_interview_backend:/app
+      - static_volume:/app/staticfiles  # 收集的静态文件存储卷
+      - media_volume:/app/media        # 媒体文件存储卷
+    expose:
+      - 8000
+    env_file:
+      - ./.env
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    networks:
+      - ai_interview_network
+
+  # 前端 Nginx 服务
+  frontend:
+    build:
+      context: ./ai-interview-frontend
+      dockerfile: Dockerfile
+    container_name: ai_interview_frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - static_volume:/var/www/static  # 挂载静态文件卷
+      - media_volume:/var/www/media    # 挂载媒体文件卷
+    depends_on:
+      - backend
+    networks:
+      - ai_interview_network
+
+  # 数据库服务
+  db:
+    image: mysql:8.0
+    container_name: ai_interview_db
+    volumes:
+      - db_data:/var/lib/mysql
+    env_file:
+      - ./.env
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME}
+    command: --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3307:3306"
+    networks:
+      - ai_interview_network
+
+  redis:
+    image: redis:6.2-alpine
+    container_name: ai_interview_redis
+    networks:
+      - ai_interview_network
+
+  rabbitmq:
+    image: rabbitmq:3.11-management-alpine
+    container_name: ai_interview_rabbitmq
+    ports:
+      - "15672:15672"
+    networks:
+      - ai_interview_network
+
+volumes:
+  db_data:
+  static_volume:
+  media_volume:
+
+networks:
+  ai_interview_network:
+    driver: bridge

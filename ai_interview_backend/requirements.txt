@@ -17,7 +17,6 @@ bcrypt==4.3.0
 beautifulsoup4==4.13.3
 billiard==4.2.1
 bleach==6.2.0
-bs4==0.0.2
 cachetools==5.5.2
 celery==5.5.3
 certifi==2025.1.31
@@ -52,7 +51,6 @@ django-simpleui==2025.6.24
 djangorestframework==3.16.0
 djangorestframework-simplejwt==5.3.1
 document==1.0
-docx==0.2.4
 dotenv==0.9.9
 DownloadKit==2.0.7
 drf-nested-routers==0.94.2
@@ -162,18 +160,10 @@ pydantic_core==2.33.2
 pyecharts==2.0.8
 pyee==12.1.1
 PyExecJS==1.5.1
-pygame==2.6.1
-Pygments==2.19.1
-pyinstaller==6.13.0
-pyinstaller-hooks-contrib==2025.2
 PyJWT==2.10.1
 PyMySQL==1.1.1
 pyparsing==3.2.1
 pypdf==6.0.0
-PyQt5==5.15.11
-PyQt5-Qt5==5.15.2
-PyQt5-stubs==5.15.6.0
-PyQt5_sip==12.17.0
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
@@ -182,10 +172,7 @@ python-jose==3.5.0
 python-json-logger==3.3.0
 python-pptx==1.0.2
 pytz==2025.1
-pywifi==1.1.12
-pywin32==310
-pywin32-ctypes==0.2.3
-pywinpty==2.0.15
+
 PyYAML==6.0.2
 pyzmq==26.3.0
 redis==6.4.0

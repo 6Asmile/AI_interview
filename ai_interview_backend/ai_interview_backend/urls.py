@@ -46,4 +46,6 @@ urlpatterns = [
 # 【核心修正】确保这行代码在主 urlpatterns 列表之外
 # 这会为 /media/ 开头的 URL 添加路由，使其能正确找到上传的文件
 if settings.DEBUG:
+    # 静态文件路由（Admin 样式、JS 依赖）
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
