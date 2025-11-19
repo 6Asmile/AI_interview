@@ -1,3 +1,5 @@
+import os
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -27,7 +29,10 @@ class GitHubLogin(APIView):
         provider = adapter.get_provider()
 
         # 务必与 GitHub 后台配置一致
-        callback_url = "http://localhost:5173/oauth/callback"
+        # 【核心修改】从环境变量获取回调地址，如果没配置则默认用本地的
+        # 生产环境（Docker）需要在 .env 中配置 GITHUB_CALLBACK_URL
+        default_callback = "http://localhost:5173/oauth/callback"
+        callback_url = os.getenv("GITHUB_CALLBACK_URL", default_callback)
 
         client = OAuth2Client(
             request, provider.app.client_id, provider.app.secret,
@@ -132,7 +137,10 @@ class GitHubConnect(APIView):
 
         adapter = GitHubOAuth2Adapter(request)
         provider = adapter.get_provider()
-        callback_url = "http://localhost:5173/oauth/callback"
+
+        # 【核心修改】同上，使用环境变量
+        default_callback = "http://localhost:5173/oauth/callback"
+        callback_url = os.getenv("GITHUB_CALLBACK_URL", default_callback)
 
         client = OAuth2Client(
             request, provider.app.client_id, provider.app.secret,
