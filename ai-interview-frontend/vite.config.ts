@@ -18,16 +18,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
-      // 【核心修改】
-      '/ws': {
-        // 注意：这里故意使用 http:// 而不是 ws://
-        // vite 的代理中间件会自动处理 WebSocket 的 Upgrade 头
-        target: 'http://127.0.0.1:8000', 
-        ws: true,
+      // 【核心新增】代理媒体文件请求
+      '/media': {
+        target: 'http://127.0.0.1:8000', // 转发给后端
         changeOrigin: true,
-        // 添加这个以防万一
-        secure: false,
-      }
+      },
     }
   }
 })

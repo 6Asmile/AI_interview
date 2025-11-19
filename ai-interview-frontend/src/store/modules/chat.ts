@@ -44,7 +44,7 @@ export const useChatStore = defineStore('chat', {
       try {
         const response: any = await getConversationsApi();
         
-        // 【核心修复】检查后端返回的是否是分页结构
+        // 检查后端返回的是否是分页结构
         if (response.results && Array.isArray(response.results)) {
           // 如果是分页数据，取 results 字段
           this.conversations = response.results;
@@ -119,7 +119,7 @@ export const useChatStore = defineStore('chat', {
      * 建立 WebSocket 连接
      */
     connectWebSocket() {
-      // 先关闭任何已存在的连接
+      // 1. 清理旧连接
       if (this.socket) {
         this.socket.close();
       }
@@ -127,35 +127,40 @@ export const useChatStore = defineStore('chat', {
 
       const authStore = useAuthStore();
       const currentUser = authStore.user;
-      const token = authStore.token
+      const token = authStore.token;
 
-      if (!currentUser || !token) return; // 如果没有 Token，不尝试连接
+      if (!currentUser || !token) return;
 
-      // 从当前激活的对话中找到对方用户
+      // 2. 找到聊天对象
       const otherUser = this.activeConversation.participants.find(p => p.id !== currentUser.id);
       if (!otherUser) return;
 
       this.connectionStatus = 'connecting';
-      
-      // --- 【核心修改】使用代理后的简洁写法 ---
-      // 1. 根据当前页面的协议决定是 ws 还是 wss
-      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      
-      // 2. 直接连接到当前前端服务器的地址 (window.location.host)
-      //    在开发环境，这是 localhost:5173 (会被 Vite 代理转发到 8000)
-      //    在生产环境，这是您的域名 (会被 Nginx 代理转发到 8000)
-      // 【核心修改】将 token 作为查询参数拼接到 URL 末尾
-      const wsUrl = `${protocol}://${window.location.host}/ws/chat/${otherUser.id}/?token=${token}`;
-      // const wsUrl = `ws://127.0.0.1:8000/ws/chat/${otherUser.id}/?token=${token}`;
+
+      // 3. 构建 WebSocket URL (适配环境变量和生产环境)
+      let wsBaseUrl = '';
+
+      // 策略 A: 如果配置了环境变量 (开发环境)，直接使用配置的地址 (ws://127.0.0.1:8000)
+      if (import.meta.env.VITE_WS_URL) {
+        wsBaseUrl = import.meta.env.VITE_WS_URL;
+      } 
+      // 策略 B: 否则 (生产环境)，根据当前 URL 自动推断 (ws://your-domain.com)
+      else {
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        wsBaseUrl = `${protocol}://${window.location.host}`;
+      }
+
+      // 拼接完整路径
+      const wsUrl = `${wsBaseUrl}/ws/chat/${otherUser.id}/?token=${token}`;
 
       console.log('Connecting to WebSocket:', wsUrl);
 
       this.socket = new WebSocket(wsUrl);
-      // -----------------------------------------
 
+      // 4. 事件监听
       this.socket.onopen = () => {
         this.connectionStatus = 'connected';
-        console.log('Chat WebSocket connected to user:', otherUser.id);
+        console.log('Chat WebSocket connected');
       };
 
       this.socket.onmessage = (event) => {
@@ -164,23 +169,37 @@ export const useChatStore = defineStore('chat', {
         // 处理收到的新聊天消息
         if (data.type === 'chat_message') {
           const newMessage = data.message as Message;
+          
+          // --- 【核心修复】强制触发 UI 更新 ---
+          // 1. 更新右侧消息列表
           if (this.activeConversationId) {
              if (!this.messages[this.activeConversationId]) {
                 this.messages[this.activeConversationId] = [];
              }
-             // 将新消息插入到数组的最前面（因为后端是按时间倒序返回的）
-             this.messages[this.activeConversationId].unshift(newMessage);
+             // 使用扩展运算符创建新数组，确保 Vue 监听到变化
+             this.messages[this.activeConversationId] = [newMessage, ...this.messages[this.activeConversationId]];
           }
-          // 更新对话列表中的“最新消息”预览和时间戳
-          const conv = this.activeConversation;
-          if (conv) {
+
+          // 2. 更新左侧对话列表预览
+          const convIndex = this.conversations.findIndex(c => c.id === this.activeConversationId);
+          
+          if (convIndex !== -1) {
+             const conv = this.conversations[convIndex];
+             
+             // 更新最新消息预览
              conv.latest_message = newMessage;
              conv.updated_at = newMessage.timestamp;
-             // 如果收到消息的不是自己，增加未读数
+             
+             // 如果是对方发来的，增加未读计数
              if (newMessage.sender.id !== currentUser.id) {
-                 conv.unread_count++;
+                 conv.unread_count = (conv.unread_count || 0) + 1;
              }
+
+             // 3. 将当前对话置顶
+             this.conversations.splice(convIndex, 1);
+             this.conversations.unshift(conv);
           }
+
         // 处理“对方正在输入”状态
         } else if (data.type === 'typing_indicator') {
           this.otherUserTypingStatus = data.is_typing;
@@ -195,7 +214,7 @@ export const useChatStore = defineStore('chat', {
       this.socket.onerror = (error) => {
         this.connectionStatus = 'error';
         console.error('Chat WebSocket error:', error);
-        ElMessage.error('聊天连接发生错误');
+        // ElMessage.error('聊天连接发生错误'); // 可以根据需要决定是否弹窗
       };
     },
 
