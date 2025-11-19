@@ -10,7 +10,8 @@ import {
 } from 'element-plus';
 import { Bell } from '@element-plus/icons-vue';
 import NotificationCenter from '@/components/common/NotificationCenter.vue';
-import { ArrowDown } from '@element-plus/icons-vue'; // <-- 【核心修复】导入 ArrowDown
+import { ArrowDown, ChatLineRound  } from '@element-plus/icons-vue'; // <-- 【核心修复】导入 ArrowDown
+
 const authStore = useAuthStore();
 const notificationStore = useNotificationStore();
 const route = useRoute();

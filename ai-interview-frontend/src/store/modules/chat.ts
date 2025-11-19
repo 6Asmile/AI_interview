@@ -42,9 +42,23 @@ export const useChatStore = defineStore('chat', {
      */
     async fetchConversations() {
       try {
-        this.conversations = await getConversationsApi();
+        const response: any = await getConversationsApi();
+        
+        // 【核心修复】检查后端返回的是否是分页结构
+        if (response.results && Array.isArray(response.results)) {
+          // 如果是分页数据，取 results 字段
+          this.conversations = response.results;
+        } else if (Array.isArray(response)) {
+          // 如果后端没开启分页，直接取响应
+          this.conversations = response;
+        } else {
+          // 防御性代码：如果数据格式不对，重置为空数组
+          this.conversations = [];
+          console.error("对话列表数据格式错误:", response);
+        }
       } catch (error) {
         ElMessage.error('无法加载对话列表');
+        this.conversations = []; // 出错时确保是空数组
       }
     },
 
@@ -113,17 +127,31 @@ export const useChatStore = defineStore('chat', {
 
       const authStore = useAuthStore();
       const currentUser = authStore.user;
-      if (!currentUser) return;
+      const token = authStore.token
+
+      if (!currentUser || !token) return; // 如果没有 Token，不尝试连接
 
       // 从当前激活的对话中找到对方用户
       const otherUser = this.activeConversation.participants.find(p => p.id !== currentUser.id);
       if (!otherUser) return;
 
       this.connectionStatus = 'connecting';
-      const protocol = window.location.protocol === 'https' ? 'wss' : 'ws';
-      const wsUrl = `${protocol}://${window.location.host}/ws/chat/${otherUser.id}/`;
+      
+      // --- 【核心修改】使用代理后的简洁写法 ---
+      // 1. 根据当前页面的协议决定是 ws 还是 wss
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      
+      // 2. 直接连接到当前前端服务器的地址 (window.location.host)
+      //    在开发环境，这是 localhost:5173 (会被 Vite 代理转发到 8000)
+      //    在生产环境，这是您的域名 (会被 Nginx 代理转发到 8000)
+      // 【核心修改】将 token 作为查询参数拼接到 URL 末尾
+      const wsUrl = `${protocol}://${window.location.host}/ws/chat/${otherUser.id}/?token=${token}`;
+      // const wsUrl = `ws://127.0.0.1:8000/ws/chat/${otherUser.id}/?token=${token}`;
+
+      console.log('Connecting to WebSocket:', wsUrl);
 
       this.socket = new WebSocket(wsUrl);
+      // -----------------------------------------
 
       this.socket.onopen = () => {
         this.connectionStatus = 'connected';

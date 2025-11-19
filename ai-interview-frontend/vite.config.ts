@@ -1,30 +1,33 @@
 // vite.config.ts
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-
-// 1. 引入 Node.js 'url' 模块中的两个辅助函数
 import { fileURLToPath, URL } from 'node:url'
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      // 2. 使用 import.meta.url 这个 ESM 标准来获取当前文件的绝对路径，
-      //    并从中解析出 'src' 目录的完整路径。
-      //    这是在 ESM 中替代 __dirname 的标准做法。
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
-   // 【核心新增】
   server: {
+    // 确保监听所有 IP，这有时能解决一些网络绑定问题
+    host: '0.0.0.0', 
     proxy: {
       '/api/v1': {
-        target: 'http://127.0.0.1:8000', // 您本地 Django 服务的地址
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+      },
+      // 【核心修改】
+      '/ws': {
+        // 注意：这里故意使用 http:// 而不是 ws://
+        // vite 的代理中间件会自动处理 WebSocket 的 Upgrade 头
+        target: 'http://127.0.0.1:8000', 
+        ws: true,
+        changeOrigin: true,
+        // 添加这个以防万一
+        secure: false,
       }
     }
   }
-  
 })
-

@@ -1,9 +1,7 @@
-# ai-interview-backend/chat/routing.py (新建文件)
-
 from django.urls import re_path
 from . import consumers
 
 websocket_urlpatterns = [
-    # URL 格式: ws://<host>/ws/chat/<other_user_id>/
+    # 注意：这里开头没有 '/'，且使用 re_path
     re_path(r'ws/chat/(?P<user_id>\d+)/$', consumers.ChatConsumer.as_asgi()),
 ]

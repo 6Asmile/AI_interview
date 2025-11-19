@@ -22,6 +22,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.user = self.scope["user"]
         if not self.user.is_authenticated:
+            print("WebSocket Auth Failed: User not authenticated")  # 添加日志
             await self.close()
             return
 

@@ -362,9 +362,9 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            # 使用 3 号数据库，与缓存(1)和Celery(2)区分开
-            "hosts": [(REDIS_HOST, REDIS_PORT)],
-            "db": 3,
+            # 【核心修改】使用 redis://host:port/db 的格式
+            # 注意：这里假设您的 REDIS_HOST 和 REDIS_PORT 变量已经定义好了
+            "hosts": [f"redis://{REDIS_HOST}:{REDIS_PORT}/3"],
         },
     },
 }
