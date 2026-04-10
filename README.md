@@ -1,31 +1,28 @@
 # iFaceOff - AI 模拟面试平台
 
-**iFaceOff** 是一个面向求职者的、AI 驱动的全栈式求职赋能平台。它通过深度整合人工智能技术与现代 Web 技术，旨在为用户提供从简历优化、模拟面试、能力评估到求职经验分享的一站式解决方案。
+**iFaceOff** 是一个面向求职者的、AI 驱动的求职赋能平台。它通过深度整合人工智能技术与现代 Web 技术，旨在为用户提供从简历优化、模拟面试、能力评估到求职经验分享的一站式解决方案。
 
-[![Vue 3](https://img.shields.io/badge/Vue.js-3-42b883)](https://vuejs.org/)
-[![Django](https://img.shields.io/badge/Django-5-092e20)](https://www.djangoproject.com/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)](https://www.typescriptlang.org/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)](https://www.docker.com/)
+[![Vue 3](https://img.shields.io/badge/Vue.js-3-42b883)](https://vuejs.org/)[![Django](https://img.shields.io/badge/Django-5-092e20)](https://www.djangoproject.com/)[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)](https://www.typescriptlang.org/)[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)](https://www.docker.com/)
 
 ---
 
-### ✨ 核心功能模块详解
+### 核心功能模块详解
 
 iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化的工具。
 
-#### 1. 🤖 AI 模拟面试
+#### 1.  AI 模拟面试
 提供高度拟真的、可随时进行的 AI 模拟面试，集成了**浏览器端情绪识别**和**语音转文字**技术，帮助用户克服紧张情绪，提升面试技巧。支持中断后继续面试。
 
 ![AI 模拟面试房间](docs/images/interview-room.png)
 
-#### 2. 📊 多维度深度评估报告
+#### 2. 多维度深度评估报告
 面试结束后，系统会异步生成包含综合评分、能力雷达图、关键词分析、STAR 法则分析、情绪波动图等**多维度的深度评估报告**，提供量化的、可执行的优化建议。
 
 ![AI 面试评估报告 - 概览](docs/images/report-overview.png)
 ![AI 面试评估报告 - 关键词与STAR法则分析](docs/images/report-keywords-star.png)
 ![AI 面试评估报告 - 详情回顾](docs/images/report-details.png)
 
-#### 3. 📄 强大的简历中心
+#### 3. 强大的简历中心
 *   **在线简历编辑器**：实现了模块化、可拖拽的画布式编辑体验，支持多套专业模板一键切换和 AI 文本润色。
 *   **AI 简历诊断**：上传简历并与岗位描述 (JD) 进行匹配度分析，生成优化建议。
 *   **AI 简历生成**：只需输入核心信息，即可由 AI 生成一份专业且完整的简历初稿。
@@ -38,13 +35,13 @@ iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化�
 | :----------------------------------------------: | :----------------------------------------------: |
 | ![AI 生成简历](docs/images/resume-generator.png) | ![AI 简历诊断](docs/images/resume-diagnosis.png) |
 
-#### 4. ✍️ 专业博客与互动社区
-内置专业级 Markdown 编辑器，支持代码高亮、数学公式、流程图等。用户可以分享求职经验，并进行点赞、收藏、评论、关注等互动。我们还实现了基于内容的智能文章推荐算法，打造一个内容驱动的社区生态。
+#### 4.  专业博客与互动社区
+内置 Markdown 编辑器，支持代码高亮、数学公式、流程图等。用户可以分享求职经验，并进行点赞、收藏、评论、关注等互动。我们还实现了基于内容的智能文章推荐算法，打造一个内容驱动的社区生态。
 
 ![博客社区主页](docs/images/blog-home.png)
 ![文章详情页](docs/images/blog-post-detail.png)
 
-#### 5. 💬 实时通知与私信
+#### 5.  实时通知与私信
 *   **通知中心**：当用户的文章/评论被互动，或被其他用户关注时，系统会自动发送实时站内信。
 *   **实时私信**: 基于 WebSocket 和 Django Channels 实现，支持文本、图片、文件等富媒体通信和“对方正在输入”提示。
 *   **个性化设置**：用户可以根据自己的需求，配置偏好的 AI 模型和独立的 API Key。
@@ -55,7 +52,7 @@ iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化�
 
 ![通知中心](docs/images/notification-center.png)
 
-#### 6. ⚙️ 可视化后台管理
+#### 6.  可视化后台管理
 
 基于 `django-simpleui` 提供了美观且功能强大的后台管理界面，方便运营者管理平台内容、用户、AI 模型、岗位等所有数据。
 
@@ -63,12 +60,12 @@ iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化�
 
 ---
 
-### 🛠️ 技术架构
+###  技术架构
 
-项目采用**前后端分离**的现代化架构，并通过 **Docker** 容器化部署。
+项目采用**前后端分离**的现代化架构
 
 *   **前端 (Frontend)** - `Vue 3`
-    *   **框架/构建**: `Vue 3` (Composition API & `<script setup>`) / `Vite`
+    *   **框架/构建**: `Vue 3` / `Vite`
     *   **语言**: `TypeScript`
     *   **UI / 状态管理**: `Element Plus` / `Pinia`
     *   **核心库**: `face-api.js`, `md-editor-v3`, `axios`, `echarts`
@@ -79,7 +76,7 @@ iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化�
     *   **实时通信**: `Django Channels`
     *   **异步任务**: `Celery`
     *   **消息中间件/缓存**: `RabbitMQ` / `Redis`
-    *   **API 文档**: `drf-spectacular` (Swagger UI)
+    *   **API 文档**: `drf-spectacular` 
 
 *   **部署 (Deployment)**
     *   **容器化**: `Docker` & `Docker Compose`
@@ -89,11 +86,13 @@ iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化�
 
 ### 🚀 部署指南
 
-本项目推荐使用 Docker Compose 进行一键部署。
-
 #### 1. 先决条件
 *   [Git](https://git-scm.com/)
-*   [Docker](https://www.docker.com/products/docker-desktop/) & [Docker Compose](https://docs.docker.com/compose/install/)
+*   Python 3.10+（适配 Django 5.x）
+*   Node.js 16+（适配 Vue 3/Vite）
+*   MySQL 5.7+/8.0（默认端口 3306）
+*   Redis（默认端口 6379）
+*   RabbitMQ（默认端口 5672，需启用 Web 插件：`rabbitmq-plugins enable rabbitmq_management`）
 
 #### 2. 克隆项目
 ```bash
@@ -123,15 +122,15 @@ cp ai-interview-backend/.env.example ai-interview-backend/.env
 ```
 然后，打开并编辑 `ai-interview-backend/.env`，**所有标记为 `<...>` 的值都必须被替换**：
 ```env
-# 数据库连接信息 (与 docker-compose.yml 对应)
+# 数据库连接信息 
 DB_NAME=ai_interview_db
 DB_USER=root
-DB_PASSWORD=<your_strong_db_password> # 数据库密码，请务必修改
+DB_PASSWORD=<your_strong_db_password> # 数据库密码
 DB_HOST=db
 DB_PORT=3306
 
 # Django 配置
-SECRET_KEY=<your_strong_django_secret_key> # 强烈建议生成一个新的
+SECRET_KEY=<your_strong_django_secret_key> # 
 DEBUG=True
 ALLOWED_HOSTS=127.0.0.1,localhost,backend
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 # 开发环境，生产环境请改为你的前端域名
@@ -143,7 +142,7 @@ RABBITMQ_HOST=rabbitmq
 # 邮件发送配置 (用于注册验证码)
 EMAIL_HOST=<your_smtp_server> # 例如: smtp.qq.com
 EMAIL_HOST_USER=<your_email_address>
-EMAIL_HOST_PASSWORD=<your_email_auth_code> # 通常是16位授权码，不是邮箱密码
+EMAIL_HOST_PASSWORD=<your_email_auth_code> # 16位授权码
 
 # GitHub OAuth 配置
 GITHUB_CLIENT_ID=<your_github_client_id>
@@ -156,27 +155,64 @@ DEEPSEEK_API_KEY=<your_ai_service_api_key>
 
 ##### b. 前端配置 (`ai-interview-frontend/.env.production`)
 通常，生产环境的默认配置无需修改，它会通过 Nginx 代理将 API 请求转发到后端。
+
 ```bash
 cp ai-interview-frontend/.env.development ai-interview-frontend/.env.production
 ```
 
-#### 5. 构建并启动服务
-回到项目**根目录**，执行以下命令：
-```bash
-docker-compose up --build -d
+打开并编辑 `ai-interview-frontend/.env.production`，修改 API 基础地址：
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1 # 指向本地后端服务
 ```
-*   `--build`: 强制重新构建 Docker 镜像。
-*   `-d`: 在后台运行容器。
+
+开发环境配置（`ai-interview-frontend/.env.development`）建议同步修改：
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+#### 5. 构建并启动服务
+* #### a. 后端依赖安装与启动
+
+  ```bash
+  # 进入后端目录
+  cd ai-interview-backend
+  # 安装后端依赖
+  pip install -r requirements.txt
+  # 启动Django ASGI服务（支持WebSocket）
+  daphne -b 0.0.0.0 -p 8000 ai_interview.asgi:application
+  # 新开终端，启动Celery Worker（处理异步任务，如面试报告生成）
+  celery -A ai_interview worker --loglevel=info
+  # （可选）新开终端，启动Celery Beat（定时任务，如有需要）
+  celery -A ai_interview beat --loglevel=info
+  ```
+
+  #### b. 前端依赖安装与启动
+
+  ```bash
+  # 进入前端目录（新终端）
+  cd ai-interview-frontend
+  # 安装前端依赖
+  npm install
+  # 开发环境启动（热更新，推荐）
+  npm run dev
+  # 生产环境启动（打包后启动静态服务）
+  # npm run build
+  # 安装serve工具（如需生产环境启动）：npm install -g serve
+  # serve -s dist -p 80
+  ```
 
 #### 6. 初始化数据库与 GitHub App
-当容器启动后，我们需要执行数据库迁移、创建管理员账户，并在 Django 后台配置 GitHub App。
+当启动后，我们需要执行数据库迁移、创建管理员账户，并在 Django 后台配置 GitHub App。
 
 ```bash
+# 进入后端目录（新终端）
+cd ai-interview-backend
 # 1. 执行数据库迁移
-docker-compose exec backend python manage.py migrate
-
+python manage.py migrate
 # 2. 创建超级管理员 (按照提示输入)
-docker-compose exec backend python manage.py createsuperuser
+python manage.py createsuperuser
 ```
 
 **3. 配置 Django 后台的 GitHub App**
@@ -191,17 +227,18 @@ docker-compose exec backend python manage.py createsuperuser
 *   点击 `Save`。
 
 #### 7. 访问应用
-恭喜！一切准备就绪。
+
 *   **前端应用**: `http://localhost`
 *   **后台管理**: `http://localhost/admin/`
 *   **API 文档**: `http://localhost/api/v1/schema/swagger-ui/`
 
 #### 8. 停止服务
 ```bash
-docker-compose down
-```
-> 如果您想清除所有数据（包括数据库），请使用 `docker-compose down -v`。
+- 后端服务：直接关闭启动 Daphne、Celery Worker、Celery Beat 的终端窗口即可；
+- 前端服务：在启动前端的终端中按 `Ctrl+C` 停止；
 
+- 本地依赖服务（MySQL/Redis/RabbitMQ）：通过系统服务管理器停止（如 Windows 服务、Linux systemctl）。
+```
 ---
 
 ### 📄 许可证
