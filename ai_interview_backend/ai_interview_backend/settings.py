@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'interactions',
     'notifications',
    'chat',
+   'video_uploads',
 ]
 
 # 3. 将应用的入口指向 Channels 的 ASGI application

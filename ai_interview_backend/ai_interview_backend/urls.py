@@ -31,6 +31,7 @@ urlpatterns = [
         path('', include('interactions.urls')),
         path('', include('notifications.urls')),
         path('', include('chat.urls')),
+        path('', include('video_uploads.urls')),
         # 【新增】添加通用的文件上传路由
         path('upload/', FileUploadView.as_view(), name='file-upload'),
         path('', include('reports.urls')),
@@ -46,7 +47,8 @@ urlpatterns = [
 
 # 【核心修正】确保这行代码在主 urlpatterns 列表之外
 # 这会为 /media/ 开头的 URL 添加路由，使其能正确找到上传的文件
+# 只有在 DEBUG 模式下 (即本地开发环境)，才让 Django 开发服务器托管静态文件和媒体文件
 if settings.DEBUG:
-    # 静态文件路由（Admin 样式、JS 依赖）
+    # static() 函数会返回适用于静态文件的 URL 模式
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

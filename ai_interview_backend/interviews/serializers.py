@@ -11,10 +11,11 @@ class StartInterviewSerializer(serializers.Serializer):
     # difficulty = serializers.ChoiceField(choices=InterviewSession.Difficulty.choices, required=False)
     resume_id = serializers.IntegerField(required=False, help_text="可选的简历ID")
     question_count = serializers.IntegerField(required=False, default=5, min_value=1, max_value=10)
+    recording_enabled = serializers.BooleanField(required=False, default=False, help_text="是否开启面试录像")
 
 
     class Meta:
-        fields = ['job_position']
+        fields = ['job_position', 'recording_enabled']
 
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):
@@ -49,3 +50,20 @@ class SubmitAnswerSerializer(serializers.Serializer):
 
     class Meta:
         fields = ['question_id', 'answer_text', 'analysis_data']
+
+
+class FinishInterviewSerializer(serializers.Serializer):
+    """
+    用于接收面试结束时的录像数据
+    """
+    recording_data = serializers.JSONField(required=False, help_text="录像数据，包含文件标识、大小、分片数等")
+
+
+class InterviewRecordingSerializer(serializers.Serializer):
+    """
+    面试录像信息序列化器
+    """
+    video_url = serializers.URLField(allow_null=True)
+    video_status = serializers.CharField()
+    video_progress = serializers.IntegerField()
+    compression_ratio = serializers.FloatField(allow_null=True)

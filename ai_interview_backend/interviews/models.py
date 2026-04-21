@@ -34,6 +34,16 @@ class InterviewSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     report = models.JSONField(null=True, blank=True, verbose_name='面试报告')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    
+    recording_enabled = models.BooleanField(default=False, verbose_name='是否开启录像')
+    video_upload_task = models.ForeignKey(
+        'video_uploads.FileUploadTask',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='interview_sessions',
+        verbose_name='视频上传任务'
+    )
 
 
 

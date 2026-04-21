@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from resumes.models import Resume
 from .models import InterviewSession, InterviewQuestion
-from .serializers import InterviewSessionSerializer, StartInterviewSerializer, SubmitAnswerSerializer
+from .serializers import InterviewSessionSerializer, StartInterviewSerializer, SubmitAnswerSerializer, FinishInterviewSerializer
 from .ai_services import (
     generate_first_question,
     analyze_answer,
@@ -144,6 +144,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         job_position = serializer.validated_data['job_position']
         resume_id = serializer.validated_data.get('resume_id')
         question_count = serializer.validated_data.get('question_count')
+        recording_enabled = serializer.validated_data.get('recording_enabled', False)
 
         resume_text = ""
         resume_instance = None
@@ -157,7 +158,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
 
         session = InterviewSession.objects.create(
             user=request.user, job_position=job_position, resume=resume_instance,
-            question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now()
+            question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now(),
+            recording_enabled=recording_enabled
         )
         first_question_text = generate_first_question(job_position, request.user, resume_text)
         InterviewQuestion.objects.create(session=session, question_text=first_question_text, sequence=1)
@@ -236,7 +238,6 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         if not history:
             return Response({"error": "没有有效的问答记录，无法生成报告"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # --- [核心修改] 获取简历文本并传入 ---
         resume_text = None
         if session.resume:
             resume_text = format_resume_to_text(session.resume)
@@ -245,14 +246,38 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             job_position=session.job_position,
             interview_history=history,
             user=request.user,
-            resume_text=resume_text  # 传入简历文本
+            resume_text=resume_text
             )
 
         session.report = report_data
         session.status = InterviewSession.Status.FINISHED
         session.finished_at = timezone.now()
+        
+        if session.recording_enabled:
+            recording_serializer = FinishInterviewSerializer(data=request.data)
+            if recording_serializer.is_valid():
+                recording_data = recording_serializer.validated_data.get('recording_data')
+                if recording_data:
+                    from video_uploads.models import FileUploadTask
+                    upload_task = FileUploadTask.objects.create(
+                        user=request.user,
+                        file_identifier=recording_data.get('file_identifier'),
+                        file_name=f"interview_{session.id}.mp4",
+                        file_size=recording_data.get('file_size'),
+                        total_chunks=recording_data.get('total_chunks'),
+                        chunk_size=recording_data.get('chunk_size', 5 * 1024 * 1024),
+                        status=FileUploadTask.Status.UPLOADING
+                    )
+                    session.video_upload_task = upload_task
+        
         session.save()
-        return Response(report_data, status=status.HTTP_200_OK)
+        
+        response_data = report_data.copy()
+        response_data['recording_enabled'] = session.recording_enabled
+        if session.video_upload_task:
+            response_data['video_upload_task_id'] = str(session.video_upload_task.id)
+        
+        return Response(response_data, status=status.HTTP_200_OK)
 
         # --- [核心新增] 新增一个 action 用于获取 AI 参考答案 ---
 
@@ -286,6 +311,47 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         cache.set(cache_key, reference_answer, timeout=3600)
 
         return Response({"answer": reference_answer}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'], url_path='recording')
+    def get_recording(self, request, pk=None):
+        session = self.get_object()
+        
+        if not session.recording_enabled:
+            return Response({
+                'recording_enabled': False,
+                'message': '该面试未开启录像'
+            }, status=status.HTTP_200_OK)
+        
+        if not session.video_upload_task:
+            return Response({
+                'recording_enabled': True,
+                'video_status': 'not_uploaded',
+                'message': '录像尚未上传'
+            }, status=status.HTTP_200_OK)
+        
+        upload_task = session.video_upload_task
+        
+        response_data = {
+            'recording_enabled': True,
+            'video_status': upload_task.status,
+            'video_progress': upload_task.progress_percent,
+            'upload_task_id': str(upload_task.id),
+        }
+        
+        if hasattr(upload_task, 'transcode_task') and upload_task.transcode_task:
+            transcode_task = upload_task.transcode_task
+            response_data.update({
+                'transcode_status': transcode_task.status,
+                'transcode_progress': transcode_task.progress,
+                'compression_ratio': transcode_task.compression_ratio,
+            })
+            
+            if transcode_task.status == 'completed' and transcode_task.transcoded_file:
+                response_data['video_url'] = request.build_absolute_uri(
+                    transcode_task.transcoded_file.replace('\\', '/').replace('media/', '/media/')
+                )
+        
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class PolishDescriptionView(APIView):
