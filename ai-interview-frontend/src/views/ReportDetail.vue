@@ -80,7 +80,7 @@ import EmotionChart from '@/components/common/EmotionChart.vue';
 import AbilityRadarChart from '@/components/common/AbilityRadarChart.vue';
 import { useExport } from '@/composables/useExport';
 import { Download, UserFilled, Opportunity, ChatDotRound } from '@element-plus/icons-vue';
-import { ElMessage, ElCard, ElRow, ElCol, ElDivider, ElTable, ElTableColumn, ElRate, ElTag, ElTimeline, ElTimelineItem, ElCollapse, ElCollapseItem, ElButton, ElAvatar, ElIcon, type CollapseModelValue } from 'element-plus';
+import { ElMessage, ElRow, ElCol, ElDivider, ElTable, ElTableColumn, ElRate, ElTag, ElTimeline, ElTimelineItem, ElCollapse, ElCollapseItem, ElButton, ElAvatar, ElIcon, type CollapseModelValue } from 'element-plus';
 
 const route = useRoute();
 const isLoading = ref(true);

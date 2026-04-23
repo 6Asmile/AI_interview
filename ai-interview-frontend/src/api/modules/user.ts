@@ -99,22 +99,5 @@ export const disconnectSocialApi = (accountId: number): Promise<{ message: strin
     // URL 现在是动态的，并且是 POST 请求
     url: `/auth/social/disconnect/${accountId}/`,
     method: 'post',
-    // 不再需要 FormData 或 CSRF Token
   });
 };
-
-// 辅助函数，用于从 cookie 中获取 CSRF token
-function getCookie(name: string): string | null {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-        const cookies = document.cookie.split(';');
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-    return cookieValue;
-}

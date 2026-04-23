@@ -33,7 +33,7 @@ import { Emoji } from '@vavt/v3-extension';
 import '@vavt/v3-extension/lib/asset/style.css';
 import { uploadFileApi } from '@/api/modules/common'; // 导入通用上传API
 
-const props = defineProps<{
+defineProps<{
   placeholder?: string;
   isSubmitting: boolean;
 }>();

@@ -22,7 +22,7 @@ import { getAnalysisReportDetailApi, type ResumeAnalysisReportItem } from '@/api
 import AnalysisReportContent from '@/components/resume/analysis/AnalysisReportContent.vue';
 import { useExport } from '@/composables/useExport';
 import { Download } from '@element-plus/icons-vue';
-import { ElMessage, ElCard, ElEmpty, ElPageHeader, ElButton } from 'element-plus';
+import { ElMessage, ElEmpty, ElPageHeader, ElButton } from 'element-plus';
 
 const route = useRoute();
 const router = useRouter();

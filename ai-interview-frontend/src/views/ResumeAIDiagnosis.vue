@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 // --- 【核心修复】从 'vue' 中导入 nextTick ---
-import { ref, nextTick } from 'vue';
+import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElUpload } from 'element-plus';
 import type { UploadInstance, UploadProps, UploadRawFile, UploadFile } from 'element-plus';

@@ -71,10 +71,9 @@
 import { ref, computed, watch, nextTick } from 'vue';
 import { useResumeEditorStore } from '@/store/modules/resumeEditor';
 import draggable from 'vuedraggable';
-import { Plus, MagicStick } from '@element-plus/icons-vue';
+import { Plus } from '@element-plus/icons-vue';
 import { allTemplates, type ModuleTemplate } from '@/resume-templates/template-definitions';
 import ModuleFormItem from './forms/ModuleFormItem.vue';
-import { polishDescriptionApi } from '@/api/modules/resumeEditor';
 import DiffViewer from '@/components/common/DiffViewer.vue';
 
 const editorStore = useResumeEditorStore();
@@ -127,21 +126,6 @@ const scrollToConfigModule = (moduleId: string) => {
             });
         }
     });
-};
-
-const handleSimpleModulePolish = async (module: any) => {
-    const propName = module.props.hasOwnProperty('summary') ? 'summary' : 'content';
-    const oldHtml = module.props[propName] || '';
-    if (!oldHtml) return;
-
-    module.isPolishing = true;
-    try {
-        const res = await polishDescriptionApi(oldHtml, editorStore.resumeMeta?.job_title);
-        diffData.value = { oldHtml, newHtml: res.polished_html, target: module.props, propName };
-        diffDialogVisible.value = true;
-    } finally {
-        module.isPolishing = false;
-    }
 };
 
 const applyPolish = () => {

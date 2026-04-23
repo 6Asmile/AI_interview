@@ -206,5 +206,14 @@ export const useResumeEditorStore = defineStore('resumeEditor', {
             if (this.selectedComponentId === componentId) this.selectedComponentId = null;
         }
     },
+
+    applyTemplateStructure(structureJson: ResumeLayout | ResumeComponent[]) {
+        if (Array.isArray(structureJson)) {
+            this.distributeLayout(structureJson, this.selectedTemplateId);
+        } else if (structureJson && typeof structureJson === 'object' && 'sidebar' in structureJson) {
+            this.resumeJson = structureJson as ResumeLayout;
+        }
+        this.applyStylesAndTitle(this.selectedTemplateId);
+    },
   },
 });

@@ -8,7 +8,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-const props = defineProps({
+defineProps({
   text: { type: String, default: '模块标题' },
 });
 

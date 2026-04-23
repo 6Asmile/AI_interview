@@ -57,6 +57,7 @@ class FinishInterviewSerializer(serializers.Serializer):
     用于接收面试结束时的录像数据
     """
     recording_data = serializers.JSONField(required=False, help_text="录像数据，包含文件标识、大小、分片数等")
+    video_upload_id = serializers.CharField(required=False, allow_null=True, help_text="视频上传任务ID")
 
 
 class InterviewRecordingSerializer(serializers.Serializer):

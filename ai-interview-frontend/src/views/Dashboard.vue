@@ -3,7 +3,7 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { 
   ElMessage, ElDialog, ElRadio, ElTable, ElTableColumn, ElPagination, ElButton, 
-  ElRow, ElCol, ElRadioGroup, ElSlider, ElInputNumber, ElEmpty
+  ElRow, ElCol, ElRadioGroup, ElSlider, ElInputNumber, ElEmpty, ElSwitch
 } from 'element-plus';
 import { useJobStore } from '@/store/modules/job';
 import { getResumeListApi, type ResumeItem } from '@/api/modules/resume';
@@ -44,6 +44,7 @@ const isStarting = ref(false);
 // 【核心修正】将状态的 null 类型改为 undefined，以匹配 Element Plus 组件的要求
 const selectedResumeId = ref<number | undefined>(undefined);
 const questionCount = ref(5);
+const recordingEnabled = ref(false);
 const resumes = ref<ResumeItem[]>([]);
 const isLoadingResumes = ref(false);
 const resumePagination = ref({
@@ -90,21 +91,19 @@ const handleStartInterview = async () => {
   if (!selectedJob.value) return;
   isStarting.value = true;
   try {
-    // 【核心修正】构建一个符合 StartInterviewData 类型的 payload
     const payload: StartInterviewData = {
       job_position: selectedJob.value.name,
       question_count: questionCount.value,
+      recording_enabled: recordingEnabled.value,
     };
-    // 只有当 resume_id 存在时（不为 undefined），才将其添加到 payload 中
     if (selectedResumeId.value) {
       payload.resume_id = selectedResumeId.value;
     }
 
-    const session = await startInterviewApi(payload); // 传递修正后的 payload
+    const session = await startInterviewApi(payload);
     ElMessage.success('面试已开启，正在进入房间...');
     router.push({ name: 'InterviewRoom', params: { id: session.id } });
   } catch (error) {
-    // request.ts 中已经处理了错误提示
   } finally {
     isStarting.value = false;
   }
@@ -176,6 +175,13 @@ const handleStartInterview = async () => {
                  <el-input-number v-model="questionCount" :min="3" :max="10" controls-position="right" size="small" />
                </div>
             </div>
+            <div class="recording-setting">
+              <p>开启面试录像</p>
+              <div class="recording-switch-wrapper">
+                <el-switch v-model="recordingEnabled" active-text="录制面试过程" inactive-text="不录制" />
+              </div>
+              <p class="recording-hint">开启后将录制您的面试视频，可在面试后查看回放</p>
+            </div>
             <el-button
               type="primary"
               size="large"
@@ -223,6 +229,5 @@ const handleStartInterview = async () => {
 </template>
 
 <style scoped>
-/* 样式与上一版相同，无需修改 */
-.dashboard-container{padding:24px;background-color:#f5f7fa;height:calc(100vh - 90px)}.panel{background-color:#fff;border-radius:8px;border:1px solid #e4e7ed;height:100%;display:flex;flex-direction:column}.panel-header{padding:16px 20px;border-bottom:1px solid #e4e7ed}.panel-header h3{margin:0;font-size:1.1rem}.panel-body{padding:20px;flex-grow:1;overflow-y:auto}.job-selection-panel .panel-body{display:flex;flex-direction:column}.industry-tabs{margin-bottom:16px;display:flex;flex-wrap:wrap;gap:16px}.industry-tabs span{padding:4px 12px;cursor:pointer;border-radius:4px;transition:all .2s ease}.industry-tabs span.active{background-color:#ecf5ff;color:#409eff;font-weight:500}.job-list{flex-grow:1;overflow-y:auto}.job-radio-item{width:100%;margin:8px 0!important;height:auto;padding:12px;display:flex}.job-radio-item .job-name{font-weight:500;color:#303133}.job-radio-item .job-desc{font-size:.8rem;color:#909399;margin-top:4px;white-space:normal}.start-panel .panel-body{display:flex;flex-direction:column}.selected-job-info,.resume-selection,.question-count-setting{margin-bottom:24px}.selected-job-info p,.resume-selection p,.question-count-setting p{margin:0 0 8px;color:#606266;font-size:.9rem}.selected-job-info h4{margin:0;font-size:1.5rem;color:#303133}.placeholder-text{color:#c0c4cc}.resume-box{border:1px dashed #dcdfe6;border-radius:4px;padding:16px;text-align:center;cursor:pointer;color:#606266;transition:border-color .2s,color .2s}.resume-box:hover{border-color:#409eff;color:#409eff}.link-text{color:#409eff}.slider-wrapper{display:flex;align-items:center;gap:16px}.start-button{width:100%;margin-top:auto}.pagination-container{display:flex;justify-content:center;margin-top:16px}
+.dashboard-container{padding:24px;background-color:#f5f7fa;height:calc(100vh - 90px)}.panel{background-color:#fff;border-radius:8px;border:1px solid #e4e7ed;height:100%;display:flex;flex-direction:column}.panel-header{padding:16px 20px;border-bottom:1px solid #e4e7ed}.panel-header h3{margin:0;font-size:1.1rem}.panel-body{padding:20px;flex-grow:1;overflow-y:auto}.job-selection-panel .panel-body{display:flex;flex-direction:column}.industry-tabs{margin-bottom:16px;display:flex;flex-wrap:wrap;gap:16px}.industry-tabs span{padding:4px 12px;cursor:pointer;border-radius:4px;transition:all .2s ease}.industry-tabs span.active{background-color:#ecf5ff;color:#409eff;font-weight:500}.job-list{flex-grow:1;overflow-y:auto}.job-radio-item{width:100%;margin:8px 0!important;height:auto;padding:12px;display:flex}.job-radio-item .job-name{font-weight:500;color:#303133}.job-radio-item .job-desc{font-size:.8rem;color:#909399;margin-top:4px;white-space:normal}.start-panel .panel-body{display:flex;flex-direction:column}.selected-job-info,.resume-selection,.question-count-setting,.recording-setting{margin-bottom:24px}.selected-job-info p,.resume-selection p,.question-count-setting p,.recording-setting p{margin:0 0 8px;color:#606266;font-size:.9rem}.selected-job-info h4{margin:0;font-size:1.5rem;color:#303133}.placeholder-text{color:#c0c4cc}.resume-box{border:1px dashed #dcdfe6;border-radius:4px;padding:16px;text-align:center;cursor:pointer;color:#606266;transition:border-color .2s,color .2s}.resume-box:hover{border-color:#409eff;color:#409eff}.link-text{color:#409eff}.slider-wrapper{display:flex;align-items:center;gap:16px}.start-button{width:100%;margin-top:auto}.pagination-container{display:flex;justify-content:center;margin-top:16px}.recording-switch-wrapper{display:flex;align-items:center}.recording-hint{font-size:.75rem;color:#909399;margin-top:4px!important}
 </style>

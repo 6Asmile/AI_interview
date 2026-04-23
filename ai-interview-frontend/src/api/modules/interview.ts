@@ -10,11 +10,29 @@ export interface UserInfo { id: number; username: string; email: string; }
 export interface AnalysisFrame { timestamp: number; emotions: Record<string, number>; action?: string; } 
 
 export interface InterviewQuestionItem { id: number; question_text: string; sequence: number; answer_text: string; ai_feedback?: { feedback?: string }; analysis_data?: AnalysisFrame[]; }
-export interface InterviewSessionItem { id: string; user: UserInfo; job_position: string; status: string; question_count: number; questions: InterviewQuestionItem[]; started_at: string; }
-export interface StartInterviewData { job_position: string; resume_id?: number; question_count?: number; }
-export interface SubmitAnswerData { question_id: number; answer_text: string; analysis_data?: AnalysisFrame[]; }
+export interface InterviewSessionItem { id: string; user: UserInfo; job_position: string; status: string; question_count: number; questions: InterviewQuestionItem[]; started_at: string; recording_enabled?: boolean; video_upload_task?: string; }
+export interface StartInterviewData { job_position: string; resume_id?: number; question_count?: number; recording_enabled?: boolean; }
+export interface SubmitAnswerData { question_id: number; answer_text: string; analysis_data?: AnalysisFrame[]; video_data?: string; video_upload_id?: string; }
 export interface SubmitAnswerResponse { feedback: string; next_question?: InterviewQuestionItem; interview_finished?: boolean; }
 export interface UnfinishedCheckResponse { has_unfinished: boolean; session_id?: string; job_position?: string; }
+
+export interface RecordingStatusResponse {
+  has_recording: boolean;
+  video_url: string | null;
+  status: 'pending' | 'uploading' | 'transcoding' | 'completed' | 'failed' | null;
+  progress: number;
+  error_message: string | null;
+}
+
+export interface FinishInterviewData {
+  video_data?: string;
+  video_upload_id?: string;
+}
+
+export interface FinishInterviewResponse {
+  message: string;
+  report_id: string;
+}
 
 // [核心新增]
 // 定义 AI 参考答案的响应类型
@@ -38,6 +56,21 @@ export const startInterviewApi = (data: StartInterviewData, force: boolean = fal
   return request({ url: `/interviews/start/?force=${force}`, method: 'post', data });
 };
 export const getInterviewReportApi = getReportApi;
+
+export const getRecordingStatusApi = (sessionId: string): Promise<RecordingStatusResponse> => {
+  return request({
+    url: `/interviews/${sessionId}/recording/`,
+    method: 'get',
+  });
+};
+
+export const finishInterviewApi = (sessionId: string, data?: FinishInterviewData): Promise<FinishInterviewResponse> => {
+  return request({
+    url: `/interviews/${sessionId}/finish/`,
+    method: 'post',
+    data: data || {},
+  });
+};
 
 // --- 流式 API ---
 export const submitAnswerStreamApi = async (

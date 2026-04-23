@@ -5,7 +5,7 @@
     <p class="panel-desc">点击下方模块进行编辑，或拖拽调整顺序</p>
     
     <draggable
-      v-model="editorStore.resumeJson"
+      v-model="allModules"
       item-key="id"
       handle=".drag-indicator"
       class="added-modules-list"
@@ -47,16 +47,32 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import draggable from 'vuedraggable';
-import { useResumeEditorStore } from '@/store/modules/resumeEditor';
-// 【核心修改】从新文件中导入模块定义
+import { useResumeEditorStore, type ResumeComponent } from '@/store/modules/resumeEditor';
 import { allTemplates, type ModuleTemplate } from '@/resume-templates/template-definitions';
 import { Rank, Close, Plus } from '@element-plus/icons-vue';
 
 const editorStore = useResumeEditorStore();
 const dialogVisible = ref(false);
 
+const allModules = computed<ResumeComponent[]>({
+  get: () => [...editorStore.resumeJson.sidebar, ...editorStore.resumeJson.main],
+  set: (value) => {
+    const sidebarTypes = ['BaseInfo', 'Skills'];
+    const sidebar: ResumeComponent[] = [];
+    const main: ResumeComponent[] = [];
+    value.forEach(comp => {
+      if (sidebarTypes.includes(comp.moduleType)) {
+        sidebar.push(comp);
+      } else {
+        main.push(comp);
+      }
+    });
+    editorStore.updateResumeJson({ sidebar, main });
+  }
+});
+
 const availableTemplates = computed(() => {
-  const addedComponentNames = new Set(editorStore.resumeJson.map(c => c.componentName));
+  const addedComponentNames = new Set(allModules.value.map(c => c.componentName));
   return allTemplates.filter(t => !addedComponentNames.has(t.componentName));
 });
 
@@ -65,9 +81,7 @@ const addModule = (template: ModuleTemplate) => {
   dialogVisible.value = false;
 };
 
-// 增加一个滚动到对应模块的功能，提升体验
 const scrollToModule = (moduleId: string) => {
-  // 这里的实现需要 ConfigPanel 支持，暂时留空
   console.log('Scroll to:', moduleId);
 };
 </script>

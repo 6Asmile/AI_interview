@@ -65,7 +65,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage, ElSteps, ElStep, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElButton, ElLoading } from 'element-plus';
+import { ElMessage, ElSteps, ElStep, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElButton } from 'element-plus';
 import { templates } from '@/resume-templates';
 import { generateResumeApi } from '@/api/modules/resumeEditor';
 import { createResumeApi } from '@/api/modules/resume';

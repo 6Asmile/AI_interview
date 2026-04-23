@@ -125,7 +125,7 @@ const passwordForm = reactive<ChangePasswordData>({
   new_password2: '',
 });
 
-const validatePass2 = (rule: any, value: any, callback: any) => {
+const validatePass2 = (_rule: any, value: any, callback: any) => {
   if (value === '') { callback(new Error('请再次输入密码')); } 
   else if (value !== passwordForm.new_password1) { callback(new Error("两次输入的密码不一致!")); } 
   else { callback(); }

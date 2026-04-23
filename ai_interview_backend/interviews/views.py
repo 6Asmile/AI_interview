@@ -254,10 +254,23 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         session.finished_at = timezone.now()
         
         if session.recording_enabled:
-            recording_serializer = FinishInterviewSerializer(data=request.data)
-            if recording_serializer.is_valid():
-                recording_data = recording_serializer.validated_data.get('recording_data')
-                if recording_data:
+            finish_serializer = FinishInterviewSerializer(data=request.data)
+            if finish_serializer.is_valid():
+                video_upload_id = finish_serializer.validated_data.get('video_upload_id')
+                recording_data = finish_serializer.validated_data.get('recording_data')
+                print(f"[录像] finish接口收到数据 - video_upload_id: {video_upload_id}, recording_data: {recording_data}")
+                
+                if video_upload_id:
+                    try:
+                        from video_uploads.models import FileUploadTask
+                        upload_task = FileUploadTask.objects.get(id=video_upload_id, user=request.user)
+                        session.video_upload_task = upload_task
+                        print(f"[录像] 成功关联video_upload_task: {upload_task.id}")
+                    except FileUploadTask.DoesNotExist:
+                        print(f"[录像] FileUploadTask不存在: {video_upload_id}")
+                    except Exception as e:
+                        print(f"[录像] 关联video_upload_task失败: {e}")
+                elif recording_data:
                     from video_uploads.models import FileUploadTask
                     upload_task = FileUploadTask.objects.create(
                         user=request.user,
@@ -318,38 +331,69 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         
         if not session.recording_enabled:
             return Response({
+                'has_recording': False,
                 'recording_enabled': False,
-                'message': '该面试未开启录像'
+                'status': None,
+                'progress': 0,
+                'video_url': None,
+                'error_message': None
             }, status=status.HTTP_200_OK)
         
         if not session.video_upload_task:
             return Response({
+                'has_recording': True,
                 'recording_enabled': True,
-                'video_status': 'not_uploaded',
-                'message': '录像尚未上传'
+                'status': 'pending',
+                'progress': 0,
+                'video_url': None,
+                'error_message': None
             }, status=status.HTTP_200_OK)
         
         upload_task = session.video_upload_task
         
-        response_data = {
-            'recording_enabled': True,
-            'video_status': upload_task.status,
-            'video_progress': upload_task.progress_percent,
-            'upload_task_id': str(upload_task.id),
+        status_map = {
+            'pending': 'pending',
+            'uploading': 'uploading', 
+            'merging': 'transcoding',
+            'merged': 'completed',
+            'completed': 'completed',
+            'failed': 'failed'
         }
+        
+        video_status = status_map.get(upload_task.status, 'pending')
+        video_url = None
+        progress = 100 if upload_task.status in ['merged', 'completed'] else (getattr(upload_task, 'progress_percent', 0) or 0)
         
         if hasattr(upload_task, 'transcode_task') and upload_task.transcode_task:
             transcode_task = upload_task.transcode_task
-            response_data.update({
-                'transcode_status': transcode_task.status,
-                'transcode_progress': transcode_task.progress,
-                'compression_ratio': transcode_task.compression_ratio,
-            })
-            
-            if transcode_task.status == 'completed' and transcode_task.transcoded_file:
-                response_data['video_url'] = request.build_absolute_uri(
-                    transcode_task.transcoded_file.replace('\\', '/').replace('media/', '/media/')
+            if transcode_task.status == 'processing':
+                video_status = 'transcoding'
+                progress = transcode_task.progress or 0
+            elif transcode_task.status == 'completed':
+                video_status = 'completed'
+                progress = 100
+                if transcode_task.transcoded_file:
+                    video_url = request.build_absolute_uri(
+                        transcode_task.transcoded_file.replace('\\', '/').replace('media/', '/media/')
+                    )
+            elif transcode_task.status == 'failed':
+                video_status = 'failed'
+        
+        if not video_url and upload_task.merged_file_path:
+            import os
+            if os.path.exists(upload_task.merged_file_path):
+                video_url = request.build_absolute_uri(
+                    upload_task.merged_file_path.replace('\\', '/').replace('media/', '/media/')
                 )
+        
+        response_data = {
+            'has_recording': True,
+            'recording_enabled': True,
+            'status': video_status,
+            'progress': progress,
+            'video_url': video_url,
+            'error_message': None
+        }
         
         return Response(response_data, status=status.HTTP_200_OK)
 

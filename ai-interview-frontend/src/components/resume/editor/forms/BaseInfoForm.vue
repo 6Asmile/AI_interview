@@ -46,15 +46,6 @@ const newItemTemplates: Record<string, object> = {
   items: { label: '新条目', value: '新内容' },
 };
 
-const fullAvatarUrl = computed(() => {
-    if (!props.value.photo) return '';
-    if (props.value.photo.startsWith('http') || props.value.photo.startsWith('blob:')) {
-        return props.value.photo;
-    }
-    const baseUrl = import.meta.env.VITE_API_BASE_URL.split('/api/v1')[0];
-    return `${baseUrl}${props.value.photo}`;
-});
-
 const handleAvatarUpload = async (options: UploadRequestOptions) => {
   // 【核心修复】上传成功后，直接使用后端返回的相对路径
   // 预览时，让 BaseInfoModule 组件去拼接完整 URL
