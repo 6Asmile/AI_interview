@@ -2,7 +2,7 @@
 
 **iFaceOff** 是一个面向求职者的、AI 驱动的求职赋能平台。它通过深度整合人工智能技术与现代 Web 技术，旨在为用户提供从简历优化、模拟面试、能力评估到求职经验分享的一站式解决方案。
 
-[![Vue 3](https://img.shields.io/badge/Vue.js-3-42b883)](https://vuejs.org/)[![Django](https://img.shields.io/badge/Django-5-092e20)](https://www.djangoproject.com/)[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)](https://www.typescriptlang.org/)[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)](https://www.docker.com/)
+[![Vue 3](https://img.shields.io/badge/Vue.js-3-42b883)](https://vuejs.org/)[![Django](https://img.shields.io/badge/Django-5-092e20)](https://www.djangoproject.com/)[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)](https://www.typescriptlang.org/)[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)](https://www.docker.com/)[![FFmpeg](https://img.shields.io/badge/FFmpeg-Video-7733a1)](https://ffmpeg.org/)
 
 ---
 
@@ -10,10 +10,19 @@
 
 iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化的工具。
 
-#### 1.  AI 模拟面试
-提供高度拟真的、可随时进行的 AI 模拟面试，集成了**浏览器端情绪识别**和**语音转文字**技术，帮助用户克服紧张情绪，提升面试技巧。支持中断后继续面试。
+#### 1. AI 模拟面试（支持视频录制）
+
+提供高度拟真的、可随时进行的 AI 模拟面试，集成了**浏览器端情绪识别**、**语音转文字**和**视频录制**技术，帮助用户克服紧张情绪，提升面试技巧。支持中断后继续面试。
+
+**视频录制功能：**
+- 面试前可选择开启录像开关
+- 面试过程自动录制（WebRTC MediaRecorder）
+- 大文件分片上传 + 断点续传
+- FFmpeg 异步转码（hqdn3d 视频降噪 + anlmdn 音频降噪）
+- 面试结束后可查看录像回放
 
 ![AI 模拟面试房间](docs/images/interview-room.png)
+![面试录像回放](docs/images/interview-recording.png)
 
 #### 2. 多维度深度评估报告
 面试结束后，系统会异步生成包含综合评分、能力雷达图、关键词分析、STAR 法则分析、情绪波动图等**多维度的深度评估报告**，提供量化的、可执行的优化建议。
