@@ -144,23 +144,24 @@ watch(() => editorStore.selectedComponentId, (newId) => {
 </script>
 
 <style scoped>
-.config-panel { padding: 16px; }
-.zone-wrapper { margin-bottom: 24px; }
+.config-panel { padding: 20px 18px 28px; }
+.zone-wrapper { margin-bottom: 24px; padding: 18px; border: 1px solid #e5edf9; border-radius: 22px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); }
 .zone-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
 }
-.zone-title { font-size: 13px; color: #999; }
+.zone-title { font-size: 13px; color: #5d7bb0; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .module-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 50px;
-  border: 1px dashed #e0e0e0;
-  border-radius: 4px;
-  padding: 10px;
+  border: 1px dashed #cfe0fa;
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(246, 250, 255, 0.9);
 }
 .ghost {
   opacity: 0.5;
@@ -179,15 +180,17 @@ watch(() => editorStore.selectedComponentId, (newId) => {
   align-items: center;
   justify-content: center;
   padding: 16px 8px;
-  border: 1px solid #e8e8e8;
-  border-radius: 4px;
+  border: 1px solid #e2eaf7;
+  border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 .module-pool-item:hover {
   border-color: #409eff;
   color: #409eff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.09);
+  box-shadow: 0 12px 22px rgba(64, 158, 255, 0.12);
+  transform: translateY(-1px);
 }
 .module-pool-item .el-icon {
   font-size: 24px;

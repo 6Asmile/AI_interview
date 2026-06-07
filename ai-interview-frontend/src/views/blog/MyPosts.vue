@@ -1,5 +1,13 @@
 <template>
   <div class="my-posts-container">
+    <div class="posts-hero">
+      <div>
+        <p class="hero-kicker">Creator Dashboard</p>
+        <h1>我的文章</h1>
+        <p>把数据概览、趋势图和文章管理放在同一工作台里，浏览层次更清楚。</p>
+      </div>
+    </div>
+
     <!-- 数据分析模块 -->
     <div class="stats-section">
       <el-row :gutter="20">
@@ -164,15 +172,47 @@ onMounted(() => {
 
 <style scoped>
 .my-posts-container {
+  min-height: calc(100vh - 60px);
   padding: 24px;
-  background-color: #f5f7fa;
+  background:
+    radial-gradient(circle at top left, rgba(79, 138, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #f7faff 0%, #eff4fb 100%);
+}
+.posts-hero {
+  margin-bottom: 22px;
+  padding: 28px 30px;
+  border: 1px solid rgba(201, 214, 236, 0.75);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 20px 44px rgba(47, 74, 119, 0.08);
+  backdrop-filter: blur(14px);
+}
+.hero-kicker {
+  margin: 0 0 8px;
+  color: #5d7bb0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.posts-hero h1 {
+  margin: 0 0 10px;
+  color: #1d2d4d;
+  font-size: 30px;
+}
+.posts-hero p:last-child {
+  margin: 0;
+  color: #697994;
 }
 .stats-section {
   margin-bottom: 20px;
 }
 .chart-card {
   margin-top: 20px;
-  border-radius: 8px;
+  border-radius: 24px;
+  border: 1px solid rgba(207, 219, 238, 0.8);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 22px 50px rgba(43, 67, 108, 0.08);
 }
 .chart-header {
   display: flex;
@@ -180,7 +220,10 @@ onMounted(() => {
   align-items: center;
 }
 .posts-card {
-  border-radius: 8px;
+  border-radius: 24px;
+  border: 1px solid rgba(207, 219, 238, 0.8);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 22px 50px rgba(43, 67, 108, 0.08);
 }
 :deep(.el-tabs__header) {
   margin: 0 0 20px;
@@ -189,5 +232,11 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end; /* 右对齐 */
   margin-top: 24px;
+}
+
+@media (max-width: 900px) {
+  .my-posts-container {
+    padding: 16px;
+  }
 }
 </style>

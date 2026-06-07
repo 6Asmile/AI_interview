@@ -3,7 +3,7 @@
   <div class="resume-editor-container">
     <div class="editor-header">
       <div class="header-left">
-        <el-button :icon="ArrowLeft" @click="goBack" text>返回列表</el-button>
+        <el-button :icon="ArrowLeft" @click="goBack" text class="back-button">返回列表</el-button>
         <el-divider direction="vertical" />
         <el-input 
           v-if="editorStore.resumeMeta"
@@ -13,7 +13,7 @@
         />
       </div>
       <div class="header-actions">
-        <el-button @click="openJdDialog" :icon="Cpu" type="success" plain>AI 分析</el-button>
+        <el-button @click="openJdDialog" :icon="Cpu" type="success" plain class="soft-button">AI 分析</el-button>
         <el-select 
           v-model="selectedTemplateId" 
           placeholder="选择模板" 
@@ -26,9 +26,10 @@
             :value="template.id"
           />
         </el-select>
-        <el-button @click="handlePreview" :loading="isPreviewing">预览</el-button>
+        <el-button @click="handlePreview" :loading="isPreviewing" class="soft-button">预览</el-button>
         <el-button 
           type="primary" 
+          class="save-button"
           @click="handleSave" 
           :loading="editorStore.isSaving" 
           :icon="SuccessFilled"
@@ -47,7 +48,7 @@
       <main class="editor-canvas-wrapper"><ResumeCanvas /></main>
     </div>
 
-    <el-dialog v-model="jdDialogVisible" title="AI 简历分析" width="50%">
+    <el-dialog v-model="jdDialogVisible" title="AI 简历分析" width="50%" class="jd-dialog">
       <el-form-item label="请在此处粘贴目标岗位的职位描述 (JD)">
         <el-input v-model="jdText" type="textarea" :rows="10" placeholder="将职位描述粘贴到这里..." />
       </el-form-item>
@@ -147,14 +148,135 @@ const handleAnalysis = async () => {
 </script>
 
 <style scoped>
-.resume-editor-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
-.editor-header { display: flex; justify-content: space-between; align-items: center; padding: 0 24px; height: 60px; background-color: #fff; border-bottom: 1px solid #e8e8e8; flex-shrink: 0; }
-.header-left { display: flex; align-items: center; gap: 16px; }
-.resume-title-input { width: 300px; }
-.header-actions { display: flex; align-items: center; gap: 16px; }
-.template-selector { width: 150px; }
-.editor-main { display: flex; flex-grow: 1; overflow: hidden; height: 100%; }
-.editor-loading { padding: 20px; }
-.editor-sidebar { width: 450px; background-color: #fff; border-right: 1px solid #e8e8e8; overflow-y: auto; flex-shrink: 0; height: 100%; }
-.editor-canvas-wrapper { flex-grow: 1; padding: 20px; overflow-y: auto; background-color: #f0f2f5; display: flex; justify-content: center; height: 100%; }
+.resume-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 60px);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(80, 140, 255, 0.1), transparent 24%),
+    linear-gradient(180deg, #f7faff 0%, #eef3fb 100%);
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  height: 72px;
+  background: rgba(255, 255, 255, 0.88);
+  border-bottom: 1px solid #e1e9f5;
+  box-shadow: 0 10px 30px rgba(56, 83, 126, 0.06);
+  backdrop-filter: blur(10px);
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.back-button {
+  color: #5872a0;
+  font-weight: 600;
+}
+
+.resume-title-input {
+  width: 340px;
+}
+
+.resume-title-input :deep(.el-input__wrapper) {
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px #dbe4f2 inset;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.template-selector {
+  width: 170px;
+}
+
+.template-selector :deep(.el-select__wrapper) {
+  border-radius: 14px;
+}
+
+.soft-button {
+  border-radius: 14px;
+}
+
+.save-button {
+  min-height: 44px;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
+  box-shadow: 0 16px 28px rgba(42, 101, 216, 0.18);
+}
+
+.editor-main {
+  display: flex;
+  flex-grow: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+.editor-loading {
+  padding: 20px;
+}
+
+.editor-sidebar {
+  width: 450px;
+  background: rgba(255, 255, 255, 0.88);
+  border-right: 1px solid #e3eaf6;
+  overflow-y: auto;
+  flex-shrink: 0;
+  height: 100%;
+  box-shadow: 8px 0 24px rgba(56, 83, 126, 0.04);
+}
+
+.editor-canvas-wrapper {
+  flex-grow: 1;
+  padding: 26px;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  height: 100%;
+}
+
+:deep(.jd-dialog .el-dialog) {
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+:deep(.jd-dialog .el-dialog__header) {
+  padding: 22px 24px 18px;
+  margin-right: 0;
+  border-bottom: 1px solid #edf1f8;
+}
+
+:deep(.jd-dialog .el-dialog__body) {
+  padding: 24px;
+}
+
+@media (max-width: 1100px) {
+  .editor-header {
+    height: auto;
+    padding: 16px 20px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
+  .resume-title-input {
+    width: 240px;
+  }
+}
 </style>

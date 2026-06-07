@@ -1,13 +1,17 @@
 <template>
-  <div class="analysis-report-detail-container p-4 sm:p-6 lg:p-8" v-loading="isLoading">
-    
-    <div class="flex justify-between items-center mb-4">
-      <el-page-header @back="goBack" title="返回"><template #content><span class="text-lg font-medium">AI 简历分析报告</span></template></el-page-header>
-      <el-button type="primary" @click="exportToPdf()" :loading="isExporting" :icon="Download">{{ isExporting ? '导出中...' : '导出为 PDF' }}</el-button>
+  <div class="analysis-report-page" v-loading="isLoading">
+    <div class="analysis-toolbar">
+      <div class="analysis-toolbar-main">
+        <el-page-header @back="goBack" title="返回">
+          <template #content><span class="page-title">AI 简历分析报告</span></template>
+        </el-page-header>
+        <p class="page-copy">基于 AI 的简历分析与优化建议</p>
+      </div>
+      <el-button class="analysis-export" type="primary" @click="exportToPdf()" :loading="isExporting" :icon="Download">{{ isExporting ? '导出中...' : '导出为 PDF' }}</el-button>
     </div>
 
     <div ref="reportContentRef">
-      <div v-if="reportItem" class="page-break-inside-avoid">
+      <div v-if="reportItem" class="page-break-inside-avoid report-content-wrap">
         <AnalysisReportContent :report="reportItem.report_data" />
       </div>
       <el-empty v-else-if="!isLoading" description="报告不存在或加载失败"></el-empty>
@@ -56,7 +60,67 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.analysis-report-page {
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(88, 145, 255, 0.12), transparent 30%),
+    linear-gradient(180deg, #f7faff 0%, #eff4fb 100%);
+}
+
+.analysis-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 22px;
+  padding: 24px 28px;
+  border: 1px solid rgba(201, 214, 236, 0.75);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 20px 44px rgba(47, 74, 119, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.page-title {
+  color: #1d2e4f;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.page-copy {
+  margin: 12px 0 0;
+  color: #6b7a94;
+}
+
+.analysis-export {
+  min-height: 48px;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
+  box-shadow: 0 16px 28px rgba(42, 101, 216, 0.18);
+}
+
+.report-content-wrap {
+  border-radius: 28px;
+}
+
 .analysis-report-detail-container :deep(.el-card) {
   break-inside: avoid;
+}
+
+:deep(.el-page-header__left) {
+  margin-right: 18px;
+}
+
+@media (max-width: 900px) {
+  .analysis-report-page {
+    padding: 16px;
+  }
+
+  .analysis-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

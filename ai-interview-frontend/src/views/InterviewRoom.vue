@@ -3,6 +3,10 @@
     <div class="main-content-grid max-w-screen-2xl mx-auto">
       
       <aside class="left-panel glass-card p-4 flex flex-col gap-4">
+        <div class="panel-section-heading">
+          <p class="panel-eyebrow">Live Presence</p>
+          <h3>实时分析</h3>
+        </div>
         <div class="video-container relative aspect-[4/3] bg-gray-200 rounded-lg overflow-hidden shadow-inner">
           <video ref="videoRef" autoplay muted playsinline class="w-full h-full object-cover"></video>
           <div v-if="!modelsLoaded" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">摄像头加载中...</div>
@@ -12,8 +16,7 @@
           </div>
         </div>
         <div class="analysis-section">
-          <h3 class="uppercase text-xs font-semibold text-gray-400 tracking-wider mb-3">实时分析</h3>
-          <div class="grid grid-cols-2 gap-4 text-center p-3 bg-white/50 rounded-lg">
+          <div class="analysis-summary grid grid-cols-2 gap-4 text-center p-3 bg-white/50 rounded-lg">
             <div><p class="text-xs text-gray-500">主要情绪</p><p class="text-lg font-bold text-blue-600">{{ getPrimaryEmotion(emotions) }}</p></div>
             <div><p class="text-xs text-gray-500">语音状态</p><p class="text-lg font-bold text-gray-700">{{ isRecording ? '采集中' : '待机' }}</p></div>
           </div>
@@ -36,7 +39,7 @@
                   <el-button v-if="currentQuestion" @click="toggleSpeech" :icon="speechIcon" type="primary" circle />
                 </el-tooltip>
               </div>
-              <p class="text-xs text-gray-500 mt-1">问题 {{ currentQuestion?.sequence }} / {{ sessionInfo?.question_count }}</p>
+              <p class="question-progress text-xs text-gray-500 mt-1">问题 {{ currentQuestion?.sequence }} / {{ sessionInfo?.question_count }}</p>
             </div>
           </div>
           
@@ -66,6 +69,10 @@
 
       <aside class="right-panel flex flex-col gap-6">
         <div class="controls glass-card p-4 flex flex-col items-center gap-4">
+          <div class="panel-section-heading panel-section-heading--compact">
+            <p class="panel-eyebrow">Interview Actions</p>
+            <h3>操作面板</h3>
+          </div>
           <div v-if="isUploading" class="w-full">
             <p class="text-xs text-gray-500 mb-2 text-center">正在上传录像...</p>
             <el-progress :percentage="uploadProgress" :stroke-width="6" />
@@ -266,7 +273,36 @@ const uploadVideo = async (videoBlob: Blob): Promise<string | null> => {
   }
 };
 const startAnalysis = () => { if (analysisInterval.value) clearInterval(analysisInterval.value); analysisInterval.value = setInterval(async () => { if (videoRef.value) { await detectFace(videoRef.value); if (emotions.value) { const plainEmotions: Record<string, number> = {}; for (const key in emotionMap) { if (Object.prototype.hasOwnProperty.call(emotions.value, key)) { plainEmotions[key] = (emotions.value as any)[key]; } } analysisFrames.value.push({ timestamp: Date.now(), emotions: plainEmotions }); } } }, 1000); };
-const fetchSessionData = async () => { try { const sessionId = route.params.id as string; const res = await getInterviewSessionApi(sessionId); sessionInfo.value = res; const unanswered = res.questions.filter(q => !q.answer_text); if (unanswered.length > 0) { currentQuestion.value = unanswered[0]; } else { ElMessage.info("面试已完成，正在跳转到报告页面..."); router.push({ name: 'ReportDetail', params: { id: sessionId } }); } } catch (error) { ElMessage.error("加载面试信息失败"); } };
+const fetchSessionData = async () => {
+  try {
+    const sessionId = route.params.id as string;
+    const res = await getInterviewSessionApi(sessionId);
+    sessionInfo.value = res;
+
+    if (res.status === 'finished') {
+      ElMessage.info("面试已完成，正在跳转到报告页面...");
+      router.push({ name: 'ReportDetail', params: { id: sessionId } });
+      return;
+    }
+
+    if (res.status === 'canceled') {
+      ElMessage.warning("该面试已取消");
+      router.push({ name: 'Dashboard' });
+      return;
+    }
+
+    const unanswered = res.questions.filter(q => !q.answer_text);
+    if (unanswered.length > 0) {
+      currentQuestion.value = unanswered[0];
+      streamedQuestionText.value = '';
+      return;
+    }
+
+    currentQuestion.value = res.questions[res.questions.length - 1] || null;
+  } catch (error) {
+    ElMessage.error("加载面试信息失败");
+  }
+};
 
 const submitAnswer = async () => {
   cancel();
@@ -326,13 +362,17 @@ const confirmFinishInterview = async (isAutoFinish: boolean | Event = false) => 
     }
     
     try {
-      await finishInterviewApi(sessionInfo.value.id, {
+      const report = await finishInterviewApi(sessionInfo.value.id, {
         video_upload_id: videoUploadId || undefined
       });
       ElMessage.success("面试结束，正在生成报告...");
+      if (report?.error) {
+        throw new Error(report.error);
+      }
       router.push({ name: 'ReportDetail', params: { id: sessionInfo.value.id } });
     } catch (error) {
-      ElMessage.error("结束面试失败");
+      const message = error instanceof Error ? error.message : "结束面试失败";
+      ElMessage.error(message);
     } finally {
       isFinishing.value = false;
     }
@@ -366,9 +406,209 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.glass-card { background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(16px) saturate(180%); -webkit-backdrop-filter: blur(16px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 1rem; box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1); }
-.interview-room-container { overflow: hidden; }
-.main-content-grid { display: grid; grid-template-columns: 300px 1fr 260px; grid-template-rows: calc(100vh - 6rem); gap: 1.5rem; }
-@media (max-width: 1280px) { .main-content-grid { grid-template-columns: 300px 1fr; grid-template-rows: auto; } .right-panel { grid-column: 1 / -1; flex-direction: row; align-items: flex-start; } .right-panel .controls, .right-panel .tips { flex-basis: 50%; } }
-@media (max-width: 768px) { .interview-room-container { overflow-y: auto; } .main-content-grid { display: flex; flex-direction: column; height: auto; } .right-panel { flex-direction: column; } }
+.glass-card {
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid rgba(220, 232, 250, 0.82);
+  border-radius: 28px;
+  box-shadow: 0 24px 55px rgba(35, 63, 110, 0.12);
+}
+
+.interview-room-container {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(96, 155, 255, 0.12), transparent 25%),
+    radial-gradient(circle at top right, rgba(67, 207, 164, 0.08), transparent 20%),
+    linear-gradient(180deg, #f6f9ff 0%, #eff4fb 100%);
+}
+
+.main-content-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr 290px;
+  grid-template-rows: calc(100vh - 6rem);
+  gap: 1.5rem;
+}
+
+.panel-section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel-section-heading--compact {
+  width: 100%;
+}
+
+.panel-eyebrow {
+  margin: 0;
+  color: #6d86b2;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.panel-section-heading h3 {
+  margin: 0;
+  color: #1c2e4d;
+  font-size: 22px;
+}
+
+.left-panel,
+.center-panel,
+.right-panel .glass-card {
+  position: relative;
+}
+
+.video-container {
+  border-radius: 24px;
+  border: 1px solid rgba(222, 232, 246, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.analysis-summary {
+  border: 1px solid rgba(223, 232, 245, 0.9);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(245, 248, 255, 0.82) 100%) !important;
+}
+
+.emotion-bars-container {
+  padding: 16px 18px;
+  border: 1px solid rgba(223, 232, 245, 0.95);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.center-panel {
+  padding: 28px !important;
+}
+
+.question-display-area {
+  gap: 20px !important;
+}
+
+.ai-presenter {
+  padding: 18px 20px;
+  border: 1px solid rgba(222, 231, 245, 0.92);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(239, 245, 255, 0.72) 100%);
+}
+
+.question-header h2 {
+  color: #172944 !important;
+  font-size: 22px;
+}
+
+.question-progress {
+  color: #70819b !important;
+  font-size: 13px !important;
+}
+
+.question-text-box {
+  min-height: 220px !important;
+  padding: 28px !important;
+  border: 1px solid rgba(225, 233, 245, 0.95);
+  border-radius: 28px !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.93) 0%, rgba(247, 250, 255, 0.88) 100%) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.question-text-box p {
+  margin: 0;
+  color: #1f2f4c;
+  font-size: 28px;
+  line-height: 1.7;
+}
+
+.feedback-box {
+  border-radius: 20px !important;
+  box-shadow: 0 14px 28px rgba(76, 148, 91, 0.08);
+}
+
+.answer-input-area {
+  margin-top: 22px !important;
+  padding-top: 22px;
+  border-top: 1px solid rgba(223, 231, 244, 0.9);
+}
+
+.speech-control-bar {
+  border: 1px solid rgba(222, 231, 245, 0.9);
+  border-radius: 20px !important;
+  background: rgba(255, 255, 255, 0.78) !important;
+}
+
+.controls {
+  gap: 16px !important;
+}
+
+.controls :deep(.el-button--primary) {
+  min-height: 52px;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
+  box-shadow: 0 18px 28px rgba(42, 101, 216, 0.18);
+}
+
+.controls :deep(.el-button--danger.is-plain) {
+  min-height: 48px;
+  border-radius: 16px;
+}
+
+.recording-status,
+.tips {
+  border-radius: 24px;
+}
+
+.tips ul {
+  line-height: 1.8;
+}
+
+:deep(.el-progress-bar__outer) {
+  background: #e9eff8;
+}
+
+:deep(.el-progress-bar__inner) {
+  border-radius: 999px;
+}
+
+@media (max-width: 1280px) {
+  .main-content-grid {
+    grid-template-columns: 300px 1fr;
+    grid-template-rows: auto;
+  }
+
+  .right-panel {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .right-panel .controls,
+  .right-panel .tips,
+  .right-panel .recording-status {
+    flex: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .interview-room-container {
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .main-content-grid {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+  }
+
+  .right-panel {
+    flex-direction: column;
+  }
+
+  .question-text-box p {
+    font-size: 22px;
+  }
+}
 </style>

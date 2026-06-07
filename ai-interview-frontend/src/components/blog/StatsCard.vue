@@ -23,26 +23,37 @@ defineProps<{
 
 <style scoped>
 .stats-card {
-  border-radius: 8px;
+  border-radius: 22px;
+  border: 1px solid rgba(207, 219, 238, 0.8);
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9ff 100%);
+  box-shadow: 0 18px 34px rgba(43, 67, 108, 0.08);
 }
 .stats-content {
   display: flex;
   align-items: center;
+  gap: 16px;
 }
 .stats-icon {
   color: var(--el-color-primary);
-  margin-right: 16px;
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  background: rgba(64, 158, 255, 0.1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .stats-text {
   display: flex;
   flex-direction: column;
 }
 .stats-value {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: bold;
+  color: #1d2d4d;
 }
 .stats-label {
   font-size: 14px;
-  color: #909399;
+  color: #7b8aa2;
 }
 </style>

@@ -1,8 +1,8 @@
 <!-- src/components/chat/MessageInput.vue (新建文件) -->
 <template>
-  <div class="p-4 border-t bg-white">
+  <div class="message-composer">
     <!-- Toolbar -->
-    <div class="flex items-center space-x-2 mb-2">
+    <div class="composer-toolbar">
       <el-tooltip content="发送图片">
         <el-upload
           action="#"
@@ -10,7 +10,9 @@
           :http-request="handleFileUpload"
           :before-upload="beforeImageUpload"
         >
-          <el-icon class="cursor-pointer hover:text-blue-500" :size="20"><Picture /></el-icon>
+          <div class="toolbar-action">
+            <el-icon :size="18"><Picture /></el-icon>
+          </div>
         </el-upload>
       </el-tooltip>
       <el-tooltip content="发送文件">
@@ -20,13 +22,16 @@
           :http-request="handleFileUpload"
           :before-upload="beforeFileUpload"
         >
-          <el-icon class="cursor-pointer hover:text-blue-500" :size="20"><FolderOpened /></el-icon>
+          <div class="toolbar-action">
+            <el-icon :size="18"><FolderOpened /></el-icon>
+          </div>
         </el-upload>
       </el-tooltip>
     </div>
 
     <!-- Textarea -->
     <el-input
+      class="composer-input"
       ref="textareaRef"
       v-model="newMessage"
       type="textarea"
@@ -38,9 +43,9 @@
     />
 
     <!-- Footer -->
-    <div class="flex justify-end items-center mt-2">
-      <span class="text-sm text-gray-400 mr-4">{{ newMessage.length }} / 500</span>
-      <el-button type="primary" @click="handleSend" :disabled="!newMessage.trim() && !isUploading">
+    <div class="composer-footer">
+      <span class="composer-count">{{ isUploading ? '上传中...' : `${newMessage.length} / 500` }}</span>
+      <el-button class="composer-send" type="primary" @click="handleSend" :disabled="!newMessage.trim() && !isUploading">
         发送 (Enter)
       </el-button>
     </div>
@@ -126,3 +131,69 @@ const handleFileUpload = async (options: UploadRequestOptions) => {
   }
 };
 </script>
+
+<style scoped>
+.message-composer {
+  padding: 18px 22px 20px;
+  border-top: 1px solid #e8eef8;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.toolbar-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #d8e3f5;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+  color: #5372a8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toolbar-action:hover {
+  border-color: #93b4f4;
+  color: #2b62cd;
+  box-shadow: 0 12px 20px rgba(65, 109, 192, 0.14);
+  transform: translateY(-1px);
+}
+
+.composer-input :deep(.el-textarea__inner) {
+  padding: 14px 16px;
+  border: 1px solid #d8e2f2;
+  border-radius: 18px;
+  background: #fbfcff;
+  box-shadow: inset 0 1px 2px rgba(85, 111, 157, 0.05);
+}
+
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.composer-count {
+  color: #97a5bb;
+  font-size: 13px;
+}
+
+.composer-send {
+  min-width: 120px;
+  min-height: 42px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
+  box-shadow: 0 14px 24px rgba(42, 101, 216, 0.2);
+}
+</style>

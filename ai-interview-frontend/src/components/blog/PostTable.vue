@@ -1,5 +1,5 @@
 <template>
-  <el-table :data="posts" v-loading="isLoading" style="width: 100%">
+  <el-table :data="posts" v-loading="isLoading" style="width: 100%" class="post-table">
     <el-table-column prop="title" label="标题" min-width="250" show-overflow-tooltip />
 
     <el-table-column v-if="showStatusColumn" label="状态" width="100">
@@ -79,5 +79,14 @@ const deletePost = async (id: number) => {
 .action-buttons {
   display: flex;
   gap: 8px; /* 使用 gap 添加间距 */
+}
+
+.post-table :deep(.el-table__row td) {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.action-buttons :deep(.el-button) {
+  border-radius: 12px;
 }
 </style>

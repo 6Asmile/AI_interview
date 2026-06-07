@@ -1,12 +1,27 @@
 <!-- src/views/Resume.vue -->
 <template>
-  <div class="page-container">
-    <el-card>
+  <div class="resume-page">
+    <div class="resume-hero">
+      <div>
+        <p class="hero-kicker">Resume Center</p>
+        <h1>我的简历</h1>
+        <p>统一管理在线简历与上传简历，让创建、编辑和预览路径更清晰。</p>
+      </div>
+      <div class="hero-pill-group">
+        <span class="hero-pill">总数 {{ resumeList.length }}</span>
+        <span class="hero-pill">在线编辑与文件简历统一管理</span>
+      </div>
+    </div>
+
+    <el-card class="resume-card">
       <template #header>
         <div class="page-card-header">
-          <span>我的简历</span>
+          <div>
+            <p class="section-kicker">Resume Library</p>
+            <span>我的简历</span>
+          </div>
           <el-dropdown @command="handleCreateCommand">
-            <el-button type="primary">
+            <el-button type="primary" class="create-button">
               新建简历 <el-icon class="el-icon--right"><arrow-down /></el-icon>
             </el-button>
             <template #dropdown>
@@ -19,7 +34,7 @@
         </div>
       </template>
 
-      <el-table :data="resumeList" v-loading="isLoading" style="width: 100%">
+      <el-table :data="resumeList" v-loading="isLoading" style="width: 100%" class="resume-table">
         <el-table-column prop="title" label="简历标题" />
         <el-table-column prop="status" label="状态" width="120">
           <template #default="scope">
@@ -44,7 +59,7 @@
     </el-card>
 
     <!-- 文件上传对话框 -->
-    <el-dialog v-model="uploadDialogVisible" title="上传简历文件" width="500px" @close="resetUploadDialog">
+    <el-dialog v-model="uploadDialogVisible" title="上传简历文件" width="500px" class="upload-dialog" @close="resetUploadDialog">
       <!-- 【核心修改#2】增加标题输入框 -->
       <el-form-item label="简历标题">
         <el-input v-model="uploadForm.title" placeholder="请输入简历标题，默认为文件名"></el-input>
@@ -220,7 +235,124 @@ const statusTagType = (status: string) => ({ draft: 'info', published: 'success'
 </script>
 
 <style scoped>
-/* 样式与之前保持一致 */
-.page-container { padding: 20px; }
-.page-card-header { display: flex; justify-content: space-between; align-items: center; }
+.resume-page {
+  min-height: calc(100vh - 60px);
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(79, 138, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #f7faff 0%, #eff4fb 100%);
+}
+
+.resume-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 22px;
+  padding: 28px 30px;
+  border: 1px solid rgba(201, 214, 236, 0.75);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 20px 44px rgba(47, 74, 119, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.hero-kicker,
+.section-kicker {
+  margin: 0 0 8px;
+  color: #5d7bb0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.resume-hero h1 {
+  margin: 0 0 10px;
+  color: #1d2d4d;
+  font-size: 30px;
+}
+
+.resume-hero p:last-child {
+  margin: 0;
+  color: #697994;
+}
+
+.hero-pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.hero-pill {
+  padding: 10px 14px;
+  border: 1px solid #d7e3f7;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+  color: #49658f;
+  font-size: 13px;
+}
+
+.resume-card {
+  border: 1px solid rgba(207, 219, 238, 0.8);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 22px 50px rgba(43, 67, 108, 0.08);
+}
+
+.page-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page-card-header > div > span {
+  color: #1f3152;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.create-button {
+  min-height: 44px;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
+  box-shadow: 0 16px 28px rgba(42, 101, 216, 0.18);
+}
+
+.resume-table :deep(.el-table__row td) {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+:deep(.upload-dialog .el-dialog) {
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+:deep(.upload-dialog .el-dialog__header) {
+  padding: 22px 24px 18px;
+  margin-right: 0;
+  border-bottom: 1px solid #edf1f8;
+}
+
+:deep(.upload-dialog .el-dialog__body) {
+  padding: 24px;
+}
+
+@media (max-width: 900px) {
+  .resume-page {
+    padding: 16px;
+  }
+
+  .resume-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .hero-pill-group {
+    justify-content: flex-start;
+  }
+}
 </style>

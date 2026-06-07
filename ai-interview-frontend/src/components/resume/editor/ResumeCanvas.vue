@@ -112,11 +112,11 @@ const componentMap: Record<string, any> = {
 </script>
 
 <style scoped>
-.resume-paper { width: 210mm; min-height: 297mm; background-color: #fff; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); margin: 0 auto; transition: all 0.3s; }
+.resume-paper { width: 210mm; min-height: 297mm; background-color: #fff; box-shadow: 0 24px 48px rgba(26, 42, 73, 0.14); margin: 0 auto; transition: all 0.3s; border-radius: 8px; overflow: hidden; }
 .canvas-area { min-height: 297mm; width: 100%; }
-.canvas-component-item { border: 1px dashed transparent; cursor: pointer; }
+.canvas-component-item { border: 1px dashed transparent; cursor: pointer; transition: all .2s ease; }
 .canvas-area .canvas-component-item:not(:last-child) { border-bottom: 1px solid #f0f0f0; }
-.canvas-component-item:hover { border-color: #c6e2ff; }
-.canvas-component-item.is-selected { border: 1px solid #409eff; position: relative; }
+.canvas-component-item:hover { border-color: #c6e2ff; background: rgba(241, 247, 255, 0.4); }
+.canvas-component-item.is-selected { border: 1px solid #409eff; position: relative; background: rgba(232, 243, 255, 0.45); box-shadow: inset 0 0 0 1px rgba(64, 158, 255, 0.12); }
 .empty-tip { padding-top: 100px; }
 </style>

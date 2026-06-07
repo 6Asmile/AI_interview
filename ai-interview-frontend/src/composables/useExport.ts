@@ -37,7 +37,8 @@ export function useExport(elementRef: Ref<HTMLElement | null>, filename: string)
 
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const margin = 10;
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const margin = 12;
       const contentWidth = pdfWidth - margin * 2;
       let currentY = margin;
 
@@ -48,22 +49,26 @@ export function useExport(elementRef: Ref<HTMLElement | null>, filename: string)
         const element = elementsToPrint[i];
         
         const canvas = await html2canvas(element, {
-          scale: 2,
+          scale: Math.min(window.devicePixelRatio || 2, 2.5),
           useCORS: true,
-          backgroundColor: '#ffffff',
+          backgroundColor: '#f8fbff',
           allowTaint: true,
+          logging: false,
+          imageTimeout: 0,
         });
 
         const imgHeight = canvas.height * (contentWidth / canvas.width);
         
         // 如果当前页剩余空间不足以放下这个卡片，则换页
-        if (currentY + imgHeight > (pdf.internal.pageSize.getHeight() - margin)) {
+        if (currentY + imgHeight > (pdfHeight - margin)) {
           pdf.addPage();
           currentY = margin;
         }
 
-        pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', margin, currentY, contentWidth, imgHeight);
-        currentY += imgHeight + 5; // 增加 5mm 的卡片间距
+        pdf.setFillColor(248, 251, 255);
+        pdf.roundedRect(margin - 1.5, currentY - 1.5, contentWidth + 3, imgHeight + 3, 4, 4, 'F');
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.98), 'JPEG', margin, currentY, contentWidth, imgHeight);
+        currentY += imgHeight + 6;
       }
       
       pdf.save(`${filename}.pdf`);

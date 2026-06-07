@@ -3,7 +3,7 @@ services:
   backend:
     build: ./ai_interview_backend
     container_name: ai_interview_backend
-    command: gunicorn ai_interview_backend.wsgi:application --bind 0.0.0.0:8000
+    command: uvicorn ai_interview_backend.asgi:application --host 0.0.0.0 --port 8000
     volumes:
       - ./ai_interview_backend:/app
       - static_volume:/app/staticfiles  # 收集的静态文件存储卷

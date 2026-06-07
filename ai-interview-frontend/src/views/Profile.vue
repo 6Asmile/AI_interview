@@ -1,15 +1,27 @@
 <template>
-  <div class="page-container profile-container">
+  <div class="profile-page">
+    <div class="profile-hero">
+      <div>
+        <p class="hero-kicker">Account Center</p>
+        <h1>个人资料</h1>
+        <p>统一查看头像、基础信息、安全设置和第三方账户绑定。</p>
+      </div>
+    </div>
+
+    <div class="page-container profile-container">
     <!-- 个人信息卡片 -->
-    <el-card>
+    <el-card class="profile-card">
       <template #header>
         <div class="page-card-header">
-          <span>个人信息</span>
+          <div>
+            <p class="section-kicker">Profile</p>
+            <span>个人信息</span>
+          </div>
         </div>
       </template>
       <div v-if="!loading" class="profile-content">
         <div class="avatar-section">
-          <el-avatar :size="120" :src="profileForm.avatar || defaultAvatar" />
+          <el-avatar :size="128" :src="profileForm.avatar || defaultAvatar" class="profile-avatar" />
           <el-upload
             :show-file-list="false"
             :before-upload="beforeAvatarUpload"
@@ -39,10 +51,13 @@
     </el-card>
 
     <!-- 安全设置卡片 -->
-    <el-card>
+    <el-card class="profile-card">
       <template #header>
         <div class="page-card-header">
-          <span>安全设置</span>
+          <div>
+            <p class="section-kicker">Security</p>
+            <span>安全设置</span>
+          </div>
         </div>
       </template>
       <div v-if="!loading" class="info-section">
@@ -68,10 +83,13 @@
     </el-card>
 
     <!-- 第三方账户绑定 -->
-    <el-card>
+    <el-card class="profile-card">
       <template #header>
         <div class="page-card-header">
-          <span>第三方账户绑定</span>
+          <div>
+            <p class="section-kicker">Connections</p>
+            <span>第三方账户绑定</span>
+          </div>
         </div>
       </template>
       <div v-if="!loading" class="social-accounts">
@@ -92,6 +110,7 @@
       </div>
       <el-skeleton :rows="2" animated v-if="loading" />
     </el-card>
+    </div>
   </div>
 </template>
 
@@ -235,13 +254,145 @@ const handleDisconnect = async (provider: string) => {
 </script>
 
 <style scoped>
-.profile-container { display: flex; flex-direction: column; gap: 20px; }
-.profile-content { display: flex; align-items: flex-start; gap: 50px; }
-.avatar-section { display: flex; flex-direction: column; align-items: center; gap: 20px; }
-.info-section { flex-grow: 1; max-width: 500px; }
-.social-accounts { display: flex; flex-direction: column; gap: 15px; }
-.account-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border: 1px solid #e4e7ed; border-radius: 4px; }
-.account-info { display: flex; align-items: center; gap: 10px; font-weight: 500; }
-.provider-icon { width: 24px; height: 24px; }
-.account-status { display: flex; align-items: center; gap: 10px; color: #909399; }
+.profile-page {
+  min-height: calc(100vh - 60px);
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(79, 138, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #f7faff 0%, #eff4fb 100%);
+}
+
+.profile-hero {
+  margin-bottom: 22px;
+  padding: 28px 30px;
+  border: 1px solid rgba(201, 214, 236, 0.75);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 20px 44px rgba(47, 74, 119, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.hero-kicker,
+.section-kicker {
+  margin: 0 0 8px;
+  color: #5d7bb0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.profile-hero h1 {
+  margin: 0 0 10px;
+  color: #1d2d4d;
+  font-size: 30px;
+}
+
+.profile-hero p:last-child {
+  margin: 0;
+  color: #697994;
+}
+
+.profile-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 0;
+}
+
+.profile-card {
+  border: 1px solid rgba(207, 219, 238, 0.8);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 22px 50px rgba(43, 67, 108, 0.08);
+}
+
+.page-card-header > div > span {
+  color: #1f3152;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.profile-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 50px;
+}
+
+.avatar-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.profile-avatar {
+  box-shadow: 0 22px 40px rgba(63, 95, 150, 0.16);
+}
+
+.upload-btn {
+  min-height: 44px;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
+  box-shadow: 0 16px 28px rgba(42, 101, 216, 0.18);
+}
+
+.info-section {
+  flex-grow: 1;
+  max-width: 560px;
+}
+
+.social-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.account-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #e4ebf8;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.account-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+  color: #203252;
+}
+
+.provider-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.account-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #7d8ba3;
+}
+
+@media (max-width: 900px) {
+  .profile-page {
+    padding: 16px;
+  }
+
+  .profile-content {
+    flex-direction: column;
+    gap: 26px;
+  }
+
+  .account-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}
 </style>

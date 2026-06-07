@@ -1,20 +1,20 @@
 <!-- src/components/chat/MessageItem.vue (完整代码) -->
 <template>
-  <div class="mb-4 flex" :class="isMe ? 'justify-end' : 'justify-start'">
+  <div class="message-row" :class="isMe ? 'message-row--me' : 'message-row--peer'">
     <!-- 对方头像 -->
-    <div v-if="!isMe" class="mr-3">
-      <el-avatar :size="32" :src="message.sender.avatar || undefined">
+    <div v-if="!isMe" class="message-avatar-slot">
+      <el-avatar :size="34" :src="message.sender.avatar || undefined" class="message-avatar">
         {{ message.sender.username.charAt(0).toUpperCase() }}
       </el-avatar>
     </div>
     
-    <div class="max-w-xs lg:max-w-md">
+    <div class="message-content" :class="isMe ? 'message-content--me' : 'message-content--peer'">
       <!-- 对方用户名 -->
-      <div v-if="!isMe" class="text-xs text-gray-500 mb-1">{{ message.sender.username }}</div>
+      <div v-if="!isMe" class="message-sender">{{ message.sender.username }}</div>
       
       <div
-        class="p-3 rounded-lg"
-        :class="isMe ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'"
+        class="message-bubble"
+        :class="isMe ? 'message-bubble--me' : 'message-bubble--peer'"
       >
         <!-- 1. 文本消息 -->
         <p v-if="message.message_type === 'text'" class="whitespace-pre-wrap">{{ message.content }}</p>
@@ -57,14 +57,14 @@
       </div>
       
       <!-- 时间戳 -->
-      <div class="text-xs text-gray-400 mt-1" :class="isMe ? 'text-right' : 'text-left'">
+      <div class="message-time" :class="isMe ? 'message-time--me' : 'message-time--peer'">
         {{ formatDateTime(message.timestamp, 'HH:mm') }}
       </div>
     </div>
     
     <!-- 自己的头像 -->
-    <div v-if="isMe" class="ml-3">
-      <el-avatar :size="32" :src="authStore.avatar || undefined">
+    <div v-if="isMe" class="message-avatar-slot">
+      <el-avatar :size="34" :src="authStore.avatar || undefined" class="message-avatar">
         {{ authStore.username?.charAt(0).toUpperCase() }}
       </el-avatar>
     </div>
@@ -114,16 +114,89 @@ const getFullUrl = (url: string | null) => {
 </script>
 
 <style scoped>
+.message-row {
+  display: flex;
+  margin-bottom: 18px;
+}
+
+.message-row--me {
+  justify-content: flex-end;
+}
+
+.message-row--peer {
+  justify-content: flex-start;
+}
+
+.message-avatar-slot {
+  margin: 0 10px;
+}
+
+.message-avatar {
+  box-shadow: 0 10px 18px rgba(72, 99, 145, 0.16);
+}
+
+.message-content {
+  max-width: min(72%, 680px);
+}
+
+.message-content--me {
+  align-items: flex-end;
+}
+
+.message-sender {
+  margin-bottom: 6px;
+  color: #7b8aa2;
+  font-size: 12px;
+}
+
+.message-bubble {
+  padding: 14px 16px;
+  border-radius: 20px;
+  line-height: 1.65;
+  box-shadow: 0 14px 24px rgba(58, 87, 133, 0.08);
+}
+
+.message-bubble--me {
+  background: linear-gradient(135deg, #2a65d8 0%, #5d9eff 100%);
+  color: white;
+  border-top-right-radius: 8px;
+}
+
+.message-bubble--peer {
+  background: rgba(255, 255, 255, 0.92);
+  color: #283752;
+  border: 1px solid #dfE7f4;
+  border-top-left-radius: 8px;
+}
+
+.message-time {
+  margin-top: 6px;
+  color: #9aa8bc;
+  font-size: 12px;
+}
+
+.message-time--me {
+  text-align: right;
+}
+
 /* 链接颜色适配背景 */
-.bg-blue-500 a {
+.message-bubble--me a {
   color: white;
 }
-.bg-gray-200 a {
+
+.message-bubble--peer a {
   color: #1f2937;
 }
+
 /* 保留换行符 */
 .whitespace-pre-wrap {
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+@media (max-width: 768px) {
+  .message-content {
+    max-width: 82%;
+  }
 }
 </style>
