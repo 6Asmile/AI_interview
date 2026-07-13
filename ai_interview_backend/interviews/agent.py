@@ -1389,6 +1389,9 @@ class CompositeInterviewAgentEngine(LangGraphInterviewAgentEngine):
 
 def get_interview_agent_engine() -> InterviewAgentEngine:
     engine_name = getattr(settings, 'INTERVIEW_AGENT_ENGINE', 'default')
+    if engine_name == 'composite_v3':
+        from .agent_v3 import CompositeV3InterviewAgentEngine
+        return CompositeV3InterviewAgentEngine()
     if engine_name == 'composite_v2':
         from .agent_v2 import CompositeV2InterviewAgentEngine
         return CompositeV2InterviewAgentEngine()

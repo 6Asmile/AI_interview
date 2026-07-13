@@ -44,7 +44,10 @@ const startConfirmVisible = ref(false);
 const isStarting = ref(false);
 // 【核心修正】将状态的 null 类型改为 undefined，以匹配 Element Plus 组件的要求
 const selectedResumeId = ref<number | undefined>(undefined);
-const questionCount = ref(5);
+const targetDurationMinutes = ref(30);
+const interviewMode = ref<NonNullable<StartInterviewData['interview_mode']>>('project_with_fundamentals');
+const experienceMode = ref<NonNullable<StartInterviewData['experience_mode']>>('realistic');
+const questionCount = computed(() => Math.min(18, Math.max(5, Math.round(targetDurationMinutes.value / 3))));
 const recordingEnabled = ref(false);
 const jdText = ref('');
 const resumes = ref<ResumeItem[]>([]);
@@ -66,8 +69,13 @@ const jdRecognitionText = computed(() => {
 });
 
 const estimatedDuration = computed(() => {
-  return `${questionCount.value * 3}-${questionCount.value * 5} 分钟`;
+  return `约 ${targetDurationMinutes.value} 分钟，题量按回答动态调整`;
 });
+const interviewModeLabel = computed(() => ({
+  relaxed: '宽松交流', strict: '严格追问', fundamentals: '基础知识',
+  project_deep_dive: '项目深挖', project_with_fundamentals: '项目穿插基础知识',
+  system_design: '系统设计', behavioral: '行为面试', structured: '结构化面试',
+}[interviewMode.value]));
 
 // --- 数据获取 ---
 onMounted(() => {
@@ -118,6 +126,9 @@ const handleStartInterview = async () => {
     const payload: StartInterviewData = {
       job_position: selectedJob.value.name,
       question_count: questionCount.value,
+      target_duration_minutes: targetDurationMinutes.value,
+      interview_mode: interviewMode.value,
+      experience_mode: experienceMode.value,
       recording_enabled: recordingEnabled.value,
     };
     if (jdText.value.trim()) {
@@ -151,8 +162,8 @@ const handleStartInterview = async () => {
           <strong>{{ jobStore.industriesWithJobs.length || 0 }}</strong>
         </div>
         <div class="intro-stat">
-          <span class="stat-label">题目数量</span>
-          <strong>{{ questionCount }}</strong>
+          <span class="stat-label">目标时长</span>
+          <strong>{{ targetDurationMinutes }} 分钟</strong>
         </div>
       </div>
     </div>
@@ -215,7 +226,8 @@ const handleStartInterview = async () => {
               <h4 v-if="selectedJob">{{ selectedJob.name }}</h4>
               <p v-else class="placeholder-text">请从左侧选择岗位</p>
               <div class="quick-badges">
-                <span class="quick-badge">题量 {{ questionCount }}</span>
+                <span class="quick-badge">{{ interviewModeLabel }}</span>
+                <span class="quick-badge">约 {{ targetDurationMinutes }} 分钟</span>
                 <span class="quick-badge">{{ recordingEnabled ? '已开启录像' : '未开启录像' }}</span>
               </div>
             </div>
@@ -239,11 +251,31 @@ const handleStartInterview = async () => {
               <p class="jd-hint">填写 JD 后，面试官会优先围绕岗位职责、技能要求和业务场景提问，而不是套用固定模板。</p>
             </div>
             <div class="question-count-setting">
-               <p>设置面试问题数量</p>
+               <p>设置目标面试时长</p>
                <div class="slider-wrapper">
-                 <el-slider v-model="questionCount" :min="3" :max="10" show-stops />
-                 <el-input-number v-model="questionCount" :min="3" :max="10" controls-position="right" size="small" />
+                 <el-slider v-model="targetDurationMinutes" :min="10" :max="60" :step="5" show-stops />
+                 <el-input-number v-model="targetDurationMinutes" :min="10" :max="120" :step="5" controls-position="right" size="small" />
                </div>
+            </div>
+            <div class="question-count-setting">
+              <p>面试风格</p>
+              <el-select v-model="interviewMode" class="w-full">
+                <el-option label="项目穿插基础知识" value="project_with_fundamentals" />
+                <el-option label="项目深挖" value="project_deep_dive" />
+                <el-option label="严格追问" value="strict" />
+                <el-option label="宽松交流" value="relaxed" />
+                <el-option label="基础知识" value="fundamentals" />
+                <el-option label="系统设计" value="system_design" />
+                <el-option label="行为面试" value="behavioral" />
+                <el-option label="结构化面试" value="structured" />
+              </el-select>
+            </div>
+            <div class="question-count-setting">
+              <p>体验模式</p>
+              <el-radio-group v-model="experienceMode">
+                <el-radio-button label="realistic">真实模拟</el-radio-button>
+                <el-radio-button label="coaching">训练指导</el-radio-button>
+              </el-radio-group>
             </div>
             <div class="recording-setting">
               <p>开启面试录像</p>
@@ -309,20 +341,20 @@ const handleStartInterview = async () => {
             <strong>{{ selectedResumeTitle }}</strong>
           </div>
           <div>
-            <span>题量</span>
-            <strong>{{ questionCount }} 题</strong>
+            <span>面试风格</span>
+            <strong>{{ interviewModeLabel }}</strong>
           </div>
           <div>
             <span>录像</span>
             <strong>{{ recordingEnabled ? '开启' : '关闭' }}</strong>
           </div>
           <div>
-            <span>预计时长</span>
+            <span>时长与题量</span>
             <strong>{{ estimatedDuration }}</strong>
           </div>
         </div>
         <p class="confirm-note">
-          开始后系统会先要求自我介绍，再根据岗位、JD 和简历逐步追问。请确认配置无误，避免误开面试。
+          开始后系统会先要求自我介绍，再根据岗位、JD、简历和回答证据动态追问。真实模拟模式不会在过程中展示评分。
         </p>
       </div>
       <template #footer>

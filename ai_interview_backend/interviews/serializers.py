@@ -34,7 +34,18 @@ class StartInterviewSerializer(serializers.Serializer):
     # difficulty = serializers.ChoiceField(choices=InterviewSession.Difficulty.choices, required=False)
     resume_id = serializers.IntegerField(required=False, help_text="可选的简历ID")
     jd_text = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, help_text="可选的岗位JD文本")
-    question_count = serializers.IntegerField(required=False, default=5, min_value=1, max_value=10)
+    question_count = serializers.IntegerField(required=False, default=8, min_value=1, max_value=18)
+    target_duration_minutes = serializers.IntegerField(required=False, default=30, min_value=10, max_value=120)
+    interview_mode = serializers.ChoiceField(
+        choices=InterviewTemplate.InterviewMode.choices,
+        required=False,
+        allow_blank=True,
+    )
+    experience_mode = serializers.ChoiceField(
+        choices=InterviewSession.ExperienceMode.choices,
+        required=False,
+        default=InterviewSession.ExperienceMode.REALISTIC,
+    )
     recording_enabled = serializers.BooleanField(required=False, default=False, help_text="是否开启面试录像")
     template_id = serializers.IntegerField(required=False, allow_null=True, help_text="可选的面试模板ID")
 
@@ -51,6 +62,18 @@ class InterviewQuestionSerializer(serializers.ModelSerializer):
         model = InterviewQuestion
         fields = '__all__'
         read_only_fields = ('question_plan', 'question_signature', 'target_dimension', 'generation_mode', 'validation_status')
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        can_audit = can_manage_interview_system(user)
+        if instance.session.experience_mode == InterviewSession.ExperienceMode.REALISTIC and not can_audit:
+            data['ai_feedback'] = None
+            data['rag_context'] = []
+            data['question_plan'] = {}
+            data['target_dimension'] = ''
+        return data
 
 
 class InterviewQuestionGenerationJobSerializer(serializers.ModelSerializer):
@@ -113,10 +136,47 @@ class InterviewSessionSerializer(serializers.ModelSerializer):
     """
     # 使用嵌套序列化器，在获取会话详情时，一并返回所有关联的问题
     questions = InterviewQuestionSerializer(many=True, read_only=True)
+    elapsed_seconds = serializers.SerializerMethodField()
+    estimated_question_range = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewSession
         fields = '__all__'
+
+    def get_elapsed_seconds(self, obj):
+        if not obj.started_at:
+            return 0
+        end = obj.finished_at or timezone.now()
+        return max(0, int((end - obj.started_at).total_seconds()))
+
+    def get_estimated_question_range(self, obj):
+        policy = (obj.session_plan or {}).get('termination_policy') or {}
+        return {
+            'min': int(policy.get('min_turns') or 5),
+            'max': int(policy.get('max_turns') or 18),
+        }
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        can_audit = can_manage_interview_system(user)
+        if instance.experience_mode == InterviewSession.ExperienceMode.REALISTIC and not can_audit:
+            termination = (instance.session_plan or {}).get('termination_policy') or {}
+            data['memory_summary'] = {}
+            data['coverage_summary'] = {}
+            data['covered_topics'] = []
+            data['pending_topics'] = []
+            data['template_snapshot'] = {}
+            data['session_plan'] = {
+                'interview_mode': instance.interview_mode,
+                'experience_mode': instance.experience_mode,
+                'termination_policy': {
+                    'target_duration_minutes': termination.get('target_duration_minutes', instance.target_duration_minutes),
+                    'progress_mode': termination.get('progress_mode', instance.progress_mode),
+                },
+            }
+        return data
 
 
 class InterviewAgentTraceSerializer(serializers.ModelSerializer):
@@ -322,7 +382,12 @@ class InterviewRubricSerializer(serializers.ModelSerializer):
 class InterviewTemplateStageSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewTemplateStage
-        fields = ['id', 'stage_key', 'name', 'order', 'question_ratio', 'target_dimensions', 'question_guidance']
+        fields = [
+            'id', 'stage_key', 'name', 'order', 'question_ratio', 'target_dimensions',
+            'question_guidance', 'min_duration_minutes', 'max_duration_minutes',
+            'min_verified_dimensions', 'allowed_question_types', 'entry_condition',
+            'exit_condition', 'allow_topic_return',
+        ]
 
 
 class InterviewTemplateSerializer(serializers.ModelSerializer):
@@ -343,6 +408,14 @@ class InterviewTemplateSerializer(serializers.ModelSerializer):
             'is_active',
             'version',
             'require_rag',
+            'interview_mode',
+            'target_duration_minutes',
+            'min_duration_minutes',
+            'hard_max_duration_minutes',
+            'min_turns',
+            'max_turns',
+            'candidate_question_minutes',
+            'style_profile',
             'config',
             'created_by',
             'created_at',

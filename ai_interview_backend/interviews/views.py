@@ -469,6 +469,9 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         jd_text = serializer.validated_data.get('jd_text', '').strip()
         resume_id = serializer.validated_data.get('resume_id')
         question_count = serializer.validated_data.get('question_count')
+        target_duration_minutes = serializer.validated_data.get('target_duration_minutes')
+        interview_mode = serializer.validated_data.get('interview_mode') or ''
+        experience_mode = serializer.validated_data.get('experience_mode')
         recording_enabled = serializer.validated_data.get('recording_enabled', False)
         template_id = serializer.validated_data.get('template_id')
 
@@ -494,6 +497,9 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             question_count=question_count,
             job_position=job_position,
             jd_text=jd_text,
+            target_duration_minutes=target_duration_minutes,
+            interview_mode=interview_mode,
+            experience_mode=experience_mode,
         )
         initial_memory, initial_pending_topics = agent.build_initial_memory(
             job_position,
@@ -504,6 +510,10 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         session = InterviewSession.objects.create(
             user=request.user, job_position=job_position, resume=resume_instance,
             question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now(),
+            target_duration_minutes=target_duration_minutes,
+            experience_mode=experience_mode,
+            interview_mode=interview_mode or template.interview_mode,
+            progress_mode='time_and_coverage' if getattr(agent, 'engine_name', '') == 'composite_v3' else 'question_count',
             recording_enabled=recording_enabled,
             template=template,
             session_plan=session_plan,
@@ -522,7 +532,26 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             difficulty=session.difficulty,
             jd_text=jd_text
         )
-        InterviewQuestion.objects.create(session=session, question_text=first_question_text, sequence=1)
+        InterviewQuestion.objects.create(
+            session=session,
+            question_text=first_question_text,
+            sequence=1,
+            question_plan={
+                'stage': InterviewSession.InterviewStage.OPENING,
+                'target_stage': InterviewSession.InterviewStage.SELF_INTRO,
+                'target_dimension': '',
+                'next_action': 'ASK_NEW',
+                'topic_id': 'self_intro',
+                'parent_topic_id': '',
+                'followup_depth': 0,
+                'answer_state': '',
+                'dialogue_act': 'opening',
+                'stage_entry_reason': 'interview_started',
+                'stage_exit_reason': '',
+            },
+            generation_mode='deterministic_opening',
+            validation_status='validated',
+        )
         if hasattr(agent, 'remember_generated_question'):
             session.memory_summary = agent.remember_generated_question(session.memory_summary, first_question_text)
             session.save(update_fields=['memory_summary', 'updated_at'])
@@ -531,16 +560,17 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         return Response(session_data, status=status.HTTP_201_CREATED)
 
     def _serialize_question(self, question: InterviewQuestion) -> dict:
+        realistic = question.session.experience_mode == InterviewSession.ExperienceMode.REALISTIC
         return {
             "id": question.id,
             "question_text": question.question_text,
             "sequence": question.sequence,
             "answer_text": question.answer_text,
-            "ai_feedback": question.ai_feedback,
+            "ai_feedback": None if realistic else question.ai_feedback,
             "analysis_data": question.analysis_data,
-            "rag_context": question.rag_context,
-            "question_plan": question.question_plan,
-            "target_dimension": question.target_dimension,
+            "rag_context": [] if realistic else question.rag_context,
+            "question_plan": {} if realistic else question.question_plan,
+            "target_dimension": '' if realistic else question.target_dimension,
             "generation_mode": question.generation_mode,
             "validation_status": question.validation_status,
         }
@@ -665,16 +695,26 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
 
                 if current_question.answered_at:
                     answered_count = session.questions.filter(answered_at__isnull=False).count()
+                    realistic = session.experience_mode == InterviewSession.ExperienceMode.REALISTIC
                     existing_feedback = ""
                     existing_feedback_detail = None
-                    if isinstance(current_question.ai_feedback, dict):
+                    if not realistic and isinstance(current_question.ai_feedback, dict):
                         existing_feedback = current_question.ai_feedback.get("feedback", "")
                         existing_feedback_detail = current_question.ai_feedback
+
+                    termination = (session.memory_summary or {}).get('termination_decision') or {}
+                    dynamically_finished = bool(
+                        session.progress_mode == 'time_and_coverage'
+                        and termination
+                        and not termination.get('continue_interview', True)
+                    )
 
                     response_data = {
                         "feedback": existing_feedback,
                         "feedback_detail": existing_feedback_detail,
-                        "interview_finished": answered_count >= session.question_count,
+                        "interview_finished": dynamically_finished or (
+                            session.progress_mode != 'time_and_coverage' and answered_count >= session.question_count
+                        ),
                         "already_answered": True,
                     }
 
@@ -746,11 +786,14 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         )
         answer_evaluation = turn_state.answer_evaluation
         feedback_text = turn_state.feedback_text
+        realistic = session.experience_mode == InterviewSession.ExperienceMode.REALISTIC
+        public_feedback = '' if realistic else feedback_text
+        public_evaluation = None if realistic else answer_evaluation
 
         if turn_state.interview_finished:
             response = Response({
-                "feedback": feedback_text,
-                "feedback_detail": answer_evaluation,
+                "feedback": public_feedback,
+                "feedback_detail": public_evaluation,
                 "interview_finished": True,
             }, status=status.HTTP_200_OK)
             return self._set_agent_run_header(response, getattr(turn_state, 'agent_run_id', None))
@@ -766,8 +809,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         )
         if generation_job.status == InterviewQuestionGenerationJob.Status.COMPLETED and generation_job.generated_question:
             return Response({
-                "feedback": feedback_text,
-                "feedback_detail": answer_evaluation,
+                "feedback": public_feedback,
+                "feedback_detail": public_evaluation,
                 "interview_finished": False,
                 "next_question": self._serialize_question(generation_job.generated_question),
                 "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data,
@@ -775,8 +818,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_200_OK)
         if not can_generate:
             return Response({
-                "feedback": feedback_text,
-                "feedback_detail": answer_evaluation,
+                "feedback": public_feedback,
+                "feedback_detail": public_evaluation,
                 "interview_finished": False,
                 "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data,
                 "error": "下一题正在生成，请稍后恢复。",
@@ -843,8 +886,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 raise
 
         response = StreamingHttpResponse(stream_response_generator(), content_type='text/plain; charset=utf-8')
-        response['X-Feedback'] = quote(feedback_text)
-        response['X-Feedback-Json'] = quote(json.dumps(answer_evaluation, ensure_ascii=False))
+        response['X-Feedback'] = quote(public_feedback)
+        response['X-Feedback-Json'] = quote(json.dumps(public_evaluation, ensure_ascii=False))
         response['X-Generation-Job-Id'] = str(generation_job.id)
         response['Access-Control-Expose-Headers'] = 'X-Feedback, X-Feedback-Json, X-Generation-Job-Id'
         return self._set_agent_run_header(response, getattr(turn_state, 'agent_run_id', None))
@@ -868,10 +911,21 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             return Response({"error": "当前问题还没有提交回答，无法恢复下一题。"}, status=status.HTTP_400_BAD_REQUEST)
 
         answered_count = session.questions.filter(answered_at__isnull=False).count()
-        if answered_count >= session.question_count:
+        public_feedback_detail = (
+            answered_question.ai_feedback
+            if session.experience_mode == InterviewSession.ExperienceMode.COACHING and isinstance(answered_question.ai_feedback, dict)
+            else None
+        )
+        termination = (session.memory_summary or {}).get('termination_decision') or {}
+        dynamically_finished = bool(
+            session.progress_mode == 'time_and_coverage'
+            and termination
+            and not termination.get('continue_interview', True)
+        )
+        if dynamically_finished or (session.progress_mode != 'time_and_coverage' and answered_count >= session.question_count):
             return Response({
                 "interview_finished": True,
-                "feedback_detail": answered_question.ai_feedback if isinstance(answered_question.ai_feedback, dict) else None,
+                "feedback_detail": public_feedback_detail,
             }, status=status.HTTP_200_OK)
 
         next_sequence = answered_count + 1
@@ -887,7 +941,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             return Response({
                 "next_question": self._serialize_question(existing_next_question),
                 "already_exists": True,
-                "feedback_detail": answered_question.ai_feedback if isinstance(answered_question.ai_feedback, dict) else None,
+                "feedback_detail": public_feedback_detail,
                 "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data if generation_job else None,
             }, status=status.HTTP_200_OK)
 
@@ -903,14 +957,14 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             return Response({
                 "next_question": self._serialize_question(generation_job.generated_question),
                 "already_exists": True,
-                "feedback_detail": answered_question.ai_feedback if isinstance(answered_question.ai_feedback, dict) else None,
+                "feedback_detail": public_feedback_detail,
                 "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data,
             }, status=status.HTTP_200_OK)
         if not can_generate:
             return Response({
                 "error": "下一题正在生成，请稍后重试。",
                 "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data,
-                "feedback_detail": answered_question.ai_feedback if isinstance(answered_question.ai_feedback, dict) else None,
+                "feedback_detail": public_feedback_detail,
             }, status=status.HTTP_409_CONFLICT)
 
         resume_text = format_resume_to_text(session.resume) if session.resume else None
@@ -927,6 +981,16 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             resume_text=resume_text,
             jd_text=jd_text,
         )
+        if turn_state.interview_finished:
+            generation_job.status = InterviewQuestionGenerationJob.Status.COMPLETED
+            generation_job.completed_at = timezone.now()
+            generation_job.save(update_fields=['status', 'completed_at', 'updated_at'])
+            response = Response({
+                'interview_finished': True,
+                'feedback_detail': public_feedback_detail,
+                'generation_job': InterviewQuestionGenerationJobSerializer(generation_job).data,
+            }, status=status.HTTP_200_OK)
+            return self._set_agent_run_header(response, getattr(turn_state, 'agent_run_id', None))
         question_text = "".join(agent.generate_question_chunks(turn_state)).strip()
         try:
             next_question = agent.finalize_generated_question(turn_state, question_text)
@@ -960,7 +1024,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         response = Response({
             "next_question": self._serialize_question(next_question),
             "already_exists": False,
-            "feedback_detail": last_evaluation,
+            "feedback_detail": last_evaluation if session.experience_mode == InterviewSession.ExperienceMode.COACHING else None,
             "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data,
         }, status=status.HTTP_200_OK)
         return self._set_agent_run_header(response, getattr(turn_state, 'agent_run_id', None))

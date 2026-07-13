@@ -166,7 +166,7 @@ DB_PORT=3307
 REDIS_HOST=127.0.0.1
 RABBITMQ_HOST=127.0.0.1
 QDRANT_URL=http://127.0.0.1:6333
-INTERVIEW_AGENT_ENGINE=composite_v2
+INTERVIEW_AGENT_ENGINE=composite_v3
 ```
 
 启动后端和异步任务：
@@ -268,8 +268,11 @@ npm run build
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `INTERVIEW_AGENT_ENGINE` | `default` | 可选 `default`、`langgraph`、`composite`、`composite_v2` |
-| `AGENT_STATE_SCHEMA_VERSION` | `2` | Agent 状态版本 |
+| `INTERVIEW_AGENT_ENGINE` | `default` | 可选 `default`、`langgraph`、`composite`、`composite_v2`、`composite_v3` |
+| `AGENT_STATE_SCHEMA_VERSION` | `2` | V2 状态版本；V3 引擎运行时固定使用版本 3 |
+| `AGENT_V3_DEFAULT_TARGET_DURATION_MINUTES` | `30` | V3 默认目标面试时长 |
+| `AGENT_V3_DEFAULT_MIN_DURATION_MINUTES` | `20` | V3 默认最短面试时长 |
+| `AGENT_V3_DEFAULT_HARD_MAX_DURATION_MINUTES` | `45` | V3 默认强制收尾时长 |
 | `AGENT_MAX_GENERATION_RETRIES` | `2` | 问题校验失败后的最大修复次数 |
 | `AGENT_CONTEXT_TOKEN_BUDGET` | `6000` | 面试上下文预算 |
 | `AGENT_EVALUATION_CONFIDENCE_THRESHOLD` | `0.6` | 能力覆盖最低置信度 |

@@ -15,7 +15,9 @@ from .agent import (
     get_interview_agent_engine,
 )
 from .agent_v2 import CompositeV2InterviewAgentEngine
+from .agent_v3 import CompositeV3InterviewAgentEngine
 from .agent_runtime import AgentToolExecutor, AgentToolRegistry, AgentToolSpec
+from .serializers import InterviewQuestionSerializer
 from .evaluation import (
     build_session_plan,
     combine_rule_and_ai_evaluation,
@@ -1628,6 +1630,198 @@ class CompositeV2AgentTests(TestCase):
         run = InterviewAgentRun.objects.get(id=response['X-Agent-Run-Id'])
         self.assertIn(run.status, (InterviewAgentRun.Status.COMPLETED, InterviewAgentRun.Status.DEGRADED))
         self.assertTrue(session.questions.filter(sequence=2, validation_status='validated').exists())
+
+
+@override_settings(INTERVIEW_AGENT_ENGINE='composite_v3')
+class CompositeV3AdaptiveAgentTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='v3-candidate', email='v3@example.com', password='pass')
+        self.session = InterviewSession.objects.create(
+            user=self.user,
+            job_position='后端开发',
+            question_count=5,
+            target_duration_minutes=30,
+            experience_mode=InterviewSession.ExperienceMode.REALISTIC,
+            interview_mode='project_with_fundamentals',
+            progress_mode='time_and_coverage',
+            status=InterviewSession.Status.RUNNING,
+            current_stage=InterviewSession.InterviewStage.PROJECT_DEEP_DIVE,
+            started_at=timezone.now(),
+            session_plan={
+                'dimensions': [{'key': 'technical_depth', 'name': '技术深度', 'weight': 2}],
+                'coverage_requirements': {'technical_depth': {'min_coverage': 1, 'weight': 2}},
+                'coverage': {},
+                'coverage_gaps': ['technical_depth'],
+                'termination_policy': {
+                    'target_duration_minutes': 30,
+                    'min_duration_minutes': 20,
+                    'hard_max_duration_minutes': 45,
+                    'min_turns': 5,
+                    'max_turns': 18,
+                },
+            },
+            coverage_summary={'coverage': {}, 'coverage_gaps': ['technical_depth']},
+            memory_summary={'topic_stack': [], 'current_topic': 'Redis', 'followup_depth': 0},
+        )
+        self.engine = CompositeV3InterviewAgentEngine()
+
+    @patch('interviews.agent.search_knowledge_context')
+    def test_prepare_graph_records_v3_decision_nodes(self, search_mock):
+        search_mock.return_value = {'contexts': [], 'retrieval_trace': {}, 'retrieval_explanation': {}}
+        answer = '我负责Redis缓存模块，实现了旁路缓存并监控命中率，最终数据库查询量下降了35%。'
+        question = InterviewQuestion.objects.create(
+            session=self.session,
+            sequence=1,
+            question_text='请说明你在缓存项目中的个人贡献？',
+            answer_text=answer,
+            answered_at=timezone.now(),
+            question_plan={
+                'stage': InterviewSession.InterviewStage.PROJECT_DEEP_DIVE,
+                'target_stage': InterviewSession.InterviewStage.PROJECT_DEEP_DIVE,
+                'target_dimension': 'technical_depth',
+                'topic_id': 'Redis',
+                'followup_depth': 0,
+            },
+            target_dimension='technical_depth',
+        )
+        state = self.engine.prepare_submit_answer_turn(
+            session=self.session,
+            current_question=question,
+            answer_text=answer,
+            user=self.user,
+            answered_count=1,
+            history=[{'sequence': 1, 'question': question.question_text, 'answer': answer, 'evaluation': {}}],
+            resume_text='',
+            jd_text='',
+            media_context={},
+        )
+        self.assertIn('evaluate_evidence', state.node_order)
+        self.assertIn('decide_termination', state.node_order)
+        self.assertIn('select_next_action', state.node_order)
+        self.assertIn('plan_transition', state.node_order)
+        self.assertFalse(state.interview_finished)
+        question.refresh_from_db()
+        self.assertIn('answer_evidence_profile', question.ai_feedback)
+
+    def test_weak_answer_clarifies_instead_of_escalating(self):
+        evidence = self.engine._node_evaluate_evidence({
+            'answer_text': '我用过Redis。',
+            'answer_evaluation': {'final_score': 38, 'confidence': 0.7, 'evidence_items': []},
+        })
+        action = self.engine._node_select_next_action({
+            'session_id': str(self.session.id),
+            'answer_state': evidence['answer_state'],
+            'termination_decision': {'continue_interview': True, 'mandatory_gaps': ['technical_depth'], 'optional_gaps': [], 'reason': 'continue_coverage'},
+            'followup_depth': 0,
+            'current_question_plan': {'target_dimension': 'technical_depth', 'topic_id': 'Redis'},
+            'current_topic': 'Redis',
+            'answer_evaluation': {},
+        })
+        self.assertEqual(evidence['answer_state'], 'insufficient')
+        self.assertEqual(action['next_action'], 'CLARIFY')
+
+    def test_strong_answer_is_challenged_with_a_grounded_bridge(self):
+        answer = '我负责Redis缓存设计，比较了旁路缓存和写穿方案的取舍，命中率提升到92%，并处理了缓存一致性边界。'
+        evidence = self.engine._node_evaluate_evidence({
+            'answer_text': answer,
+            'answer_evaluation': {
+                'final_score': 90, 'depth_score': 92, 'relevance_score': 90, 'confidence': 0.9,
+                'evidence_items': [{'quote': '命中率提升到92%', 'supported': True}, {'quote': '处理了缓存一致性边界', 'supported': True}],
+            },
+        })
+        action = self.engine._node_select_next_action({
+            'session_id': str(self.session.id),
+            'answer_state': evidence['answer_state'],
+            'termination_decision': {'continue_interview': True, 'mandatory_gaps': ['technical_depth'], 'optional_gaps': [], 'reason': 'continue_coverage'},
+            'followup_depth': 1,
+            'current_question_plan': {'target_dimension': 'technical_depth', 'topic_id': 'Redis'},
+            'current_topic': 'Redis',
+            'answer_evaluation': {'follow_up_target': '验证缓存一致性边界'},
+        })
+        turn = self.engine._node_plan_transition({
+            'next_action': action['next_action'],
+            'question_plan': action['question_plan'],
+            'answer_text': answer,
+        })
+        safe_question = self.engine._safe_question({'question_plan': turn['question_plan']})
+        self.assertEqual(evidence['answer_state'], 'strong')
+        self.assertEqual(action['next_action'], 'CHALLENGE')
+        self.assertIn('Redis', turn['dialogue_turn_plan']['answer_reference'])
+        self.assertIn('Redis', safe_question)
+
+    def test_adjacent_stage_transition_is_not_rejected(self):
+        state = {
+            'session_id': str(self.session.id),
+            'question_plan': {
+                'stage': 'project_deep_dive',
+                'target_stage': 'fundamentals_probe',
+                'next_action': 'PROBE',
+                'answer_reference': 'Redis',
+            },
+            'rag_context': [],
+        }
+        errors = self.engine._validate_v2_question(state, '你刚才提到“Redis”，它在缓存一致性方面有哪些边界？')
+        self.assertNotIn('stage_mismatch', errors)
+
+    def test_multi_question_without_bridge_routes_directly_to_safe_fallback(self):
+        route = self.engine._route_validation({
+            'state': {
+                'validation_errors': ['multiple_questions', 'missing_answer_bridge'],
+                'generation_attempt': 0,
+            },
+        })
+        self.assertEqual(route, 'fallback')
+
+    def test_safe_fallback_for_adjacent_stage_is_valid(self):
+        state = {
+            'session_id': str(self.session.id),
+            'answered_count': 1,
+            'question_plan': {
+                'stage': 'project_deep_dive',
+                'target_stage': 'fundamentals_probe',
+                'next_action': 'PROBE',
+                'answer_reference': 'Redis',
+                'target_dimension': 'technical_depth',
+            },
+            'rag_context': [],
+        }
+        question = self.engine._safe_question(state)
+        self.assertEqual(self.engine._validate_v2_question(state, question), [])
+        self.assertEqual(question.count('？') + question.count('?'), 1)
+        self.assertIn('Redis', question)
+
+        delta = self.engine._node_safe_fallback({
+            **state,
+            'validation_errors': ['multiple_questions', 'missing_answer_bridge'],
+        })
+        self.assertEqual(delta['fallback_reason'], 'structural_validation_fallback')
+
+    def test_dynamic_interview_can_continue_beyond_legacy_question_count_and_ten_turns(self):
+        decision = self.engine._node_decide_termination({
+            'session_id': str(self.session.id),
+            'answered_count': 11,
+            'coverage_summary': {'coverage': {}, 'coverage_gaps': ['technical_depth']},
+            'answer_state': 'partial',
+        })
+        self.assertTrue(decision['termination_decision']['continue_interview'])
+        self.assertFalse(decision['interview_finished'])
+
+    def test_realistic_question_serializer_hides_internal_evaluation(self):
+        question = InterviewQuestion.objects.create(
+            session=self.session,
+            sequence=1,
+            question_text='请介绍项目。',
+            ai_feedback={'final_score': 80},
+            rag_context=[{'chunk_id': 'private'}],
+            question_plan={'next_action': 'PROBE'},
+            target_dimension='technical_depth',
+        )
+        request = APIRequestFactory().get('/')
+        force_authenticate(request, user=self.user)
+        data = InterviewQuestionSerializer(question, context={'request': request}).data
+        self.assertIsNone(data['ai_feedback'])
+        self.assertEqual(data['rag_context'], [])
+        self.assertEqual(data['question_plan'], {})
 
 
 class AgentToolExecutorTests(TestCase):

@@ -29,11 +29,15 @@ DEFAULT_DIMENSIONS = [
 ]
 
 DEFAULT_STAGES = [
-    ('opening', '开场定位', 1, Decimal('0.15'), ['relevance', 'clarity']),
-    ('resume_deep_dive', '简历深挖', 2, Decimal('0.25'), ['evidence', 'star']),
-    ('technical_deep_dive', '技术深挖', 3, Decimal('0.30'), ['depth', 'evidence']),
-    ('scenario_challenge', '场景挑战', 4, Decimal('0.20'), ['depth', 'relevance']),
-    ('wrap_up', '收尾复盘', 5, Decimal('0.10'), ['clarity', 'star']),
+    ('opening', '开场定位', 1, Decimal('0.05'), ['relevance', 'clarity']),
+    ('self_intro', '自我介绍', 2, Decimal('0.08'), ['relevance', 'clarity']),
+    ('project_anchor', '项目定位', 3, Decimal('0.10'), ['evidence', 'star']),
+    ('project_deep_dive', '项目深挖', 4, Decimal('0.22'), ['depth', 'evidence']),
+    ('fundamentals_probe', '基础知识验证', 5, Decimal('0.16'), ['depth', 'relevance']),
+    ('role_specific', '岗位专项', 6, Decimal('0.14'), ['depth', 'evidence']),
+    ('system_design', '系统设计', 7, Decimal('0.12'), ['depth', 'relevance']),
+    ('behavioral', '行为面试', 8, Decimal('0.08'), ['clarity', 'star']),
+    ('candidate_questions', '候选人反问', 9, Decimal('0.05'), ['clarity']),
 ]
 
 
@@ -95,19 +99,21 @@ def ensure_default_interview_assets(created_by=None) -> dict:
                 'config': {'final_gap_strategy': 'highest_weight_uncovered'},
             }
         )
-        if not template.stages.exists():
-            InterviewTemplateStage.objects.bulk_create([
-                InterviewTemplateStage(
-                    template=template,
-                    stage_key=stage_key,
-                    name=stage_name,
-                    order=order,
-                    question_ratio=ratio,
-                    target_dimensions=dimensions,
-                    question_guidance=f'围绕{stage_name}验证候选人的真实经历、个人贡献和结果证据。',
-                )
-                for stage_key, stage_name, order, ratio, dimensions in DEFAULT_STAGES
-            ])
+        default_stage_keys = []
+        for stage_key, stage_name, order, ratio, dimensions in DEFAULT_STAGES:
+            default_stage_keys.append(stage_key)
+            InterviewTemplateStage.objects.update_or_create(
+                template=template,
+                stage_key=stage_key,
+                defaults={
+                    'name': stage_name,
+                    'order': order,
+                    'question_ratio': ratio,
+                    'target_dimensions': dimensions,
+                    'question_guidance': f'围绕{stage_name}验证候选人的真实经历、个人贡献和结果证据。',
+                },
+            )
+        template.stages.exclude(stage_key__in=default_stage_keys).delete()
         templates[template.name] = template
     return {'rubric': rubric, 'templates': templates}
 
@@ -164,6 +170,13 @@ def build_template_snapshot(template: InterviewTemplate) -> dict:
             'question_ratio': float(stage.question_ratio),
             'target_dimensions': stage.target_dimensions,
             'question_guidance': stage.question_guidance,
+            'min_duration_minutes': stage.min_duration_minutes,
+            'max_duration_minutes': stage.max_duration_minutes,
+            'min_verified_dimensions': stage.min_verified_dimensions,
+            'allowed_question_types': stage.allowed_question_types,
+            'entry_condition': stage.entry_condition,
+            'exit_condition': stage.exit_condition,
+            'allow_topic_return': stage.allow_topic_return,
         }
         for stage in template.stages.all().order_by('order', 'id')
     ]
@@ -172,6 +185,14 @@ def build_template_snapshot(template: InterviewTemplate) -> dict:
         'template_name': template.name,
         'template_version': template.version,
         'require_rag': template.require_rag,
+        'interview_mode': template.interview_mode,
+        'target_duration_minutes': template.target_duration_minutes,
+        'min_duration_minutes': template.min_duration_minutes,
+        'hard_max_duration_minutes': template.hard_max_duration_minutes,
+        'min_turns': template.min_turns,
+        'max_turns': template.max_turns,
+        'candidate_question_minutes': template.candidate_question_minutes,
+        'style_profile': template.style_profile,
         'rubric_id': template.rubric_id,
         'rubric_name': template.rubric.name,
         'rubric_version': template.rubric.version,
@@ -181,7 +202,15 @@ def build_template_snapshot(template: InterviewTemplate) -> dict:
     }
 
 
-def build_session_plan(template: InterviewTemplate, question_count: int, job_position: str, jd_text: str = '') -> tuple[dict, dict]:
+def build_session_plan(
+    template: InterviewTemplate,
+    question_count: int,
+    job_position: str,
+    jd_text: str = '',
+    target_duration_minutes: int | None = None,
+    interview_mode: str = '',
+    experience_mode: str = 'realistic',
+) -> tuple[dict, dict]:
     snapshot = build_template_snapshot(template)
     stages = snapshot['stages']
     stage_plan = []
@@ -197,6 +226,22 @@ def build_session_plan(template: InterviewTemplate, question_count: int, job_pos
         'job_position': job_position,
         'jd_hash': hashlib.sha256((jd_text or '').encode('utf-8')).hexdigest()[:16] if jd_text else '',
         'question_count': question_count,
+        'estimated_question_range': {'min': snapshot['min_turns'], 'max': snapshot['max_turns']},
+        'interview_mode': interview_mode or snapshot['interview_mode'],
+        'experience_mode': experience_mode,
+        'style_profile': snapshot['style_profile'],
+        'termination_policy': {
+            'target_duration_minutes': int(target_duration_minutes or snapshot['target_duration_minutes']),
+            'min_duration_minutes': snapshot['min_duration_minutes'],
+            'hard_max_duration_minutes': max(
+                int(target_duration_minutes or snapshot['target_duration_minutes']),
+                snapshot['hard_max_duration_minutes'],
+            ),
+            'min_turns': snapshot['min_turns'],
+            'max_turns': snapshot['max_turns'],
+            'candidate_question_minutes': snapshot['candidate_question_minutes'],
+            'progress_mode': 'time_and_coverage',
+        },
         'stage_plan': stage_plan,
         'dimensions': snapshot['dimensions'],
         'coverage_requirements': {

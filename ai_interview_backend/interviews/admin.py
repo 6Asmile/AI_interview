@@ -29,8 +29,8 @@ class InterviewQuestionInline(admin.TabularInline):
 
 @admin.register(InterviewSession)
 class InterviewSessionAdmin(admin.ModelAdmin):
-    list_display = ('job_position', 'user', 'status', 'difficulty', 'created_at')
-    list_filter = ('status', 'difficulty', 'user')
+    list_display = ('job_position', 'user', 'status', 'interview_mode', 'experience_mode', 'progress_mode', 'target_duration_minutes', 'created_at')
+    list_filter = ('status', 'difficulty', 'interview_mode', 'experience_mode', 'progress_mode', 'user')
     search_fields = ('job_position', 'user__username')
     readonly_fields = ('created_at', 'updated_at', 'started_at', 'finished_at')
     inlines = [InterviewQuestionInline] # 在会话详情页直接显示关联的问题
@@ -236,8 +236,8 @@ class RubricLevelAnchorAdmin(admin.ModelAdmin):
 
 @admin.register(InterviewTemplate)
 class InterviewTemplateAdmin(admin.ModelAdmin):
-    list_display = ('name', 'rubric', 'visibility', 'version', 'require_rag', 'is_active', 'updated_at')
-    list_filter = ('visibility', 'is_active', 'require_rag')
+    list_display = ('name', 'rubric', 'interview_mode', 'target_duration_minutes', 'min_turns', 'max_turns', 'visibility', 'is_active', 'updated_at')
+    list_filter = ('interview_mode', 'visibility', 'is_active', 'require_rag')
     search_fields = ('name', 'description')
     inlines = [TemplateStageInline]
 

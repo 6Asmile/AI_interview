@@ -71,6 +71,16 @@ class InterviewTemplate(models.Model):
         SHARED = 'shared', '共享'
         PRIVATE = 'private', '私有'
 
+    class InterviewMode(models.TextChoices):
+        RELAXED = 'relaxed', '宽松交流'
+        STRICT = 'strict', '严格追问'
+        FUNDAMENTALS = 'fundamentals', '基础知识'
+        PROJECT_DEEP_DIVE = 'project_deep_dive', '项目深挖'
+        PROJECT_WITH_FUNDAMENTALS = 'project_with_fundamentals', '项目穿插基础知识'
+        SYSTEM_DESIGN = 'system_design', '系统设计'
+        BEHAVIORAL = 'behavioral', '行为面试'
+        STRUCTURED = 'structured', '结构化面试'
+
     name = models.CharField(max_length=120, verbose_name='模板名称')
     description = models.TextField(blank=True, verbose_name='模板说明')
     job_keywords = models.JSONField(default=list, blank=True, verbose_name='岗位匹配关键词')
@@ -79,6 +89,19 @@ class InterviewTemplate(models.Model):
     is_active = models.BooleanField(default=True, db_index=True, verbose_name='是否启用')
     version = models.PositiveIntegerField(default=1, verbose_name='版本')
     require_rag = models.BooleanField(default=False, verbose_name='是否强制要求知识库依据')
+    interview_mode = models.CharField(
+        max_length=40,
+        choices=InterviewMode.choices,
+        default=InterviewMode.PROJECT_WITH_FUNDAMENTALS,
+        verbose_name='面试模式',
+    )
+    target_duration_minutes = models.PositiveIntegerField(default=30, verbose_name='目标时长（分钟）')
+    min_duration_minutes = models.PositiveIntegerField(default=20, verbose_name='最短时长（分钟）')
+    hard_max_duration_minutes = models.PositiveIntegerField(default=45, verbose_name='最长时长（分钟）')
+    min_turns = models.PositiveIntegerField(default=5, verbose_name='最少有效轮次')
+    max_turns = models.PositiveIntegerField(default=18, verbose_name='异常保护最大轮次')
+    candidate_question_minutes = models.PositiveIntegerField(default=3, verbose_name='候选人反问预留时长')
+    style_profile = models.JSONField(default=dict, blank=True, verbose_name='面试风格配置')
     config = models.JSONField(default=dict, blank=True, verbose_name='模板配置')
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='interview_templates')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -101,6 +124,13 @@ class InterviewTemplateStage(models.Model):
     question_ratio = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name='题量占比')
     target_dimensions = models.JSONField(default=list, blank=True, verbose_name='目标能力维度')
     question_guidance = models.TextField(blank=True, verbose_name='出题指引')
+    min_duration_minutes = models.PositiveIntegerField(default=0, verbose_name='阶段最短时长（分钟）')
+    max_duration_minutes = models.PositiveIntegerField(default=0, verbose_name='阶段最长时长（分钟）')
+    min_verified_dimensions = models.PositiveIntegerField(default=0, verbose_name='最低验证能力数')
+    allowed_question_types = models.JSONField(default=list, blank=True, verbose_name='允许题型')
+    entry_condition = models.JSONField(default=dict, blank=True, verbose_name='进入条件')
+    exit_condition = models.JSONField(default=dict, blank=True, verbose_name='退出条件')
+    allow_topic_return = models.BooleanField(default=True, verbose_name='允许返回上层话题')
 
     class Meta:
         verbose_name = '面试模板阶段'
@@ -141,6 +171,15 @@ class InterviewSession(models.Model):
 
     class InterviewStage(models.TextChoices):
         OPENING = 'opening', '开场定位'
+        SELF_INTRO = 'self_intro', '自我介绍'
+        PROJECT_ANCHOR = 'project_anchor', '项目定位'
+        PROJECT_DEEP_DIVE = 'project_deep_dive', '项目深挖'
+        FUNDAMENTALS_PROBE = 'fundamentals_probe', '基础知识验证'
+        ROLE_SPECIFIC = 'role_specific', '岗位专项'
+        SYSTEM_DESIGN = 'system_design', '系统设计'
+        BEHAVIORAL = 'behavioral', '行为面试'
+        CANDIDATE_QUESTIONS = 'candidate_questions', '候选人反问'
+        CLOSING = 'closing', '自然收尾'
         RESUME_DEEP_DIVE = 'resume_deep_dive', '简历深挖'
         TECHNICAL_DEEP_DIVE = 'technical_deep_dive', '技术深挖'
         SCENARIO_CHALLENGE = 'scenario_challenge', '场景挑战'
@@ -151,6 +190,10 @@ class InterviewSession(models.Model):
         MEDIUM = 'medium', '中等'
         HARD = 'hard', '困难'
 
+    class ExperienceMode(models.TextChoices):
+        REALISTIC = 'realistic', '真实模拟'
+        COACHING = 'coaching', '训练指导'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name='会话 UUID')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='interview_sessions', verbose_name='所属用户')
     resume = models.ForeignKey(Resume, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='关联简历')
@@ -159,6 +202,15 @@ class InterviewSession(models.Model):
     difficulty = models.CharField(max_length=20, choices=Difficulty.choices, default=Difficulty.MEDIUM,
                                   verbose_name='难度')
     question_count = models.IntegerField(default=5, verbose_name='问题数量')
+    target_duration_minutes = models.PositiveIntegerField(default=30, verbose_name='目标时长（分钟）')
+    experience_mode = models.CharField(
+        max_length=20,
+        choices=ExperienceMode.choices,
+        default=ExperienceMode.REALISTIC,
+        verbose_name='体验模式',
+    )
+    interview_mode = models.CharField(max_length=40, blank=True, default='', verbose_name='面试模式')
+    progress_mode = models.CharField(max_length=32, default='question_count', verbose_name='进度计算模式')
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, verbose_name='状态')
     current_stage = models.CharField(

@@ -59,7 +59,10 @@
                   <el-button v-if="currentQuestion" @click="toggleSpeech" :icon="speechIcon" type="primary" circle />
                 </el-tooltip>
               </div>
-              <p class="question-progress text-xs text-gray-500 mt-1">问题 {{ currentQuestion?.sequence }} / {{ sessionInfo?.question_count }}</p>
+              <p class="question-progress text-xs text-gray-500 mt-1">
+                <template v-if="isAdaptiveInterview">第 {{ currentQuestion?.sequence }} 轮 · 预计剩余 {{ remainingMinutes }} 分钟</template>
+                <template v-else>问题 {{ currentQuestion?.sequence }} / {{ sessionInfo?.question_count }}</template>
+              </p>
             </div>
           </div>
           
@@ -100,7 +103,7 @@
             <p class="answer-guidance-copy">{{ answerGuidanceText }}</p>
           </div>
 
-          <div v-if="lastFeedbackText" class="feedback-summary-bar">
+          <div v-if="!isRealisticMode && lastFeedbackText" class="feedback-summary-bar">
             <div class="feedback-summary-main">
               <span class="feedback-dot"></span>
               <div>
@@ -177,13 +180,14 @@
           <div class="progress-ring-row">
             <div class="progress-ring">{{ roomProgress }}%</div>
             <div>
-              <strong>{{ answeredCount }} / {{ questionTotal || '-' }}</strong>
-              <p>已完成问题</p>
+              <strong v-if="isAdaptiveInterview">{{ answeredCount }} 轮</strong>
+              <strong v-else>{{ answeredCount }} / {{ questionTotal || '-' }}</strong>
+              <p>{{ isAdaptiveInterview ? '已完成回答' : '已完成问题' }}</p>
             </div>
           </div>
           <el-progress :percentage="roomProgress" :stroke-width="8" :show-text="false" />
         </div>
-        <div class="agent-status glass-card p-4">
+        <div v-if="!isRealisticMode" class="agent-status glass-card p-4">
           <h3 class="uppercase text-xs font-semibold text-gray-400 tracking-wider mb-3">Agent 状态</h3>
           <div class="agent-state-grid">
             <div>
@@ -204,7 +208,7 @@
             <span v-for="topic in agentPendingTopics" :key="topic">{{ topic }}</span>
           </div>
         </div>
-        <div class="focus-card glass-card p-4">
+        <div v-if="!isRealisticMode" class="focus-card glass-card p-4">
           <h3 class="uppercase text-xs font-semibold text-gray-400 tracking-wider mb-3">当前答题重点</h3>
           <p>{{ agentMemory?.question_strategy || agentMemory?.follow_up_target || '先给结论，再补充案例、指标和个人贡献。' }}</p>
         </div>
@@ -323,6 +327,8 @@ const speechTooltip = ref('播放问题');
 const showFeedbackDialog = ref(false);
 type FinishStepStatus = 'pending' | 'active' | 'done' | 'error' | 'skipped';
 const finishFlowVisible = ref(false);
+const clockTick = ref(Date.now());
+let clockTimer: ReturnType<typeof window.setInterval> | null = null;
 const finishSteps = ref([
   { key: 'stop_recording', index: 1, title: '停止录制', description: '等待浏览器写入最后一段录像数据', status: 'pending' as FinishStepStatus },
   { key: 'upload_recording', index: 2, title: '上传录像', description: '上传原始录像，压缩会在后台继续处理', status: 'pending' as FinishStepStatus },
@@ -336,7 +342,23 @@ const agentPendingTopics = computed(() => {
 });
 const answeredCount = computed(() => sessionInfo.value?.questions.filter(q => q.answer_text).length || 0);
 const questionTotal = computed(() => sessionInfo.value?.question_count || sessionInfo.value?.questions.length || 0);
+const isAdaptiveInterview = computed(() => sessionInfo.value?.progress_mode === 'time_and_coverage');
+const isRealisticMode = computed(() => sessionInfo.value?.experience_mode !== 'coaching');
+const liveElapsedSeconds = computed(() => {
+  clockTick.value;
+  if (!sessionInfo.value?.started_at) return sessionInfo.value?.elapsed_seconds || 0;
+  const startedAt = new Date(sessionInfo.value.started_at).getTime();
+  return Math.max(sessionInfo.value?.elapsed_seconds || 0, Math.floor((Date.now() - startedAt) / 1000));
+});
+const remainingMinutes = computed(() => {
+  const targetSeconds = (sessionInfo.value?.target_duration_minutes || 30) * 60;
+  return Math.max(0, Math.ceil((targetSeconds - liveElapsedSeconds.value) / 60));
+});
 const roomProgress = computed(() => {
+  if (isAdaptiveInterview.value) {
+    const targetSeconds = (sessionInfo.value?.target_duration_minutes || 30) * 60;
+    return Math.min(95, Math.round((liveElapsedSeconds.value / Math.max(1, targetSeconds)) * 100));
+  }
   if (!questionTotal.value) return 0;
   const progressBase = Math.max(answeredCount.value, (currentQuestion.value?.sequence || 1) - 1);
   return Math.min(100, Math.round((progressBase / questionTotal.value) * 100));
@@ -424,6 +446,7 @@ const submissionStatusDescription = computed(() => {
   return descriptionMap[submissionState.value] || '';
 });
 const answerGuidanceText = computed(() => {
+  if (isRealisticMode.value) return '请结合真实经历回答，说明你当时的判断、行动和结果。';
   return agentMemory.value?.question_strategy || agentMemory.value?.follow_up_target || '先回答结论，再补充场景、动作、结果和复盘。';
 });
 const answerChecklist = computed(() => {
@@ -568,6 +591,15 @@ watch(() => currentQuestion.value?.id, () => {
 const stageLabel = (stage?: string) => {
   const labels: Record<string, string> = {
     opening: '开场定位',
+    self_intro: '自我介绍',
+    project_anchor: '项目定位',
+    project_deep_dive: '项目深挖',
+    fundamentals_probe: '基础知识验证',
+    role_specific: '岗位专项',
+    system_design: '系统设计',
+    behavioral: '行为面试',
+    candidate_questions: '候选人反问',
+    closing: '自然收尾',
     resume_deep_dive: '简历深挖',
     technical_deep_dive: '技术深挖',
     scenario_challenge: '场景挑战',
@@ -1155,8 +1187,14 @@ const confirmFinishInterview = async (isAutoFinish: boolean | Event = false) => 
     ElMessage.info('面试已继续');
   });
 };
-onMounted(async () => { await loadModels(); await fetchSessionData(); await setupCamera(); });
+onMounted(async () => {
+  clockTimer = window.setInterval(() => { clockTick.value = Date.now(); }, 1000);
+  await loadModels();
+  await fetchSessionData();
+  await setupCamera();
+});
 onUnmounted(() => {
+  if (clockTimer) window.clearInterval(clockTimer);
   stopGenerationJobPolling();
   if (analysisInterval.value) clearInterval(analysisInterval.value);
   if (mediaRecorder.value && isVideoRecording.value) {
