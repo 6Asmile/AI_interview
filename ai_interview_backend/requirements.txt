@@ -40,7 +40,7 @@ defusedxml==0.7.1
 distro==1.9.0
 dj-rest-auth==7.0.1
 Django==5.2.7
-django-allauth==65.11.2
+django-allauth[mfa]==65.11.2
 django-ckeditor==6.7.3
 django-cors-headers==4.7.0
 django-filter==25.2

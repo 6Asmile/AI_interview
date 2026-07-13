@@ -14,6 +14,7 @@ export interface RegisterData {
 export interface LoginData {
   email?: string;
   password?: string;
+  mfa_code?: string;
 }
 
 export interface LoginResponse {

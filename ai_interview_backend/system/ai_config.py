@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 
-from .models import AIModel, AISetting
+from .models import AIModel, AISetting, ProviderCredential
 
 
 @dataclass
@@ -57,10 +57,26 @@ def resolve_ai_config(user=None, model_type: str = AIModel.ModelType.CHAT) -> Re
 
     api_key = None
     source = 'missing'
-    if selected_model and setting and setting.api_keys:
+    if selected_model and user and getattr(user, 'is_authenticated', False):
+        credential = ProviderCredential.objects.filter(
+            user=user,
+            legacy_model=selected_model,
+            scope=ProviderCredential.Scope.BYOK,
+            is_active=True,
+        ).order_by('-updated_at').first()
+        if credential:
+            try:
+                api_key = credential.get_secret()
+            except ValueError:
+                api_key = None
+            if api_key:
+                source = 'user_encrypted'
+
+    # Compatibility for installations that have not applied the credential migration yet.
+    if not api_key and selected_model and setting and setting.api_keys:
         api_key = setting.api_keys.get(str(selected_model.id)) or setting.api_keys.get(selected_model.model_slug)
         if api_key:
-            source = 'user'
+            source = 'user_legacy'
 
     if not api_key:
         env_key = {

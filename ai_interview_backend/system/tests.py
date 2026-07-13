@@ -4,7 +4,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from users.models import User
 
 from .model_gateway import ModelGateway, mask_api_key
-from .models import AIModel, AISetting
+from .models import AIModel, AISetting, ProviderCredential
 from .serializers import AISettingSerializer
 from .views import AIModelGatewayHealthView
 
@@ -36,7 +36,7 @@ class ModelGatewaySettingsTests(TestCase):
         self.assertEqual(data['api_keys'][str(self.chat_model.id)], mask_api_key('sk-test-secret-value'))
         self.assertNotIn('sk-test-secret-value', str(data))
 
-    def test_masked_api_key_update_preserves_existing_secret(self):
+    def test_masked_api_key_update_migrates_existing_secret_to_encrypted_credential(self):
         masked = mask_api_key('sk-test-secret-value')
         serializer = AISettingSerializer(
             self.setting,
@@ -47,7 +47,13 @@ class ModelGatewaySettingsTests(TestCase):
         self.assertTrue(serializer.is_valid(), serializer.errors)
         serializer.save()
         self.setting.refresh_from_db()
-        self.assertEqual(self.setting.api_keys[str(self.chat_model.id)], 'sk-test-secret-value')
+        self.assertNotIn(str(self.chat_model.id), self.setting.api_keys)
+        credential = ProviderCredential.objects.get(
+            user=self.user,
+            legacy_model=self.chat_model,
+            scope=ProviderCredential.Scope.BYOK,
+        )
+        self.assertEqual(credential.get_secret(), 'sk-test-secret-value')
 
     def test_blank_api_key_update_removes_secret(self):
         serializer = AISettingSerializer(

@@ -29,10 +29,12 @@ class StartInterviewSerializer(serializers.Serializer):
     """
     用于接收开始面试请求的序列化器 (只用于输入验证)
     """
-    job_position = serializers.CharField(max_length=100, required=True, help_text="目标岗位名称")
+    job_position = serializers.CharField(max_length=100, required=False, allow_blank=True, help_text="目标岗位名称")
     # resume_id = serializers.IntegerField(required=False, help_text="可选的简历ID")
     # difficulty = serializers.ChoiceField(choices=InterviewSession.Difficulty.choices, required=False)
     resume_id = serializers.IntegerField(required=False, help_text="可选的简历ID")
+    resume_version_id = serializers.IntegerField(required=False, allow_null=True, help_text="不可变简历版本ID")
+    job_target_id = serializers.IntegerField(required=False, allow_null=True, help_text="求职目标ID")
     jd_text = serializers.CharField(required=False, allow_blank=True, trim_whitespace=True, help_text="可选的岗位JD文本")
     question_count = serializers.IntegerField(required=False, default=8, min_value=1, max_value=18)
     target_duration_minutes = serializers.IntegerField(required=False, default=30, min_value=10, max_value=120)
@@ -52,6 +54,11 @@ class StartInterviewSerializer(serializers.Serializer):
 
     class Meta:
         fields = ['job_position', 'recording_enabled']
+
+    def validate(self, attrs):
+        if not str(attrs.get('job_position') or '').strip() and not attrs.get('job_target_id'):
+            raise serializers.ValidationError({'job_position': '请提供目标岗位或 job_target_id。'})
+        return attrs
 
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):

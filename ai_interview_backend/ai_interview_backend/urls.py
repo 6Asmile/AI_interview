@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static # 确保导入 static
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from users.token_views import AuditedTokenObtainPairView, AuditedTokenRefreshView
 # 【核心新增】导入 spectacular 的视图
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
@@ -22,12 +22,13 @@ urlpatterns = [
     # 【核心修正】将所有业务 API 都放在 'api/v1/' 命名空间下
     path('api/v1/', include([
         path('auth/', include('users.urls')),
-        path('auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-        path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+        path('auth/login/', AuditedTokenObtainPairView.as_view(), name='token_obtain_pair'),
+        path('auth/token/refresh/', AuditedTokenRefreshView.as_view(), name='token_refresh'),
         path('', include('resumes.urls')),
         path('', include('interviews.urls')),
         path('', include('system.urls')),
         path('', include('blog.urls')),
+        path('', include('community.urls')),
         path('', include('interactions.urls')),
         path('', include('notifications.urls')),
         path('', include('chat.urls')),
@@ -37,6 +38,11 @@ urlpatterns = [
         path('upload/', FileUploadView.as_view(), name='file-upload'),
         path('', include('reports.urls')),
         path('generate-resume/', GenerateResumeView.as_view(), name='generate-resume'),
+    ])),
+    path('accounts/', include('allauth.urls')),
+    path('api/v2/', include([
+        path('', include('careers.urls')),
+        path('', include('resumes.urls')),
     ])),
     # 【核心新增】API Schema & 文档路由
     path('api/v1/schema/', SpectacularAPIView.as_view(), name='schema'),

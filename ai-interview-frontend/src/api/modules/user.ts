@@ -1,21 +1,8 @@
-// src/api/modules/user.ts
 import request from '@/api/request';
 
-// 定义用户信息的类型
-export interface UserProfile {
-  id: number;
-  username: string;
-  email: string;
-  phone: string | null;
-  avatar: string | null;
-  role: string;
-  date_joined: string;
-}
-
-// 【新增】定义第三方账户的类型
 export interface SocialAccount {
   id: number;
-  provider: string; // e.g., 'github'
+  provider: string;
   uid: string;
   last_login: string;
   date_joined: string;
@@ -31,73 +18,56 @@ export interface UserProfile {
   role: string;
   date_joined: string;
   has_password: boolean;
-  socialaccount_set: SocialAccount[]; // 【新增】用户关联的所有第三方账户
+  socialaccount_set: SocialAccount[];
+  headline: string;
+  location: string;
+  years_experience: number;
+  target_roles: string[];
+  skills_profile: string[];
+  availability: string;
+  profile_visibility: 'private' | 'community' | 'public';
+  mfa_enabled: boolean;
+  mfa_required: boolean;
 }
 
-// API: 获取当前登录用户的个人信息
-export const getUserProfileApi = (): Promise<UserProfile> => {
-  return request({
-    url: '/auth/profile/',
-    method: 'get',
-  });
-};
-
-// API: 更新当前登录用户的个人信息
-export const updateUserProfileApi = (data: Partial<UserProfile>): Promise<UserProfile> => {
-  return request({
-    url: '/auth/profile/',
-    method: 'patch', // 使用 PATCH 可以只更新部分字段
-    data,
-  });
-};
-
-// API: 上传头像文件
-export const uploadAvatarApi = (formData: FormData): Promise<{ avatar_url: string }> => {
-    return request({
-        url: '/auth/upload-avatar/',
-        method: 'post',
-        data: formData,
-        headers: {
-            'Content-Type': 'multipart/form-data',
-        },
-    });
-};
-// 更新 UserProfile 接口
-export interface UserProfile {
-    // ...
-    has_password: boolean; // 新增
+export interface NotificationPreference {
+  in_app_enabled: boolean;
+  email_enabled: boolean;
+  interview_reminders: boolean;
+  application_updates: boolean;
+  community_updates: boolean;
+  direct_messages: boolean;
+  digest_frequency: 'none' | 'daily' | 'weekly';
+  quiet_hours: Record<string, string>;
+  updated_at: string;
 }
 
-// 定义修改密码时需要发送的数据类型
-export interface ChangePasswordData {
-  old_password?: string;
-  new_password1: string;
-  new_password2: string;
+export interface AuthSession {
+  id: string;
+  ip_address: string | null;
+  user_agent: string;
+  device_name: string;
+  expires_at: string;
+  last_seen_at: string;
+  revoked_at: string | null;
+  created_at: string;
 }
 
-// API: 修改/设置密码
-export const changePasswordApi = (data: ChangePasswordData) => {
-  return request({
-    url: '/auth/password/change/',
-    method: 'post',
-    data,
-  });
-};
+export interface ChangePasswordData { old_password?: string; new_password1: string; new_password2: string; }
 
-// 【新增】API: 绑定 GitHub 账户
-export const connectGitHubApi = (code: string): Promise<{ message: string }> => {
-    return request({
-        url: '/auth/github/connect/',
-        method: 'post',
-        data: { code },
-    });
-};
-
-// 【核心修正】更新解绑 API 函数
-export const disconnectSocialApi = (accountId: number): Promise<{ message: string }> => {
-  return request({
-    // URL 现在是动态的，并且是 POST 请求
-    url: `/auth/social/disconnect/${accountId}/`,
-    method: 'post',
-  });
-};
+export const getUserProfileApi = (): Promise<UserProfile> => request({ url: '/auth/profile/', method: 'get' });
+export const updateUserProfileApi = (data: Partial<UserProfile>): Promise<UserProfile> => request({ url: '/auth/profile/', method: 'patch', data });
+export const uploadAvatarApi = (formData: FormData): Promise<{ avatar_url: string }> => request({ url: '/auth/upload-avatar/', method: 'post', data: formData, headers: { 'Content-Type': 'multipart/form-data' } });
+export const changePasswordApi = (data: ChangePasswordData) => request({ url: '/auth/password/change/', method: 'post', data });
+export const connectGitHubApi = (code: string): Promise<{ message: string }> => request({ url: '/auth/github/connect/', method: 'post', data: { code } });
+export const disconnectSocialApi = (accountId: number): Promise<{ message: string }> => request({ url: `/auth/social/disconnect/${accountId}/`, method: 'post' });
+export const getNotificationPreferenceApi = (): Promise<NotificationPreference> => request({ url: '/auth/notification-preferences/', method: 'get' });
+export const updateNotificationPreferenceApi = (data: Partial<NotificationPreference>): Promise<NotificationPreference> => request({ url: '/auth/notification-preferences/', method: 'patch', data });
+export const getAuthSessionsApi = async (): Promise<AuthSession[]> => { const response: any = await request({ url: '/auth/sessions/', method: 'get' }); return Array.isArray(response) ? response : (response.results || []); };
+export const revokeAuthSessionApi = (id: string) => request({ url: `/auth/sessions/${id}/revoke/`, method: 'post' });
+export const createPrivacyRequestApi = (request_type: 'export' | 'delete', reason = '') => request({ url: '/auth/privacy-requests/', method: 'post', data: { request_type, reason } });
+export const logoutAllSessionsApi = () => request({ url: '/auth/logout/', method: 'post', data: { all_sessions: true } });
+export const getMFAStatusApi = () => request({ url: '/auth/mfa/status/', method: 'get' });
+export const setupMFAApi = () => request({ url: '/auth/mfa/setup/', method: 'post' });
+export const verifyMFAApi = (code: string) => request({ url: '/auth/mfa/verify/', method: 'post', data: { code } });
+export const disableMFAApi = (password: string, code: string) => request({ url: '/auth/mfa/disable/', method: 'post', data: { password, code } });

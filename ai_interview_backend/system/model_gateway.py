@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from .ai_config import resolve_ai_config
 from .models import AIModel
+from .gateway_executor import GatewayBudgetExceeded, GatewayExecutionError, GatewayExecutor
 
 
 class ModelGatewayError(RuntimeError):
@@ -79,6 +80,15 @@ class ModelGateway:
     def __init__(self, user=None, timeout: int | None = None):
         self.user = user
         self.timeout = int(timeout or getattr(settings, 'MODEL_GATEWAY_TIMEOUT_SECONDS', 30))
+        self.executor = GatewayExecutor(user)
+
+    def _use_alias(self, alias_slug: str, callback):
+        try:
+            return callback(self.executor, alias_slug)
+        except GatewayBudgetExceeded:
+            raise
+        except GatewayExecutionError:
+            return None
 
     def config(self, model_type: str) -> GatewayConfig:
         return resolve_gateway_config(self.user, model_type)
@@ -94,7 +104,10 @@ class ModelGateway:
     def _openai_client(self, config: GatewayConfig) -> OpenAI:
         return OpenAI(api_key=config.api_key, base_url=config.base_url or None)
 
-    def chat_json(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.3) -> dict:
+    def chat_json(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.3, alias_slug: str = 'chat.default') -> dict:
+        routed = self._use_alias(alias_slug, lambda executor, alias: executor.chat_json(alias, messages, task_name=alias, max_tokens=max_tokens, temperature=temperature))
+        if routed is not None:
+            return routed
         config = self._require(AIModel.ModelType.CHAT)
         client = self._openai_client(config)
         params = {
@@ -115,7 +128,14 @@ class ModelGateway:
             content = content[:-3]
         return json.loads(content.strip() or '{}')
 
-    def chat_stream(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.7):
+    def chat_stream(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.7, alias_slug: str = 'chat.default'):
+        try:
+            yield from self.executor.chat_stream(alias_slug, messages, task_name=alias_slug, max_tokens=max_tokens, temperature=temperature)
+            return
+        except GatewayBudgetExceeded:
+            raise
+        except GatewayExecutionError:
+            pass
         config = self._require(AIModel.ModelType.CHAT)
         client = self._openai_client(config)
         stream = client.chat.completions.create(
@@ -128,7 +148,10 @@ class ModelGateway:
         for chunk in stream:
             yield chunk.choices[0].delta.content or ''
 
-    def embed_text(self, text: str) -> tuple[list[float] | None, str, dict]:
+    def embed_text(self, text: str, alias_slug: str = 'embedding.default') -> tuple[list[float] | None, str, dict]:
+        routed = self._use_alias(alias_slug, lambda executor, alias: executor.embed_text(alias, text, task_name=alias))
+        if routed is not None:
+            return routed
         config = self._require(AIModel.ModelType.EMBEDDING)
         client = self._openai_client(config)
         response = client.embeddings.create(model=config.model_slug, input=(text or '')[:8000])
@@ -145,9 +168,12 @@ class ModelGateway:
             return base_url.replace('/compatible-mode/v1', '/api/v1/services/rerank/text-rerank/text-rerank')
         return base_url
 
-    def rerank(self, query: str, documents: Iterable[str], *, top_n: int = 4) -> tuple[list[dict], dict]:
-        config = self._require(AIModel.ModelType.RERANK)
+    def rerank(self, query: str, documents: Iterable[str], *, top_n: int = 4, alias_slug: str = 'rerank.default') -> tuple[list[dict], dict]:
         docs = [str(item or '') for item in documents]
+        routed = self._use_alias(alias_slug, lambda executor, alias: executor.rerank(alias, query, docs, top_n=top_n, task_name=alias))
+        if routed is not None:
+            return routed
+        config = self._require(AIModel.ModelType.RERANK)
         if not docs:
             return [], config.snapshot()
         url = self._rerank_url(config)

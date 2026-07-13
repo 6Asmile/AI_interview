@@ -197,6 +197,24 @@ class InterviewSession(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name='会话 UUID')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='interview_sessions', verbose_name='所属用户')
     resume = models.ForeignKey(Resume, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='关联简历')
+    resume_version = models.ForeignKey(
+        'resumes.ResumeVersion',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='interview_sessions',
+        verbose_name='简历版本快照来源',
+    )
+    job_target = models.ForeignKey(
+        'careers.JobTarget',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='interview_sessions',
+        verbose_name='求职目标',
+    )
+    resume_snapshot = models.JSONField(default=dict, blank=True, verbose_name='简历快照')
+    jd_snapshot = models.TextField(blank=True, verbose_name='JD 快照')
 
     job_position = models.CharField(max_length=100, verbose_name='目标岗位')
     difficulty = models.CharField(max_length=20, choices=Difficulty.choices, default=Difficulty.MEDIUM,

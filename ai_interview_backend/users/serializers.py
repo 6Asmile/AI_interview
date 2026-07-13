@@ -1,7 +1,9 @@
 from rest_framework import serializers
 from django.core.cache import cache
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from allauth.socialaccount.models import SocialAccount
-from .models import User
+from .models import AuthSession, NotificationPreference, PrivacyRequest, User
 
 
 # 【新增】为 SocialAccount 创建一个序列化器
@@ -13,6 +15,8 @@ class SocialAccountSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     has_password = serializers.SerializerMethodField()
+    mfa_enabled = serializers.SerializerMethodField()
+    mfa_required = serializers.SerializerMethodField()
     # 【核心修正】确保 socialaccount_set 被正确声明
     socialaccount_set = SocialAccountSerializer(many=True, read_only=True)
 
@@ -20,10 +24,25 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         # 【核心修正】在 fields 列表中明确包含 socialaccount_set
         fields = (
-        'id', 'username', 'email', 'phone', 'avatar', 'role', 'date_joined', 'has_password', 'socialaccount_set')
+            'id', 'username', 'email', 'phone', 'avatar', 'role', 'date_joined',
+            'has_password', 'socialaccount_set', 'headline', 'location', 'years_experience',
+            'target_roles', 'skills_profile', 'availability', 'profile_visibility',
+            'mfa_enabled', 'mfa_required',
+        )
+        read_only_fields = ('email', 'role', 'date_joined', 'mfa_enabled', 'mfa_required')
 
     def get_has_password(self, obj):
         return obj.has_usable_password()
+
+    def get_mfa_enabled(self, obj):
+        try:
+            from allauth.mfa.models import Authenticator
+            return Authenticator.objects.filter(user=obj).exists()
+        except (ImportError, RuntimeError):
+            return False
+
+    def get_mfa_required(self, obj):
+        return obj.role in (User.Role.HR, User.Role.ADMIN) or obj.is_staff or obj.is_superuser
 
 
 # --- 其他序列化器 (UserRegisterSerializer, PasswordChangeSerializer) 保持不变 ---
@@ -74,6 +93,10 @@ class PasswordChangeSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"old_password": "请输入您的当前密码。"})
             if not user.check_password(data.get('old_password')):
                 raise serializers.ValidationError({"old_password": "当前密码不正确。"})
+        try:
+            validate_password(data['new_password1'], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'new_password1': list(exc.messages)})
         return data
 
     def save(self, **kwargs):
@@ -82,3 +105,29 @@ class PasswordChangeSerializer(serializers.Serializer):
         user.set_password(new_password)
         user.save()
         return user
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationPreference
+        exclude = ('user',)
+        read_only_fields = ('updated_at',)
+
+
+class AuthSessionSerializer(serializers.ModelSerializer):
+    is_current = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuthSession
+        fields = ['id', 'ip_address', 'user_agent', 'device_name', 'expires_at', 'last_seen_at', 'revoked_at', 'created_at', 'is_current']
+        read_only_fields = fields
+
+    def get_is_current(self, obj):
+        return str(self.context.get('current_jti') or '') == obj.refresh_jti
+
+
+class PrivacyRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrivacyRequest
+        fields = ['id', 'request_type', 'status', 'result', 'reason', 'created_at', 'completed_at']
+        read_only_fields = ('status', 'result', 'created_at', 'completed_at')

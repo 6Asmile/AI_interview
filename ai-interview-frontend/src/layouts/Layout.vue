@@ -36,8 +36,9 @@ onMounted(() => {
       </div>
       
       <el-menu :default-active="route.path" class="main-nav" mode="horizontal" router>
-        <el-menu-item index="/dashboard">平台介绍</el-menu-item>
-        <el-menu-item index="/dashboard/blog">博客社区</el-menu-item>
+        <el-menu-item index="/dashboard">求职概览</el-menu-item>
+        <el-menu-item index="/dashboard/career">求职工作台</el-menu-item>
+        <el-menu-item index="/dashboard/community">技术社区</el-menu-item>
         <!-- 【核心新增】聊天/私信入口 -->
         <el-menu-item index="/dashboard/chat">
           <el-icon><ChatLineRound /></el-icon>
@@ -54,6 +55,7 @@ onMounted(() => {
           <el-menu-item index="/dashboard/interviews">开始面试</el-menu-item>
           <el-menu-item index="/dashboard/knowledge">知识库</el-menu-item>
           <el-menu-item v-if="canManageInterviewSystem" index="/dashboard/interview-admin">企业面试体系</el-menu-item>
+          <el-menu-item v-if="canManageInterviewSystem" index="/dashboard/model-gateway">模型网关</el-menu-item>
           <el-menu-item index="/dashboard/history">面试记录</el-menu-item>
         </el-sub-menu>
       </el-menu>

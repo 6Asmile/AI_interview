@@ -465,9 +465,11 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
 
         serializer = StartInterviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        job_position = serializer.validated_data['job_position']
+        job_position = serializer.validated_data.get('job_position', '').strip()
         jd_text = serializer.validated_data.get('jd_text', '').strip()
         resume_id = serializer.validated_data.get('resume_id')
+        resume_version_id = serializer.validated_data.get('resume_version_id')
+        job_target_id = serializer.validated_data.get('job_target_id')
         question_count = serializer.validated_data.get('question_count')
         target_duration_minutes = serializer.validated_data.get('target_duration_minutes')
         interview_mode = serializer.validated_data.get('interview_mode') or ''
@@ -475,12 +477,41 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         recording_enabled = serializer.validated_data.get('recording_enabled', False)
         template_id = serializer.validated_data.get('template_id')
 
+        job_target = None
+        if job_target_id:
+            from careers.models import JobTarget
+            try:
+                job_target = JobTarget.objects.get(id=job_target_id, user=request.user)
+            except JobTarget.DoesNotExist:
+                return Response({"error": "求职目标不存在"}, status=status.HTTP_404_NOT_FOUND)
+            job_position = job_position or job_target.position_name
+            jd_text = jd_text or job_target.jd_text
+
         resume_text = ""
         resume_instance = None
-        if resume_id:
+        resume_version = None
+        resume_snapshot = {}
+        if resume_version_id:
+            from resumes.models import ResumeVersion
+            from resumes.json_resume import json_resume_plain_text
+            try:
+                resume_version = ResumeVersion.objects.select_related('resume').get(
+                    id=resume_version_id,
+                    resume__user=request.user,
+                )
+            except ResumeVersion.DoesNotExist:
+                return Response({"error": "简历版本不存在"}, status=status.HTTP_404_NOT_FOUND)
+            resume_instance = resume_version.resume
+            resume_snapshot = resume_version.resume_json
+            resume_text = json_resume_plain_text(resume_snapshot)
+        elif resume_id:
             try:
                 resume_instance = Resume.objects.get(id=resume_id, user=request.user)
-                resume_text = format_resume_to_text(resume_instance)
+                from resumes.versioning import ensure_resume_version
+                from resumes.json_resume import json_resume_plain_text
+                resume_version = ensure_resume_version(resume_instance, request.user)
+                resume_snapshot = resume_version.resume_json
+                resume_text = json_resume_plain_text(resume_snapshot)
                 print("已为面试提取简历文本。")
             except Resume.DoesNotExist:
                 return Response({"error": "简历不存在"}, status=status.HTTP_404_NOT_FOUND)
@@ -509,6 +540,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
 
         session = InterviewSession.objects.create(
             user=request.user, job_position=job_position, resume=resume_instance,
+            resume_version=resume_version, job_target=job_target,
+            resume_snapshot=resume_snapshot, jd_snapshot=jd_text,
             question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now(),
             target_duration_minutes=target_duration_minutes,
             experience_mode=experience_mode,

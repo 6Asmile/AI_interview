@@ -44,10 +44,12 @@
         <el-table-column prop="updated_at" label="最后更新时间" width="200">
            <template #default="scope">{{ formatDateTime(scope.row.updated_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="scope">
             <el-button v-if="isOnlineResume(scope.row.status)" link type="primary" @click="handleEdit(scope.row.id)">编辑</el-button>
             <el-button link type="primary" @click="handlePreview(scope.row)">预览</el-button>
+            <el-button link type="primary" @click="showVersions(scope.row)">版本</el-button>
+            <el-button v-if="scope.row.latest_import_job?.status === 'review_required'" link type="success" @click="confirmImport(scope.row)">确认导入</el-button>
             <el-popconfirm title="确定要删除这份简历吗？" @confirm="handleDelete(scope.row.id)">
               <template #reference>
                 <el-button link type="danger">删除</el-button>
@@ -76,7 +78,7 @@
       >
         <el-icon class="el-icon--upload"><upload-filled /></el-icon>
         <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
-        <template #tip><div class="el-upload__tip">仅支持 PDF, DOC, DOCX 格式，大小不超过 5MB.</div></template>
+        <template #tip><div class="el-upload__tip">支持 PDF、DOCX、TXT、Markdown、JSON Resume，大小不超过 15MB。</div></template>
       </el-upload>
       <template #footer>
         <span class="dialog-footer">
@@ -87,13 +89,21 @@
         </span>
       </template>
     </el-dialog>
+    <el-drawer v-model="versionDrawer" title="简历版本历史" size="520px">
+      <el-empty v-if="!versions.length" description="暂无版本" />
+      <el-timeline v-else>
+        <el-timeline-item v-for="version in versions" :key="version.id" :timestamp="formatDateTime(version.created_at)" placement="top">
+          <div class="version-item"><strong>v{{ version.version_number }} · {{ sourceText(version.source) }}</strong><p>{{ version.change_summary || '未填写变更说明' }}</p><span>JSON Resume {{ version.schema_version }} · 证据 {{ version.evidence_snapshot.length }} 条</span><el-button v-if="activeResume?.current_version?.id !== version.id" link type="primary" @click="restoreVersion(version)">恢复为新版本</el-button><el-tag v-else type="success">当前版本</el-tag></div>
+        </el-timeline-item>
+      </el-timeline>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, reactive } from 'vue';
 import { useRouter } from 'vue-router';
-import { getResumeListApi, createResumeApi, deleteResumeApi, type ResumeItem } from '@/api/modules/resume';
+import { confirmResumeImportApi, getResumeListApi, createResumeApi, deleteResumeApi, getResumeVersionsApi, restoreResumeVersionApi, type ResumeItem, type ResumeVersion } from '@/api/modules/resume';
 import { ElMessage, ElPopconfirm, ElMessageBox } from 'element-plus';
 import type { UploadInstance, UploadProps, UploadRawFile, UploadFile } from 'element-plus';
 import { ArrowDown, UploadFilled } from '@element-plus/icons-vue';
@@ -105,6 +115,9 @@ const resumeList = ref<ResumeItem[]>([]);
 const isLoading = ref(true);
 const uploadDialogVisible = ref(false);
 const isUploading = ref(false);
+const versionDrawer = ref(false);
+const versions = ref<ResumeVersion[]>([]);
+const activeResume = ref<ResumeItem | null>(null);
 const uploadRef = ref<UploadInstance>();
 // 【核心修改#2】使用 reactive 对象来管理上传表单
 const uploadForm = reactive({
@@ -201,7 +214,7 @@ const handleUpload = async () => {
 
   try {
     const newResume = await createResumeApi(formData);
-    ElMessage.success('上传并解析成功！');
+    ElMessage.success('文件已上传，正在后台解析。');
     // 【优化】直接将返回的数据添加到列表顶部
     resumeList.value.unshift(newResume);
     uploadDialogVisible.value = false;
@@ -230,8 +243,13 @@ const resetUploadDialog = () => {
   uploadRef.value?.clearFiles();
 };
 
-const statusText = (status: string) => ({ draft: '草稿', published: '已发布', parsed: '已解析', failed: '解析失败' }[status] || '未知');
-const statusTagType = (status: string) => ({ draft: 'info', published: 'success', parsed: 'success', failed: 'danger' }[status] || 'info');
+const showVersions = async (row: ResumeItem) => { activeResume.value = row; versions.value = await getResumeVersionsApi(row.id); versionDrawer.value = true; };
+const restoreVersion = async (version: ResumeVersion) => { if (!activeResume.value) return; const resumeId = activeResume.value.id; await ElMessageBox.confirm(`恢复 v${version.version_number}？系统会创建一个新的恢复版本。`, '恢复版本'); await restoreResumeVersionApi(resumeId, version.id); await fetchResumeList(); const refreshed = resumeList.value.find(item => item.id === resumeId); if (refreshed) await showVersions(refreshed); };
+const confirmImport = async (row: ResumeItem) => { const job = row.latest_import_job; if (!job) return; await ElMessageBox.confirm('确认解析结果并创建不可变简历版本？', '确认导入'); await confirmResumeImportApi(job.id); ElMessage.success('导入结果已确认'); await fetchResumeList(); };
+const sourceText = (source: string) => ({ legacy_migration: '旧数据迁移', editor: '在线编辑', import: '文件导入', ai_suggestion: 'AI 建议', jd_variant: 'JD 定制', restore: '版本恢复' }[source] || source);
+
+const statusText = (status: string) => ({ draft: '草稿', processing: '解析中', published: '已发布', parsed: '待确认', failed: '解析失败' }[status] || '未知');
+const statusTagType = (status: string) => ({ draft: 'info', processing: 'warning', published: 'success', parsed: 'warning', failed: 'danger' }[status] || 'info');
 </script>
 
 <style scoped>
@@ -325,6 +343,7 @@ const statusTagType = (status: string) => ({ draft: 'info', published: 'success'
   padding-top: 14px;
   padding-bottom: 14px;
 }
+.version-item { padding: 12px; border: 1px solid #e1e6ee; border-radius: 6px; }.version-item p { margin: 8px 0; color: #475467; }.version-item span { display: block; margin-bottom: 8px; color: #667085; font-size: 12px; }
 
 :deep(.upload-dialog .el-dialog) {
   border-radius: 24px;

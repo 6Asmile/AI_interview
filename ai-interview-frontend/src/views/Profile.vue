@@ -1,398 +1,135 @@
 <template>
-  <div class="profile-page">
-    <div class="profile-hero">
-      <div>
-        <p class="hero-kicker">Account Center</p>
-        <h1>个人资料</h1>
-        <p>统一查看头像、基础信息、安全设置和第三方账户绑定。</p>
-      </div>
-    </div>
-
-    <div class="page-container profile-container">
-    <!-- 个人信息卡片 -->
-    <el-card class="profile-card">
-      <template #header>
-        <div class="page-card-header">
-          <div>
-            <p class="section-kicker">Profile</p>
-            <span>个人信息</span>
+  <div class="profile-page" v-loading="loading">
+    <header class="page-header"><div><h1>个人中心</h1><p>管理职业画像、通知、安全会话与隐私数据。</p></div></header>
+    <el-tabs v-model="activeTab" class="profile-tabs">
+      <el-tab-pane label="职业画像" name="profile">
+        <section class="profile-section">
+          <div class="avatar-column">
+            <el-avatar :size="112" :src="profileForm.avatar || defaultAvatar" />
+            <el-upload :show-file-list="false" :before-upload="beforeAvatarUpload" :http-request="handleAvatarUpload"><el-button :icon="Upload">更换头像</el-button></el-upload>
           </div>
-        </div>
-      </template>
-      <div v-if="!loading" class="profile-content">
-        <div class="avatar-section">
-          <el-avatar :size="128" :src="profileForm.avatar || defaultAvatar" class="profile-avatar" />
-          <el-upload
-            :show-file-list="false"
-            :before-upload="beforeAvatarUpload"
-            :http-request="handleAvatarUpload"
-          >
-            <el-button type="primary" class="upload-btn">更换头像</el-button>
-          </el-upload>
-        </div>
-        <div class="info-section">
-          <el-form :model="profileForm" label-width="80px">
-            <el-form-item label="用户名">
-              <el-input v-model="profileForm.username" />
-            </el-form-item>
-            <el-form-item label="邮箱">
-              <el-input v-model="profileForm.email" disabled />
-            </el-form-item>
-            <el-form-item label="手机号">
-              <el-input v-model="profileForm.phone" placeholder="暂未绑定" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="success" @click="handleSaveProfile" :loading="savingProfile">保存信息</el-button>
-            </el-form-item>
+          <el-form :model="profileForm" label-width="100px" class="profile-form">
+            <el-form-item label="用户名"><el-input v-model="profileForm.username" /></el-form-item>
+            <el-form-item label="职业标题"><el-input v-model="profileForm.headline" placeholder="例如：AI 应用开发工程师" /></el-form-item>
+            <el-form-item label="所在地区"><el-input v-model="profileForm.location" /></el-form-item>
+            <el-form-item label="工作年限"><el-input-number v-model="profileForm.years_experience" :min="0" :max="60" /></el-form-item>
+            <el-form-item label="目标岗位"><el-select v-model="profileForm.target_roles" multiple filterable allow-create default-first-option /></el-form-item>
+            <el-form-item label="技能画像"><el-select v-model="profileForm.skills_profile" multiple filterable allow-create default-first-option /></el-form-item>
+            <el-form-item label="求职状态"><el-input v-model="profileForm.availability" placeholder="在看机会、一个月内到岗等" /></el-form-item>
+            <el-form-item label="资料可见"><el-segmented v-model="profileForm.profile_visibility" :options="visibilityOptions" /></el-form-item>
+            <el-form-item><el-button type="primary" :loading="savingProfile" @click="saveProfile">保存职业画像</el-button></el-form-item>
           </el-form>
-        </div>
-      </div>
-      <el-skeleton :rows="5" animated v-if="loading" />
-    </el-card>
+        </section>
+      </el-tab-pane>
 
-    <!-- 安全设置卡片 -->
-    <el-card class="profile-card">
-      <template #header>
-        <div class="page-card-header">
-          <div>
-            <p class="section-kicker">Security</p>
-            <span>安全设置</span>
-          </div>
-        </div>
-      </template>
-      <div v-if="!loading" class="info-section">
-        <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="120px">
-          <el-alert v-if="!profileForm.has_password" title="您当前可能使用第三方账户登录，尚未设置密码。设置新密码后，您将可以使用邮箱和密码进行登录。" type="info" show-icon :closable="false" />
-          <el-form-item v-if="profileForm.has_password" label="当前密码" prop="old_password">
-            <el-input v-model="passwordForm.old_password" type="password" show-password placeholder="请输入当前密码" />
-          </el-form-item>
-          <el-form-item label="新密码" prop="new_password1" :style="{ marginTop: profileForm.has_password ? '0px' : '20px' }">
-            <el-input v-model="passwordForm.new_password1" type="password" show-password placeholder="请输入新密码" />
-          </el-form-item>
-          <el-form-item label="确认新密码" prop="new_password2">
-            <el-input v-model="passwordForm.new_password2" type="password" show-password placeholder="请再次输入新密码" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="handlePasswordChange" :loading="savingPassword">
-              {{ profileForm.has_password ? '修改密码' : '设置密码' }}
-            </el-button>
-          </el-form-item>
-        </el-form>
-      </div>
-       <el-skeleton :rows="4" animated v-if="loading" />
-    </el-card>
+      <el-tab-pane label="通知偏好" name="notifications">
+        <section class="settings-list">
+          <label v-for="item in notificationToggles" :key="item.key"><span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span><el-switch v-model="notificationForm[item.key]" /></label>
+          <label><span><strong>汇总频率</strong><small>控制非紧急消息的邮件汇总</small></span><el-select v-model="notificationForm.digest_frequency" style="width: 140px"><el-option label="不汇总" value="none" /><el-option label="每日" value="daily" /><el-option label="每周" value="weekly" /></el-select></label>
+          <el-button type="primary" @click="saveNotifications">保存通知设置</el-button>
+        </section>
+      </el-tab-pane>
 
-    <!-- 第三方账户绑定 -->
-    <el-card class="profile-card">
-      <template #header>
-        <div class="page-card-header">
-          <div>
-            <p class="section-kicker">Connections</p>
-            <span>第三方账户绑定</span>
+      <el-tab-pane label="账号安全" name="security">
+        <section class="security-grid">
+          <div class="security-panel">
+            <header><div><h2>双重验证</h2><p>登录时额外验证动态口令或恢复码。</p></div><el-tag :type="mfaStatus.enabled ? 'success' : profileForm.mfa_required ? 'warning' : 'info'">{{ mfaStatus.enabled ? '已启用' : profileForm.mfa_required ? '建议立即启用' : '未启用' }}</el-tag></header>
+            <el-button v-if="!mfaStatus.enabled" type="primary" :icon="Lock" @click="beginMFA">配置验证器</el-button>
+            <el-button v-else type="danger" plain @click="disableDialog=true">停用双重验证</el-button>
           </div>
-        </div>
-      </template>
-      <div v-if="!loading" class="social-accounts">
-        <div class="account-item">
-          <div class="account-info">
-            <img src="@/assets/icons/github.svg" alt="GitHub" class="provider-icon" />
-            <span>GitHub</span>
+          <div class="security-panel">
+            <h2>{{ profileForm.has_password ? '修改密码' : '设置密码' }}</h2>
+            <el-form ref="passwordFormRef" :model="passwordForm" label-position="top">
+              <el-form-item v-if="profileForm.has_password" label="当前密码"><el-input v-model="passwordForm.old_password" type="password" show-password /></el-form-item>
+              <el-form-item label="新密码"><el-input v-model="passwordForm.new_password1" type="password" show-password /></el-form-item>
+              <el-form-item label="确认新密码"><el-input v-model="passwordForm.new_password2" type="password" show-password /></el-form-item>
+              <el-button type="primary" @click="changePassword">更新密码</el-button>
+            </el-form>
           </div>
-          <div v-if="githubAccount" class="account-status">
-            <span>已绑定: {{ githubAccount.extra_data.login }}</span>
-            <el-button type="danger" plain size="small" @click="handleDisconnect('github')">解绑</el-button>
-          </div>
-          <div v-else class="account-status">
-            <span>未绑定</span>
-            <el-button type="primary" size="small" @click="handleConnectGitHub">去绑定</el-button>
-          </div>
-        </div>
-      </div>
-      <el-skeleton :rows="2" animated v-if="loading" />
-    </el-card>
-    </div>
+        </section>
+        <section class="session-section">
+          <header><div><h2>活动会话</h2><p>发现陌生设备时立即撤销，或退出所有设备。</p></div><el-button type="danger" plain @click="logoutAll">退出所有设备</el-button></header>
+          <el-table :data="sessions" empty-text="暂无活动会话">
+            <el-table-column prop="device_name" label="设备" min-width="130" /><el-table-column prop="ip_address" label="IP" width="140" /><el-table-column prop="last_seen_at" label="最近活动" width="180"><template #default="{row}">{{ formatDateTime(row.last_seen_at) }}</template></el-table-column><el-table-column prop="expires_at" label="到期" width="180"><template #default="{row}">{{ formatDateTime(row.expires_at) }}</template></el-table-column><el-table-column label="操作" width="90"><template #default="{row}"><el-button link type="danger" @click="revokeSession(row.id)">撤销</el-button></template></el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="账户与隐私" name="privacy">
+        <section class="settings-list">
+          <label><span><strong>GitHub</strong><small>{{ githubAccount ? `已绑定 ${githubAccount.extra_data.login || githubAccount.uid}` : '未绑定' }}</small></span><el-button v-if="githubAccount" type="danger" plain @click="disconnectGitHub">解绑</el-button><el-button v-else type="primary" @click="connectGitHub">绑定</el-button></label>
+          <label><span><strong>导出个人数据</strong><small>导出职业事实、简历当前版本、投递和面试记录，不包含模型密钥。</small></span><el-button @click="exportData">生成导出</el-button></label>
+          <label><span><strong>申请注销账号</strong><small>提交后进入人工审核，避免误删求职与面试记录。</small></span><el-button type="danger" plain @click="requestDeletion">申请注销</el-button></label>
+        </section>
+      </el-tab-pane>
+    </el-tabs>
+
+    <el-dialog v-model="mfaDialog" title="配置双重验证" width="480px">
+      <div class="mfa-setup"><img v-if="mfaSetup.qr_code" :src="mfaSetup.qr_code" alt="TOTP QR Code" /><p>使用验证器扫描二维码，再输入当前 6 位动态口令。</p><el-input v-model="mfaCode" maxlength="8" placeholder="动态口令" /></div>
+      <template #footer><el-button @click="mfaDialog=false">取消</el-button><el-button type="primary" @click="verifyMFA">确认启用</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="recoveryDialog" title="保存恢复码" width="520px"><el-alert title="每个恢复码只能使用一次。关闭后系统不会再次显示完整恢复码。" type="warning" :closable="false" /><pre class="recovery-codes">{{ recoveryCodes.join('\n') }}</pre><template #footer><el-button type="primary" @click="recoveryDialog=false">我已妥善保存</el-button></template></el-dialog>
+    <el-dialog v-model="disableDialog" title="停用双重验证" width="460px"><el-form label-position="top"><el-form-item label="当前密码"><el-input v-model="disableForm.password" type="password" show-password /></el-form-item><el-form-item label="动态口令"><el-input v-model="disableForm.code" /></el-form-item></el-form><template #footer><el-button @click="disableDialog=false">取消</el-button><el-button type="danger" @click="disableMFA">确认停用</el-button></template></el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive, computed } from 'vue';
-import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
-import type { FormInstance, FormRules, UploadProps, UploadRequestOptions } from 'element-plus';
+import { computed, onMounted, reactive, ref } from 'vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import type { FormInstance, UploadProps, UploadRequestOptions } from 'element-plus';
+import { Lock, Upload } from '@element-plus/icons-vue';
 import { useAuthStore } from '@/store/modules/auth';
-import { 
-  getUserProfileApi, 
-  updateUserProfileApi, 
-  uploadAvatarApi, 
-  changePasswordApi, 
-  disconnectSocialApi, // 确保导入
-  type UserProfile, 
-  type ChangePasswordData,
-  type SocialAccount 
+import {
+  changePasswordApi, createPrivacyRequestApi, disableMFAApi, disconnectSocialApi,
+  getAuthSessionsApi, getMFAStatusApi, getNotificationPreferenceApi, getUserProfileApi,
+  logoutAllSessionsApi, revokeAuthSessionApi, setupMFAApi, updateNotificationPreferenceApi,
+  updateUserProfileApi, uploadAvatarApi, verifyMFAApi,
+  type AuthSession, type ChangePasswordData, type NotificationPreference, type SocialAccount, type UserProfile,
 } from '@/api/modules/user';
 import defaultAvatar from '@/assets/images/default_avatar.png';
+import { formatDateTime } from '@/utils/format';
 
 const authStore = useAuthStore();
-const loading = ref(true);
-const savingProfile = ref(false);
-const savingPassword = ref(false);
+const activeTab = ref('profile'); const loading = ref(true); const savingProfile = ref(false);
+const profileForm = reactive<Partial<UserProfile>>({ target_roles: [], skills_profile: [], profile_visibility: 'private' });
+const notificationForm = reactive<any>({}); const sessions = ref<AuthSession[]>([]); const mfaStatus = reactive<any>({ enabled: false });
+const passwordFormRef = ref<FormInstance>(); const passwordForm = reactive<ChangePasswordData>({ old_password: '', new_password1: '', new_password2: '' });
+const mfaDialog = ref(false); const recoveryDialog = ref(false); const disableDialog = ref(false); const mfaSetup = reactive<any>({}); const mfaCode = ref(''); const recoveryCodes = ref<string[]>([]); const disableForm = reactive({ password: '', code: '' });
+const visibilityOptions = [{ label: '仅自己', value: 'private' }, { label: '社区可见', value: 'community' }, { label: '公开', value: 'public' }];
+const notificationToggles = [
+  { key: 'in_app_enabled', label: '站内通知', description: '面试、投递和系统消息' }, { key: 'email_enabled', label: '邮件通知', description: '重要事项发送到登录邮箱' },
+  { key: 'interview_reminders', label: '面试提醒', description: '面试计划和复盘任务' }, { key: 'application_updates', label: '投递提醒', description: '下一步动作和状态更新' },
+  { key: 'community_updates', label: '社区动态', description: '关注主题和文章互动' }, { key: 'direct_messages', label: '私信提醒', description: '求职与面试私密沟通' },
+];
+const githubAccount = computed<SocialAccount | undefined>(() => profileForm.socialaccount_set?.find(item => item.provider === 'github'));
 
-const profileForm = reactive<Partial<UserProfile>>({});
-const passwordFormRef = ref<FormInstance>();
-const passwordForm = reactive<ChangePasswordData>({
-  old_password: '',
-  new_password1: '',
-  new_password2: '',
-});
-
-const validatePass2 = (_rule: any, value: any, callback: any) => {
-  if (value === '') { callback(new Error('请再次输入密码')); } 
-  else if (value !== passwordForm.new_password1) { callback(new Error("两次输入的密码不一致!")); } 
-  else { callback(); }
-};
-
-const passwordRules = reactive<FormRules>({
-  old_password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
-  new_password1: [{ required: true, message: '请输入新密码', trigger: 'blur' }, { min: 6, message: '密码长度不能少于6位', trigger: 'blur' }],
-  new_password2: [{ validator: validatePass2, trigger: 'blur', required: true }],
-});
-
-const githubAccount = computed<SocialAccount | undefined>(() => {
-  return profileForm.socialaccount_set?.find(acc => acc.provider === 'github');
-});
-
-const fetchProfile = async () => {
-  loading.value = true;
-  try {
-    const res = await getUserProfileApi();
-    Object.assign(profileForm, res);
-  } catch (error) { console.error("获取用户信息失败", error); ElMessage.error("获取用户信息失败"); } 
-  finally { loading.value = false; }
-};
-
-// 【核心修正】onMounted 现在只负责获取个人信息
-onMounted(() => {
-  fetchProfile();
-});
-
-const beforeAvatarUpload: UploadProps['beforeUpload'] = (rawFile) => {
-  const isJpgOrPng = rawFile.type === 'image/jpeg' || rawFile.type === 'image/png';
-  if (!isJpgOrPng) { ElMessage.error('头像只能是 JPG/PNG 格式!'); return false; }
-  const isLt2M = rawFile.size / 1024 / 1024 < 2;
-  if (!isLt2M) { ElMessage.error('头像大小不能超过 2MB!'); return false; }
-  return true;
-};
-
-const handleAvatarUpload = async (options: UploadRequestOptions) => {
-  const formData = new FormData();
-  formData.append('avatar', options.file);
-  try {
-    const res = await uploadAvatarApi(formData);
-    profileForm.avatar = res.avatar_url;
-    authStore.fetchUser();
-    ElMessage.success('头像上传成功！');
-  } catch (error) { console.error("上传头像失败", error); ElMessage.error('头像上传失败'); }
-};
-
-const handleSaveProfile = async () => {
-  savingProfile.value = true;
-  try {
-    await updateUserProfileApi({ username: profileForm.username, phone: profileForm.phone });
-    authStore.fetchUser();
-    ElMessage.success('个人信息更新成功！');
-  } catch (error) { console.error('更新信息失败', error); } 
-  finally { savingProfile.value = false; }
-};
-
-const handlePasswordChange = async () => {
-  if (!passwordFormRef.value) return;
-  await passwordFormRef.value.validate(async (valid) => {
-    if (valid) {
-      savingPassword.value = true;
-      try {
-        await changePasswordApi(passwordForm);
-        ElMessage.success('密码更新成功！');
-        passwordFormRef.value?.resetFields();
-        await fetchProfile();
-      } catch (error) { console.error("密码更新失败", error); } 
-      finally { savingPassword.value = false; }
-    }
-  });
-};
-
-// 【核心修正】发起绑定流程
-const handleConnectGitHub = () => {
-  const clientID = import.meta.env.VITE_GITHUB_CLIENT_ID;
-  if (!clientID) { ElMessage.error('GitHub 登录未配置'); return; }
-
-  const redirectUri = `${window.location.origin}/oauth/callback`; // 跟随当前前端端口
-  
-  // 在跳转前，在 localStorage 中设置一个清晰的标记
-  localStorage.setItem('oauth_flow', 'connect');
-
-  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user:email`;
-  window.location.href = githubAuthUrl;
-};
-
-const handleDisconnect = async (provider: string) => {
-  if (!githubAccount.value) return;
-  ElMessageBox.confirm(`您确定要解绑此 ${provider.toUpperCase()} 账户吗？`, '警告', {
-    confirmButtonText: '确定解绑', cancelButtonText: '取消', type: 'warning',
-  }).then(async () => {
-    const loading = ElLoading.service({ text: '正在解绑...' });
-    try {
-      await disconnectSocialApi(githubAccount.value!.id);
-      ElMessage.success('账户已成功解绑！');
-      await fetchProfile();
-    } catch (error) {
-      console.error("解绑失败", error);
-      ElMessage.error("解绑失败，请稍后再试。");
-    } finally {
-      loading.close();
-    }
-  });
-};
+async function load() { loading.value = true; try { const [profile, pref, sessionList, mfa] = await Promise.all([getUserProfileApi(), getNotificationPreferenceApi(), getAuthSessionsApi(), getMFAStatusApi()]); Object.assign(profileForm, profile); Object.assign(notificationForm, pref); sessions.value = sessionList; Object.assign(mfaStatus, mfa); } finally { loading.value = false; } }
+onMounted(load);
+const beforeAvatarUpload: UploadProps['beforeUpload'] = file => { const valid = ['image/jpeg','image/png','image/webp'].includes(file.type) && file.size < 2 * 1024 * 1024; if (!valid) ElMessage.error('头像需为 JPG/PNG/WebP 且不超过 2MB'); return valid; };
+async function handleAvatarUpload(options: UploadRequestOptions) { const data = new FormData(); data.append('avatar', options.file); const result = await uploadAvatarApi(data); profileForm.avatar = result.avatar_url; await authStore.fetchUser(); }
+async function saveProfile() { savingProfile.value = true; try { await updateUserProfileApi(profileForm); await authStore.fetchUser(); ElMessage.success('职业画像已保存'); } finally { savingProfile.value = false; } }
+async function saveNotifications() { await updateNotificationPreferenceApi(notificationForm); ElMessage.success('通知设置已保存'); }
+async function changePassword() { if (passwordForm.new_password1 !== passwordForm.new_password2) return ElMessage.warning('两次密码不一致'); await changePasswordApi(passwordForm); Object.assign(passwordForm, { old_password: '', new_password1: '', new_password2: '' }); ElMessage.success('密码已更新'); }
+async function beginMFA() { Object.assign(mfaSetup, await setupMFAApi()); mfaCode.value = ''; mfaDialog.value = true; }
+async function verifyMFA() { const result: any = await verifyMFAApi(mfaCode.value); recoveryCodes.value = result.recovery_codes || []; mfaDialog.value = false; recoveryDialog.value = true; await load(); }
+async function disableMFA() { await disableMFAApi(disableForm.password, disableForm.code); disableDialog.value = false; Object.assign(disableForm, { password: '', code: '' }); await load(); }
+async function revokeSession(id: string) { await revokeAuthSessionApi(id); sessions.value = sessions.value.filter(item => item.id !== id); }
+async function logoutAll() { await ElMessageBox.confirm('这会让所有设备上的登录失效，是否继续？', '退出所有设备'); await logoutAllSessionsApi(); authStore.logout(); }
+function connectGitHub() { const clientID = import.meta.env.VITE_GITHUB_CLIENT_ID; if (!clientID) return ElMessage.error('GitHub 登录未配置'); localStorage.setItem('oauth_flow', 'connect'); window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${encodeURIComponent(`${window.location.origin}/oauth/callback`)}&scope=user:email`; }
+async function disconnectGitHub() { if (!githubAccount.value) return; await ElMessageBox.confirm('确认解绑 GitHub？', '账户解绑'); await disconnectSocialApi(githubAccount.value.id); await load(); }
+async function exportData() { const result: any = await createPrivacyRequestApi('export'); const blob = new Blob([JSON.stringify(result.result, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `ifaceoff-data-${new Date().toISOString().slice(0,10)}.json`; link.click(); URL.revokeObjectURL(url); }
+async function requestDeletion() { const { value } = await ElMessageBox.prompt('请说明注销原因，提交后由管理员审核。', '申请注销', { inputType: 'textarea' }); await createPrivacyRequestApi('delete', value); ElMessage.success('注销申请已提交'); }
 </script>
 
 <style scoped>
-.profile-page {
-  min-height: calc(100vh - 60px);
-  padding: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(79, 138, 255, 0.12), transparent 28%),
-    linear-gradient(180deg, #f7faff 0%, #eff4fb 100%);
-}
-
-.profile-hero {
-  margin-bottom: 22px;
-  padding: 28px 30px;
-  border: 1px solid rgba(201, 214, 236, 0.75);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 20px 44px rgba(47, 74, 119, 0.08);
-  backdrop-filter: blur(14px);
-}
-
-.hero-kicker,
-.section-kicker {
-  margin: 0 0 8px;
-  color: #5d7bb0;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.profile-hero h1 {
-  margin: 0 0 10px;
-  color: #1d2d4d;
-  font-size: 30px;
-}
-
-.profile-hero p:last-child {
-  margin: 0;
-  color: #697994;
-}
-
-.profile-container {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding: 0;
-}
-
-.profile-card {
-  border: 1px solid rgba(207, 219, 238, 0.8);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 22px 50px rgba(43, 67, 108, 0.08);
-}
-
-.page-card-header > div > span {
-  color: #1f3152;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.profile-content {
-  display: flex;
-  align-items: flex-start;
-  gap: 50px;
-}
-
-.avatar-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
-}
-
-.profile-avatar {
-  box-shadow: 0 22px 40px rgba(63, 95, 150, 0.16);
-}
-
-.upload-btn {
-  min-height: 44px;
-  border: none;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
-  box-shadow: 0 16px 28px rgba(42, 101, 216, 0.18);
-}
-
-.info-section {
-  flex-grow: 1;
-  max-width: 560px;
-}
-
-.social-accounts {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.account-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  border: 1px solid #e4ebf8;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-}
-
-.account-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-weight: 600;
-  color: #203252;
-}
-
-.provider-icon {
-  width: 24px;
-  height: 24px;
-}
-
-.account-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #7d8ba3;
-}
-
-@media (max-width: 900px) {
-  .profile-page {
-    padding: 16px;
-  }
-
-  .profile-content {
-    flex-direction: column;
-    gap: 26px;
-  }
-
-  .account-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-}
+.profile-page { min-height: calc(100vh - 60px); padding: 24px; background: #f5f7fa; }
+.page-header { padding-bottom: 20px; border-bottom: 1px solid #dfe4ec; }
+.page-header h1 { margin: 0; color: #1f2937; font-size: 28px; letter-spacing: 0; } .page-header p { margin: 8px 0 0; color: #667085; }
+.profile-tabs { margin-top: 18px; padding: 0 20px 24px; background: #fff; border: 1px solid #e1e6ee; border-radius: 8px; }
+.profile-section { display: grid; grid-template-columns: 150px minmax(0, 620px); gap: 30px; padding-top: 12px; }
+.avatar-column { display: flex; flex-direction: column; align-items: center; gap: 14px; }.profile-form { width: 100%; }
+.settings-list { max-width: 780px; padding-top: 8px; }.settings-list > label { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 0; border-bottom: 1px solid #edf0f4; }.settings-list strong,.settings-list small { display: block; }.settings-list small { margin-top: 4px; color: #667085; }
+.security-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }.security-panel,.session-section { padding: 18px; border: 1px solid #e1e6ee; border-radius: 6px; }.security-panel > header,.session-section > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }.security-panel h2,.session-section h2 { margin: 0; font-size: 18px; }.security-panel p,.session-section p { margin: 6px 0 16px; color: #667085; }.session-section { margin-top: 18px; }
+.mfa-setup { text-align: center; }.mfa-setup img { width: 220px; height: 220px; }.mfa-setup p { color: #667085; }.recovery-codes { padding: 16px; background: #f5f7fa; font-size: 16px; line-height: 1.8; columns: 2; }
+@media (max-width: 760px) { .profile-page { padding: 14px; }.profile-section,.security-grid { grid-template-columns: 1fr; }.avatar-column { align-items: flex-start; }.settings-list > label { align-items: flex-start; flex-direction: column; } }
 </style>

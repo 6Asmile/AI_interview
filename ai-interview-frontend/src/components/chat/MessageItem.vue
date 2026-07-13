@@ -16,8 +16,9 @@
         class="message-bubble"
         :class="isMe ? 'message-bubble--me' : 'message-bubble--peer'"
       >
+        <p v-if="message.revoked_at" class="revoked-message">消息已撤回</p>
         <!-- 1. 文本消息 -->
-        <p v-if="message.message_type === 'text'" class="whitespace-pre-wrap">{{ message.content }}</p>
+        <p v-else-if="message.message_type === 'text'" class="whitespace-pre-wrap">{{ message.content }}</p>
         
         <!-- 2. 图片消息 -->
         <div v-else-if="message.message_type === 'image'">
@@ -59,6 +60,8 @@
       <!-- 时间戳 -->
       <div class="message-time" :class="isMe ? 'message-time--me' : 'message-time--peer'">
         {{ formatDateTime(message.timestamp, 'HH:mm') }}
+        <span v-if="message.edited_at"> · 已编辑</span>
+        <span v-if="isMe"> · {{ deliveryText }}</span>
       </div>
     </div>
     
@@ -84,6 +87,7 @@ const props = defineProps<{
 
 const authStore = useAuthStore();
 const isMe = computed(() => props.message.sender.id === authStore.user?.id);
+const deliveryText = computed(() => ({ pending: '发送中', sent: '已发送', delivered: '已送达', read: '已读', failed: '失败' }[props.message.delivery_status] || '已发送'));
 
 // 【核心新增】获取完整的资源 URL
 const getFullUrl = (url: string | null) => {
@@ -193,6 +197,7 @@ const getFullUrl = (url: string | null) => {
   white-space: pre-wrap;
   word-break: break-all;
 }
+.revoked-message { margin: 0; color: #98a2b3; font-style: italic; }
 
 @media (max-width: 768px) {
   .message-content {

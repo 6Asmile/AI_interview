@@ -83,6 +83,89 @@ services:
     networks:
       - ifaceoff_infra_network
 
+  model-gateway-db:
+    image: postgres:16-alpine
+    container_name: Ifaceoff-infra-model-gateway-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LITELLM_DB_NAME:-litellm}
+      POSTGRES_USER: ${LITELLM_DB_USER:-litellm}
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm-change-me}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${LITELLM_DB_PORT:-5433}:5432"
+    volumes:
+      - ifaceoff_litellm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - ifaceoff_infra_network
+
+  litellm:
+    image: ${LITELLM_IMAGE:-docker.litellm.ai/berriai/litellm@sha256:2fdd90b14e3d9244ce297f418b983d8cfd90ba6e72a10a8ddb30f7cf64852390}
+    container_name: Ifaceoff-infra-litellm
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-ifaceoff-local-change-me}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-ifaceoff-local-salt-change-me}
+      DATABASE_URL: postgresql://${LITELLM_DB_USER:-litellm}:${LITELLM_DB_PASSWORD:-litellm-change-me}@model-gateway-db:5432/${LITELLM_DB_NAME:-litellm}
+      STORE_MODEL_IN_DB: "True"
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./docker/litellm/config.yaml:/app/config.yaml:ro
+    depends_on:
+      model-gateway-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness')\""]
+      interval: 15s
+      timeout: 8s
+      retries: 20
+      start_period: 30s
+    networks:
+      - ifaceoff_infra_network
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.45.1
+    container_name: Ifaceoff-infra-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: ${MEILI_ENV:-development}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+    ports:
+      - "${MEILISEARCH_PORT:-7700}:7700"
+    volumes:
+      - ifaceoff_meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --spider http://127.0.0.1:7700/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - ifaceoff_infra_network
+
+  clamav:
+    image: clamav/clamav:1.5
+    container_name: Ifaceoff-infra-clamav
+    restart: unless-stopped
+    ports:
+      - "${CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - ifaceoff_clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    networks:
+      - ifaceoff_infra_network
+
 volumes:
   ifaceoff_mysql_data:
     name: Ifaceoff-infra-mysql-data
@@ -92,6 +175,12 @@ volumes:
     name: Ifaceoff-infra-rabbitmq-data
   ifaceoff_qdrant_data:
     name: Ifaceoff-infra-qdrant-data
+  ifaceoff_litellm_postgres_data:
+    name: Ifaceoff-infra-litellm-postgres-data
+  ifaceoff_meilisearch_data:
+    name: Ifaceoff-infra-meilisearch-data
+  ifaceoff_clamav_data:
+    name: Ifaceoff-infra-clamav-data
 
 networks:
   ifaceoff_infra_network:

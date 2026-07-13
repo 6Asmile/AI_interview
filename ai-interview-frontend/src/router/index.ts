@@ -20,6 +20,8 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true },
     children: [
       { path: '', name: 'Dashboard', component: () => import('@/views/Home.vue') },
+      { path: 'career', name: 'CareerWorkspace', component: () => import('@/views/CareerWorkspace.vue') },
+      { path: 'community', name: 'CommunityHub', component: () => import('@/views/CommunityHub.vue') },
       { path: 'interviews', name: 'InterviewSetup', component: () => import('@/views/Dashboard.vue') },
       
       // --- 【核心修改】将面试房间路由移到此处 ---
@@ -36,6 +38,7 @@ const routes: Array<RouteRecordRaw> = [
       { path: 'history', name: 'History', component: () => import('@/views/History.vue') },
       { path: 'report/:id', name: 'ReportDetail', component: () => import('@/views/ReportDetail.vue') },
       { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') },
+      { path: 'model-gateway', name: 'ModelGatewayAdmin', component: () => import('@/views/ModelGatewayAdmin.vue'), meta: { roles: ['admin'] } },
       { path: 'profile', name: 'Profile', component: () => import('@/views/Profile.vue') },
       {
         path: 'resume/edit/:id',
@@ -148,6 +151,12 @@ router.beforeEach(async (to, _from, next) => {
     } catch (error) {
       return next({ name: 'Login', query: { redirect: to.fullPath } });
     }
+  }
+
+  const allowedRoles = to.meta.roles as string[] | undefined;
+  if (allowedRoles?.length && !allowedRoles.includes((authStore.user?.role || '').toLowerCase())) {
+    ElMessage.warning('当前账号没有访问该页面的权限。');
+    return next({ name: 'Dashboard' });
   }
 
   if (!hasCheckedForUnfinishedInterview) {

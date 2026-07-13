@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("up", "down", "restart", "logs", "ps", "pull", "config")]
+    [ValidateSet("up", "down", "restart", "logs", "ps", "status", "pull", "config")]
     [string]$Action = "up",
     [switch]$Follow
 )
@@ -33,6 +33,9 @@ switch ($Action) {
         Write-Host "  RabbitMQ: 127.0.0.1:5672"
         Write-Host "  MQ Admin: http://127.0.0.1:15672"
         Write-Host "  Qdrant:   http://127.0.0.1:6333/dashboard"
+        Write-Host "  LiteLLM:  http://127.0.0.1:4000"
+        Write-Host "  Search:   http://127.0.0.1:7700"
+        Write-Host "  ClamAV:   127.0.0.1:3310"
     }
     "down" {
         Compose down
@@ -49,6 +52,9 @@ switch ($Action) {
         }
     }
     "ps" {
+        Compose ps
+    }
+    "status" {
         Compose ps
     }
     "pull" {

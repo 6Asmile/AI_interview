@@ -5,6 +5,7 @@ import { getConversationsApi, getMessagesApi, startConversationApi } from '@/api
 import type { Conversation, Message } from '@/api/modules/chat';
 import { ElMessage } from 'element-plus';
 import { useAuthStore } from './auth';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ChatState {
   conversations: Conversation[];
@@ -160,6 +161,7 @@ export const useChatStore = defineStore('chat', {
       // 4. 事件监听
       this.socket.onopen = () => {
         this.connectionStatus = 'connected';
+        this.socket?.send(JSON.stringify({ type: 'read_messages' }));
         console.log('Chat WebSocket connected');
       };
 
@@ -176,8 +178,10 @@ export const useChatStore = defineStore('chat', {
              if (!this.messages[this.activeConversationId]) {
                 this.messages[this.activeConversationId] = [];
              }
-             // 使用扩展运算符创建新数组，确保 Vue 监听到变化
-             this.messages[this.activeConversationId] = [newMessage, ...this.messages[this.activeConversationId]];
+             const current = this.messages[this.activeConversationId];
+             const existingIndex = current.findIndex(item => item.id === newMessage.id || item.client_message_id === newMessage.client_message_id);
+             if (existingIndex >= 0) current.splice(existingIndex, 1);
+             this.messages[this.activeConversationId] = [newMessage, ...current];
           }
 
           // 2. 更新左侧对话列表预览
@@ -203,6 +207,13 @@ export const useChatStore = defineStore('chat', {
         // 处理“对方正在输入”状态
         } else if (data.type === 'typing_indicator') {
           this.otherUserTypingStatus = data.is_typing;
+        } else if (data.type === 'read_receipt' && this.activeConversationId) {
+          const lastReadId = Number(data.last_read_message_id || 0);
+          this.messages[this.activeConversationId] = (this.messages[this.activeConversationId] || []).map(message =>
+            message.id <= lastReadId ? { ...message, is_read: true, delivery_status: 'read' } : message
+          );
+        } else if (data.type === 'error') {
+          ElMessage.error(data.message || '消息发送失败');
         }
       };
 
@@ -222,10 +233,11 @@ export const useChatStore = defineStore('chat', {
      * 通过 WebSocket 发送消息
      * @param messageData 消息内容对象
      */
-    sendMessage(messageData: { content: string; message_type: string; file_url?: string }) {
+    sendMessage(messageData: { content: string; message_type: string; attachment_id?: number; reply_to_id?: number }) {
       if (this.socket && this.connectionStatus === 'connected') {
         this.socket.send(JSON.stringify({
           type: 'chat_message',
+          client_message_id: uuidv4(),
           ...messageData,
         }));
       } else {

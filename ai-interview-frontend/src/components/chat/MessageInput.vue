@@ -57,7 +57,7 @@ import { ref } from 'vue';
 import { useChatStore } from '@/store/modules/chat';
 import { ElMessage } from 'element-plus';
 import { Picture, FolderOpened } from '@element-plus/icons-vue';
-import { uploadFileApi } from '@/api/modules/common';
+import { uploadChatAttachmentApi } from '@/api/modules/chat';
 import type { UploadRequestOptions } from 'element-plus';
 import { debounce } from 'lodash-es';
 
@@ -114,14 +114,14 @@ const beforeFileUpload = (file: File) => {
 const handleFileUpload = async (options: UploadRequestOptions) => {
   isUploading.value = true;
   try {
-    const response = await uploadFileApi(options.file, 'chat_files');
+    const response = await uploadChatAttachmentApi(options.file);
     
     const message_type = options.file.type.startsWith('image/') ? 'image' : 'file';
 
     chatStore.sendMessage({
       content: options.file.name, // 将文件名作为 content
       message_type: message_type,
-      file_url: response.file_url,
+      attachment_id: response.id,
     });
 
   } catch (error) {

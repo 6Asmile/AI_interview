@@ -48,9 +48,11 @@ INSTALLED_APPS = [
     'corsheaders',
     # 3rd party apps
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'django.contrib.sites',  # allauth 需要这个
     'allauth',  # allauth 核心
     'allauth.account',  # allauth 账户管理
+    'allauth.mfa',
     'allauth.socialaccount',  # allauth 第三方账户
     'allauth.socialaccount.providers.github',  # GitHub 提供商
     'dj_rest_auth',  # 新增
@@ -58,12 +60,14 @@ INSTALLED_APPS = [
     'django_filters',
     # Local apps
     'users',
+    'careers',
     'resumes',
     'interviews',
     'reports',
     'questions',
     'system',
     'blog',
+    'community',
     'interactions',
     'notifications',
    'chat',
@@ -199,8 +203,8 @@ from datetime import timedelta
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),    # Access Token 有效期
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),     # Refresh Token 有效期
-    "ROTATE_REFRESH_TOKENS": False,
-    "BLACKLIST_AFTER_ROTATION": False,
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True, # 登录后更新 last_login 字段
 
     "ALGORITHM": "HS256",
@@ -311,10 +315,8 @@ SITE_ID = 1
 # 【核心修正】指定使用我们自定义的 SocialAccountAdapter
 SOCIALACCOUNT_ADAPTER = 'users.adapter.CustomSocialAccountAdapter'
 ACCOUNT_ADAPTER = 'allauth.account.adapter.DefaultAccountAdapter'
-ACCOUNT_LOGIN_METHOD = "email"
-ACCOUNT_SIGNUP_METHODS = ["email"]
-ACCOUNT_USERNAME_REQUIRED = False
-ACCOUNT_EMAIL_REQUIRED = True
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_UNIQUE_EMAIL = True
 ACCOUNT_EMAIL_VERIFICATION = "none"
 SOCIALACCOUNT_LOGIN_ON_GET = True
@@ -366,6 +368,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'blog.tasks.record_daily_stats',
         'schedule': crontab(hour=23, minute=50),  # 每天晚上 23:50 执行
     },
+    'publish-chat-outbox-every-minute': {
+        'task': 'chat.tasks.publish_pending_chat_outbox',
+        'schedule': 60,
+    },
 }
 #celery -A ai_interview_backend worker -l info -P gevent
 # celery -A ai_interview_backend beat -l info
@@ -398,6 +404,18 @@ AGENT_MAX_GENERATION_RETRIES = int(os.getenv('AGENT_MAX_GENERATION_RETRIES', '2'
 AGENT_EVALUATION_CONFIDENCE_THRESHOLD = float(os.getenv('AGENT_EVALUATION_CONFIDENCE_THRESHOLD', '0.6'))
 AGENT_NODE_TIMEOUT_SECONDS = int(os.getenv('AGENT_NODE_TIMEOUT_SECONDS', '30'))
 MODEL_GATEWAY_TIMEOUT_SECONDS = int(os.getenv('MODEL_GATEWAY_TIMEOUT_SECONDS', '30'))
+MODEL_CREDENTIAL_ENCRYPTION_KEY = os.getenv('MODEL_CREDENTIAL_ENCRYPTION_KEY', '')
+LITELLM_PROXY_URL = os.getenv('LITELLM_PROXY_URL', 'http://127.0.0.1:4000/v1')
+LANGFUSE_ENABLED = os.getenv('LANGFUSE_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+RESUME_UPLOAD_MAX_BYTES = int(os.getenv('RESUME_UPLOAD_MAX_BYTES', str(15 * 1024 * 1024)))
+DISCOURSE_BASE_URL = os.getenv('DISCOURSE_BASE_URL', '')
+DISCOURSE_CONNECT_SECRET = os.getenv('DISCOURSE_CONNECT_SECRET', '')
+DISCOURSE_WEBHOOK_SECRET = os.getenv('DISCOURSE_WEBHOOK_SECRET', '')
+MEILISEARCH_URL = os.getenv('MEILISEARCH_URL', 'http://127.0.0.1:7700')
+MEILISEARCH_API_KEY = os.getenv('MEILISEARCH_API_KEY', '')
+CLAMAV_HOST = os.getenv('CLAMAV_HOST', '127.0.0.1')
+CLAMAV_PORT = int(os.getenv('CLAMAV_PORT', '3310'))
+CLAMAV_REQUIRED = os.getenv('CLAMAV_REQUIRED', 'false').lower() in ('1', 'true', 'yes', 'on')
 QDRANT_URL = os.getenv('QDRANT_URL', '')
 QDRANT_COLLECTION = os.getenv('QDRANT_COLLECTION', 'interview_knowledge')
 EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')

@@ -24,6 +24,9 @@
         <el-form-item label="密码" prop="password">
           <el-input v-model="loginForm.password" type="password" show-password placeholder="请输入密码" />
         </el-form-item>
+        <el-form-item v-if="mfaRequired" label="验证码" prop="mfa_code">
+          <el-input v-model="loginForm.mfa_code" maxlength="12" autocomplete="one-time-code" placeholder="动态口令或恢复码" />
+        </el-form-item>
         <el-form-item>
           <el-button :loading="loading" @click="handleLogin" class="beautiful-button">登录</el-button>
         </el-form-item>
@@ -57,7 +60,8 @@ const router = useRouter();
 const loading = ref(false);
 const isAuthenticating = ref(false);
 const loginFormRef = ref<FormInstance>();
-const loginForm = reactive({ email: '', password: '' });
+const loginForm = reactive({ email: '', password: '', mfa_code: '' });
+const mfaRequired = ref(false);
 
 // 【核心修正】只定义一次
 const loginRules = reactive<FormRules>({
@@ -90,7 +94,13 @@ const handleLogin = async () => {
       try {
         await authStore.loginWithCredentials(loginForm);
         ElMessage.success('登录成功！');
-      } catch (error) { console.error("登录失败", error); } 
+      } catch (error: any) {
+        if (error?.response?.data?.mfa_required || error?.response?.data?.mfa_code) {
+          mfaRequired.value = true;
+          ElMessage.info('请输入验证器动态口令或恢复码后再次登录。');
+        }
+        console.error("登录失败", error);
+      }
       finally { loading.value = false; }
     }
   });

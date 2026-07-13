@@ -1,262 +1,112 @@
 <template>
-  <div class="home-page">
-    <section class="hero-section">
-      <div class="hero-copy">
-        <p class="eyebrow">AI Mock Interview Platform</p>
-        <h1>用更接近真实企业面试的方式，训练你的表达、项目复盘和岗位匹配能力</h1>
-        <p class="hero-description">
-          IFaceOff 会根据岗位、JD、简历和你的实时回答动态追问，帮助你发现回答中的空泛点、能力证据缺口和未验证风险。
-        </p>
-        <div class="hero-actions">
-          <el-button type="primary" size="large" @click="router.push({ name: 'InterviewSetup' })">开始模拟面试</el-button>
-          <el-button size="large" plain @click="router.push({ name: 'ResumeManagement' })">完善我的简历</el-button>
-        </div>
+  <div class="dashboard-page" v-loading="loading">
+    <header class="dashboard-header">
+      <div>
+        <h1>求职概览</h1>
+        <p>今天需要推进的投递、面试准备和能力补强都在这里。</p>
       </div>
-      <div class="hero-visual">
-        <img src="/hero.webp" alt="AI 模拟面试平台展示" />
+      <div class="header-actions">
+        <el-button :icon="Document" @click="router.push('/dashboard/resumes')">简历中心</el-button>
+        <el-button type="primary" :icon="VideoCamera" @click="router.push('/dashboard/interviews')">开始面试</el-button>
+      </div>
+    </header>
+
+    <section class="metrics-band">
+      <div v-for="metric in metrics" :key="metric.label" class="metric-item">
+        <span>{{ metric.label }}</span><strong>{{ metric.value }}</strong><small>{{ metric.note }}</small>
       </div>
     </section>
 
-    <section class="feature-section">
-      <div class="section-heading">
-        <p class="eyebrow">Platform Capabilities</p>
-        <h2>项目核心功能</h2>
-      </div>
-      <div class="feature-grid">
-        <div v-for="feature in features" :key="feature.title" class="feature-card">
-          <span>{{ feature.index }}</span>
-          <h3>{{ feature.title }}</h3>
-          <p>{{ feature.description }}</p>
+    <div class="dashboard-grid">
+      <section class="workspace-section">
+        <header><div><h2>投递管道</h2><p>按当前阶段汇总真实投递记录</p></div><el-button link type="primary" @click="router.push('/dashboard/career')">管理管道</el-button></header>
+        <div class="pipeline-summary">
+          <div v-for="stage in pipelineStages" :key="stage.key" class="pipeline-stage">
+            <span>{{ stage.label }}</span><strong>{{ dashboard?.pipeline?.[stage.key] || 0 }}</strong>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="workflow-section">
-      <div class="workflow-copy">
-        <p class="eyebrow">Interview Flow</p>
-        <h2>从准备到复盘的完整链路</h2>
-        <p>先确认岗位和 JD，再进入面试房间答题。系统会根据每轮回答质量生成下一题，结束后沉淀成可复盘的报告。</p>
-      </div>
-      <div class="workflow-steps">
-        <div v-for="step in steps" :key="step.title" class="workflow-step">
-          <strong>{{ step.title }}</strong>
-          <p>{{ step.description }}</p>
+      <section class="workspace-section">
+        <header><div><h2>近期动作</h2><p>按时间排序的面试与跟进事项</p></div></header>
+        <el-empty v-if="!dashboard?.upcoming_actions?.length" :image-size="64" description="暂无待办动作" />
+        <div v-else class="action-list">
+          <button v-for="item in dashboard.upcoming_actions" :key="item.application_id" @click="router.push('/dashboard/career')">
+            <span><strong>{{ item.company_name }}</strong><small>{{ item.position_name }}</small></span>
+            <time>{{ formatDateTime(item.next_action_at) }}</time>
+          </button>
         </div>
-      </div>
-    </section>
+      </section>
+
+      <section class="workspace-section full-width">
+        <header><div><h2>准备质量</h2><p>这些指标来自你的真实资料，不使用示例数据</p></div></header>
+        <div class="quality-list">
+          <div><span>已确认职业事实</span><el-progress :percentage="factProgress" :stroke-width="10" /></div>
+          <div><span>标准化简历版本</span><el-progress :percentage="resumeProgress" :stroke-width="10" /></div>
+          <div><span>待完成补强任务</span><strong>{{ dashboard?.open_learning_tasks || 0 }}</strong></div>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElButton } from 'element-plus';
+import { Document, VideoCamera } from '@element-plus/icons-vue';
+import { getCareerDashboardApi, type CareerDashboard } from '@/api/modules/career';
+import { formatDateTime } from '@/utils/format';
 
 const router = useRouter();
-
-const features = [
-  { index: '01', title: '岗位与 JD 驱动提问', description: '支持产品、开发、AI 应用、游戏客户端等不同岗位，结合真实 JD 动态生成面试策略。' },
-  { index: '02', title: '面试 Agent 动态追问', description: '根据回答质量、追问目标和短期记忆决定下一题，不再是固定题库式问答。' },
-  { index: '03', title: '结构化回答点评', description: '从清晰度、深度、相关性、证据质量等维度评分，并解释为什么要继续追问。' },
-  { index: '04', title: '录像与历史回放', description: '支持面试录像上传、原始录像 fallback 和后台压缩状态展示，方便复盘表达表现。' },
-  { index: '05', title: '简历中心与 AI 诊断', description: '管理在线简历，结合岗位 JD 做简历匹配分析和优化建议。' },
-  { index: '06', title: '面试报告验证链路', description: '报告会映射每题质量分、已验证能力和未验证风险，而不是只给泛泛总结。' },
-];
-
-const steps = [
-  { title: '配置面试', description: '选择岗位、简历、题量、是否录像，并粘贴真实 JD。' },
-  { title: '进入房间', description: 'AI 面试官先引导自我介绍，再按简历和回答逐步追问。' },
-  { title: '提交回答', description: '系统即时评估质量，并给出下一题追问方向。' },
-  { title: '生成报告', description: '面试结束后输出能力评分、改进建议和验证链路。' },
-];
+const loading = ref(false);
+const dashboard = ref<CareerDashboard | null>(null);
+const pipelineStages = [
+  { key: 'saved', label: '待投递' }, { key: 'applied', label: '已投递' },
+  { key: 'screening', label: '筛选中' }, { key: 'interview', label: '面试中' },
+  { key: 'offer', label: 'Offer' },
+] as const;
+const metrics = computed(() => [
+  { label: '目标岗位', value: dashboard.value?.active_job_targets || 0, note: '准备中的岗位' },
+  { label: '职业事实', value: dashboard.value?.confirmed_facts || 0, note: '已人工确认' },
+  { label: '简历', value: dashboard.value?.resume_count || 0, note: '个人简历库' },
+  { label: '补强任务', value: dashboard.value?.open_learning_tasks || 0, note: '来自面试复盘' },
+]);
+const factProgress = computed(() => Math.min(100, (dashboard.value?.confirmed_facts || 0) * 10));
+const resumeProgress = computed(() => {
+  const total = dashboard.value?.resume_count || 0;
+  return total ? Math.round(((total - (dashboard.value?.resumes_without_versions || 0)) / total) * 100) : 0;
+});
+onMounted(async () => { loading.value = true; try { dashboard.value = await getCareerDashboardApi(); } finally { loading.value = false; } });
 </script>
 
 <style scoped>
-.home-page {
-  min-height: calc(100vh - 60px);
-  padding: 28px;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(76, 146, 255, 0.16), transparent 28%),
-    radial-gradient(circle at 88% 4%, rgba(45, 205, 175, 0.14), transparent 25%),
-    linear-gradient(180deg, #f7faff 0%, #eef4fb 100%);
-}
-
-.hero-section,
-.feature-section,
-.workflow-section {
-  max-width: 1480px;
-  margin: 0 auto 26px;
-  border: 1px solid rgba(201, 214, 236, 0.78);
-  border-radius: 32px;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 24px 60px rgba(47, 74, 119, 0.09);
-  backdrop-filter: blur(14px);
-}
-
-.hero-section {
-  display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
-  gap: 28px;
-  align-items: center;
-  padding: 34px;
-}
-
-.eyebrow {
-  margin: 0 0 10px;
-  color: #5d7bb0;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.hero-copy h1,
-.section-heading h2,
-.workflow-copy h2 {
-  margin: 0;
-  color: #1c2d4b;
-  line-height: 1.16;
-}
-
-.hero-copy h1 {
-  max-width: 760px;
-  font-size: clamp(34px, 3.3vw, 58px);
-}
-
-.hero-description {
-  max-width: 680px;
-  margin: 22px 0 0;
-  color: #60708f;
-  font-size: 17px;
-  line-height: 1.85;
-}
-
-.hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 28px;
-}
-
-.hero-actions :deep(.el-button) {
-  min-height: 48px;
-  border-radius: 16px;
-}
-
-.hero-visual {
-  overflow: hidden;
-  border: 1px solid rgba(196, 213, 239, 0.9);
-  border-radius: 28px;
-  background: linear-gradient(135deg, #eef6ff 0%, #ffffff 100%);
-  box-shadow: 0 24px 52px rgba(46, 86, 153, 0.13);
-}
-
-.hero-visual img {
-  display: block;
-  width: 100%;
-  min-height: 360px;
-  object-fit: cover;
-}
-
-.feature-section,
-.workflow-section {
-  padding: 28px;
-}
-
-.section-heading {
-  margin-bottom: 20px;
-}
-
-.section-heading h2,
-.workflow-copy h2 {
-  font-size: 30px;
-}
-
-.feature-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.feature-card {
-  min-height: 172px;
-  padding: 22px;
-  border: 1px solid #e1eafa;
-  border-radius: 24px;
-  background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
-}
-
-.feature-card span {
-  color: #2e6bd9;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-}
-
-.feature-card h3 {
-  margin: 14px 0 9px;
-  color: #1d3150;
-  font-size: 19px;
-}
-
-.feature-card p,
-.workflow-copy p,
-.workflow-step p {
-  margin: 0;
-  color: #667792;
-  line-height: 1.75;
-}
-
-.workflow-section {
-  display: grid;
-  grid-template-columns: 0.8fr 1.2fr;
-  gap: 24px;
-  align-items: center;
-}
-
-.workflow-steps {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.workflow-step {
-  padding: 18px;
-  border: 1px solid #dce8fb;
-  border-radius: 22px;
-  background: #f8fbff;
-}
-
-.workflow-step strong {
-  display: block;
-  margin-bottom: 8px;
-  color: #234169;
-}
-
-@media (max-width: 1100px) {
-  .hero-section,
-  .workflow-section {
-    grid-template-columns: 1fr;
-  }
-
-  .feature-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 720px) {
-  .home-page {
-    padding: 16px;
-  }
-
-  .hero-section,
-  .feature-section,
-  .workflow-section {
-    padding: 20px;
-    border-radius: 24px;
-  }
-
-  .feature-grid,
-  .workflow-steps {
-    grid-template-columns: 1fr;
-  }
-}
+.dashboard-page { min-height: calc(100vh - 60px); padding: 24px; background: #f5f7fa; }
+.dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid #dfe4ec; }
+.dashboard-header h1 { margin: 0; color: #1f2937; font-size: 28px; letter-spacing: 0; }
+.dashboard-header p { margin: 8px 0 0; color: #667085; }
+.header-actions { display: flex; gap: 10px; }
+.metrics-band { display: grid; grid-template-columns: repeat(4, 1fr); margin: 20px 0; background: #fff; border: 1px solid #e1e6ee; border-radius: 8px; }
+.metric-item { padding: 18px 20px; border-right: 1px solid #e8ebf0; }
+.metric-item:last-child { border-right: 0; }
+.metric-item span, .metric-item small { display: block; color: #667085; }
+.metric-item strong { display: block; margin: 6px 0 2px; color: #101828; font-size: 28px; }
+.dashboard-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+.workspace-section { padding: 20px; background: #fff; border: 1px solid #e1e6ee; border-radius: 8px; }
+.workspace-section > header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.workspace-section h2 { margin: 0; font-size: 18px; color: #1f2937; }
+.workspace-section p { margin: 5px 0 0; color: #667085; font-size: 13px; }
+.full-width { grid-column: 1 / -1; }
+.pipeline-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.pipeline-stage { padding: 14px; background: #f7f8fa; border-left: 3px solid #3b82f6; }
+.pipeline-stage span { display: block; color: #667085; font-size: 13px; }
+.pipeline-stage strong { display: block; margin-top: 6px; color: #1f2937; font-size: 22px; }
+.action-list { display: flex; flex-direction: column; }
+.action-list button { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border: 0; border-bottom: 1px solid #edf0f4; background: transparent; text-align: left; cursor: pointer; }
+.action-list span strong, .action-list span small { display: block; }
+.action-list span small, .action-list time { margin-top: 4px; color: #667085; font-size: 12px; }
+.quality-list { display: grid; grid-template-columns: 1fr 1fr 180px; gap: 24px; align-items: end; }
+.quality-list span { display: block; margin-bottom: 10px; color: #475467; }
+.quality-list strong { color: #101828; font-size: 28px; }
+@media (max-width: 900px) { .metrics-band { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } .full-width { grid-column: auto; } .quality-list { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .dashboard-page { padding: 14px; } .dashboard-header { align-items: flex-start; flex-direction: column; } .pipeline-summary { grid-template-columns: repeat(2, 1fr); } }
 </style>

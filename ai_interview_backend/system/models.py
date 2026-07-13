@@ -1,6 +1,7 @@
 # system/models.py
 from django.db import models
 from users.models import User
+import uuid
 
 
 # 1. AIModel 模型
@@ -152,3 +153,153 @@ class JobPosition(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ProviderCredential(models.Model):
+    class Scope(models.TextChoices):
+        PLATFORM = 'platform', '平台凭据'
+        BYOK = 'byok', '用户自带密钥'
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='provider_credentials')
+    legacy_model = models.ForeignKey(AIModel, on_delete=models.SET_NULL, null=True, blank=True, related_name='credentials')
+    name = models.CharField(max_length=120)
+    provider = models.CharField(max_length=50, default='openai_compatible', db_index=True)
+    scope = models.CharField(max_length=16, choices=Scope.choices, default=Scope.BYOK, db_index=True)
+    encrypted_secret = models.TextField(blank=True)
+    secret_hint = models.CharField(max_length=32, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    last_verified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['scope', 'provider', 'name']
+        indexes = [models.Index(fields=['user', 'provider', 'scope', 'is_active'])]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.scope == self.Scope.PLATFORM and self.user_id:
+            raise ValidationError({'user': '平台凭据不能绑定普通用户。'})
+        if self.scope == self.Scope.BYOK and not self.user_id:
+            raise ValidationError({'user': 'BYOK 凭据必须绑定用户。'})
+
+    def set_secret(self, value: str):
+        from .credentials import encrypt_secret, secret_hint
+        self.encrypted_secret = encrypt_secret(value)
+        self.secret_hint = secret_hint(value)
+
+    def get_secret(self) -> str:
+        from .credentials import decrypt_secret
+        return decrypt_secret(self.encrypted_secret)
+
+    def __str__(self):
+        return f'{self.name} ({self.get_scope_display()})'
+
+
+class ModelDeployment(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    provider = models.CharField(max_length=50, db_index=True)
+    remote_model = models.CharField(max_length=160)
+    model_type = models.CharField(max_length=20, choices=AIModel.ModelType.choices, db_index=True)
+    base_url = models.URLField(max_length=500)
+    credential = models.ForeignKey(ProviderCredential, on_delete=models.SET_NULL, null=True, blank=True, related_name='deployments')
+    capabilities = models.JSONField(default=dict, blank=True)
+    context_window = models.PositiveIntegerField(null=True, blank=True)
+    input_price_per_million = models.DecimalField(max_digits=12, decimal_places=6, default=0)
+    output_price_per_million = models.DecimalField(max_digits=12, decimal_places=6, default=0)
+    priority = models.PositiveIntegerField(default=100)
+    timeout_seconds = models.PositiveIntegerField(default=30)
+    is_active = models.BooleanField(default=True, db_index=True)
+    last_health_status = models.CharField(max_length=24, blank=True)
+    last_health_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['priority', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class ModelAlias(models.Model):
+    slug = models.CharField(max_length=120, unique=True)
+    name = models.CharField(max_length=120)
+    model_type = models.CharField(max_length=20, choices=AIModel.ModelType.choices, db_index=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['model_type', 'slug']
+
+    def __str__(self):
+        return self.slug
+
+
+class RoutePolicy(models.Model):
+    class Strategy(models.TextChoices):
+        PRIORITY = 'priority', '按优先级故障转移'
+        WEIGHTED = 'weighted', '加权选择'
+
+    alias = models.OneToOneField(ModelAlias, on_delete=models.CASCADE, related_name='route_policy')
+    strategy = models.CharField(max_length=16, choices=Strategy.choices, default=Strategy.PRIORITY)
+    total_timeout_seconds = models.PositiveIntegerField(default=45)
+    max_attempts = models.PositiveIntegerField(default=2)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class RoutePolicyTarget(models.Model):
+    policy = models.ForeignKey(RoutePolicy, on_delete=models.CASCADE, related_name='targets')
+    deployment = models.ForeignKey(ModelDeployment, on_delete=models.CASCADE, related_name='route_targets')
+    order = models.PositiveIntegerField(default=0)
+    weight = models.PositiveIntegerField(default=100)
+    retry_count = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order', 'deployment__priority']
+        constraints = [models.UniqueConstraint(fields=['policy', 'deployment'], name='uniq_policy_deployment')]
+
+
+class UsageBudget(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='model_usage_budget')
+    monthly_token_limit = models.PositiveBigIntegerField(default=0, help_text='0 表示不限制')
+    monthly_cost_limit = models.DecimalField(max_digits=12, decimal_places=4, default=0, help_text='0 表示不限制')
+    period_start = models.DateField()
+    used_input_tokens = models.PositiveBigIntegerField(default=0)
+    used_output_tokens = models.PositiveBigIntegerField(default=0)
+    used_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0)
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ModelRequestLedger(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = 'running', '运行中'
+        SUCCEEDED = 'succeeded', '成功'
+        FAILED = 'failed', '失败'
+        REJECTED = 'rejected', '额度拒绝'
+
+    request_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='model_request_ledgers')
+    alias = models.ForeignKey(ModelAlias, on_delete=models.SET_NULL, null=True, blank=True, related_name='request_ledgers')
+    deployment = models.ForeignKey(ModelDeployment, on_delete=models.SET_NULL, null=True, blank=True, related_name='request_ledgers')
+    task_name = models.CharField(max_length=120, db_index=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.RUNNING, db_index=True)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost = models.DecimalField(max_digits=12, decimal_places=6, default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    fallback_count = models.PositiveIntegerField(default=0)
+    error_code = models.CharField(max_length=120, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['user', 'task_name', 'created_at'])]

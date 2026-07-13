@@ -2,7 +2,15 @@
 
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Conversation, Message
+from .models import (
+    ChatOutbox,
+    Conversation,
+    ConversationParticipantState,
+    Message,
+    MessageAttachment,
+    MessageReport,
+    UserBlock,
+)
 
 
 class MessageInline(admin.TabularInline):
@@ -85,3 +93,26 @@ class MessageAdmin(admin.ModelAdmin):
         return "-"
 
     preview_file.short_description = "媒体预览"
+
+
+admin.site.register(ConversationParticipantState)
+admin.site.register(MessageAttachment)
+admin.site.register(UserBlock)
+
+
+@admin.register(MessageReport)
+class MessageReportAdmin(admin.ModelAdmin):
+    list_display = ('message', 'reporter', 'reason', 'status', 'created_at')
+    list_filter = ('status', 'reason')
+    search_fields = ('reporter__email', 'detail', 'message__content')
+
+
+@admin.register(ChatOutbox)
+class ChatOutboxAdmin(admin.ModelAdmin):
+    list_display = ('event_id', 'message', 'topic', 'status', 'attempts', 'created_at', 'published_at')
+    list_filter = ('status',)
+    search_fields = ('event_id', 'topic', 'last_error')
+    readonly_fields = [field.name for field in ChatOutbox._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
