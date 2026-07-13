@@ -34,6 +34,7 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'channels',
     'simpleui',  # 【核心新增】将 simpleui 放在第一行
     'drf_spectacular',
@@ -67,6 +68,7 @@ INSTALLED_APPS = [
     'notifications',
    'chat',
    'video_uploads',
+   'knowledge',
 ]
 
 # 3. 将应用的入口指向 Channels 的 ASGI application
@@ -235,7 +237,17 @@ SIMPLE_JWT = {
 #
 # 允许所有来源（开发时方便，生产环境请使用下面的白名单）
 CORS_ALLOW_ALL_ORIGINS = False  # 生产环境绝不能允许所有
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if origin.strip()]
+if DEBUG:
+    CORS_ALLOWED_ORIGINS += [
+        origin for origin in [
+            'http://localhost:5173',
+            'http://127.0.0.1:5173',
+            'http://localhost:5174',
+            'http://127.0.0.1:5174',
+        ]
+        if origin not in CORS_ALLOWED_ORIGINS
+    ]
 # 确保 CSRF 信任我们的前端来源
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 # 或者使用更安全的白名单模式
@@ -369,3 +381,37 @@ CHANNEL_LAYERS = {
         },
     },
 }
+
+# --- INTERVIEW AGENT / RAG SETTINGS ---
+INTERVIEW_AGENT_ENGINE = os.getenv('INTERVIEW_AGENT_ENGINE', 'default')
+INTERVIEW_GENERATION_JOB_STALE_SECONDS = int(os.getenv('INTERVIEW_GENERATION_JOB_STALE_SECONDS', '90'))
+AGENT_TOOL_TIMEOUT_SECONDS = int(os.getenv('AGENT_TOOL_TIMEOUT_SECONDS', '30'))
+AGENT_CONTEXT_TOKEN_BUDGET = int(os.getenv('AGENT_CONTEXT_TOKEN_BUDGET', '6000'))
+AGENT_ENABLE_SLASH_COMMANDS = os.getenv('AGENT_ENABLE_SLASH_COMMANDS', 'true').lower() in ('1', 'true', 'yes', 'on')
+AGENT_ENABLE_MCP_ADAPTER = os.getenv('AGENT_ENABLE_MCP_ADAPTER', 'false').lower() in ('1', 'true', 'yes', 'on')
+AGENT_PROMPT_VERSION = os.getenv('AGENT_PROMPT_VERSION', 'interview-agent-v1')
+AGENT_STATE_SCHEMA_VERSION = int(os.getenv('AGENT_STATE_SCHEMA_VERSION', '2'))
+AGENT_MAX_GENERATION_RETRIES = int(os.getenv('AGENT_MAX_GENERATION_RETRIES', '2'))
+AGENT_EVALUATION_CONFIDENCE_THRESHOLD = float(os.getenv('AGENT_EVALUATION_CONFIDENCE_THRESHOLD', '0.6'))
+AGENT_NODE_TIMEOUT_SECONDS = int(os.getenv('AGENT_NODE_TIMEOUT_SECONDS', '30'))
+MODEL_GATEWAY_TIMEOUT_SECONDS = int(os.getenv('MODEL_GATEWAY_TIMEOUT_SECONDS', '30'))
+QDRANT_URL = os.getenv('QDRANT_URL', '')
+QDRANT_COLLECTION = os.getenv('QDRANT_COLLECTION', 'interview_knowledge')
+EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
+EMBEDDING_API_KEY = os.getenv('EMBEDDING_API_KEY', '')
+EMBEDDING_BASE_URL = os.getenv('EMBEDDING_BASE_URL', '')
+DOCUMENT_PARSER = os.getenv('DOCUMENT_PARSER', 'docling')
+DOCLING_ENABLE_OCR = os.getenv('DOCLING_ENABLE_OCR', 'true').lower() in ('1', 'true', 'yes', 'on')
+DOCLING_ENABLE_TABLE_STRUCTURE = os.getenv('DOCLING_ENABLE_TABLE_STRUCTURE', 'true').lower() in ('1', 'true', 'yes', 'on')
+OCR_ENGINE = os.getenv('OCR_ENGINE', 'paddleocr')
+PADDLEOCR_LANG = os.getenv('PADDLEOCR_LANG', 'ch')
+HYBRID_SEARCH_TOPN = int(os.getenv('HYBRID_SEARCH_TOPN', '30'))
+HYBRID_SEARCH_TOPK = int(os.getenv('HYBRID_SEARCH_TOPK', '4'))
+HYBRID_SEARCH_PARALLELISM = int(os.getenv('HYBRID_SEARCH_PARALLELISM', '4'))
+ASR_CHUNK_SECONDS = int(os.getenv('ASR_CHUNK_SECONDS', '2'))
+ASR_MIN_CONFIDENCE = float(os.getenv('ASR_MIN_CONFIDENCE', '0.65'))
+SPEECH_MAX_AUDIO_BYTES = int(os.getenv('SPEECH_MAX_AUDIO_BYTES', str(25 * 1024 * 1024)))
+TTS_CACHE_SECONDS = int(os.getenv('TTS_CACHE_SECONDS', '86400'))
+SPEECH_PROVIDER_TIMEOUT_SECONDS = int(os.getenv('SPEECH_PROVIDER_TIMEOUT_SECONDS', '30'))
+TTS_DEFAULT_VOICE = os.getenv('TTS_DEFAULT_VOICE', 'alloy')
+TTS_RESPONSE_FORMAT = os.getenv('TTS_RESPONSE_FORMAT', 'mp3')

@@ -7,12 +7,40 @@ from allauth.socialaccount.providers.github.views import GitHubOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 from allauth.socialaccount.models import SocialAccount, SocialToken
 from rest_framework_simplejwt.tokens import RefreshToken
-from requests.exceptions import HTTPError
+from requests.exceptions import HTTPError, RequestException
 from django.contrib.auth import get_user_model
 import traceback
 import requests  # 引入 requests 库
 
 User = get_user_model()
+
+
+def fetch_github_profile(access_token: str) -> tuple[str, str, str | None, dict]:
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"}
+    user_resp = requests.get("https://api.github.com/user", headers=headers, timeout=15)
+    user_resp.raise_for_status()
+    github_data = user_resp.json()
+
+    github_uid = str(github_data.get('id'))
+    username = github_data.get('login') or f"github_{github_uid}"
+    email = github_data.get('email')
+
+    if not email:
+        print("Email is hidden. Fetching from /user/emails...")
+        email_resp = requests.get("https://api.github.com/user/emails", headers=headers, timeout=15)
+        email_resp.raise_for_status()
+        emails = email_resp.json()
+        for item in emails:
+            if item.get('primary') and item.get('verified'):
+                email = item.get('email')
+                break
+        if not email:
+            for item in emails:
+                if item.get('verified'):
+                    email = item.get('email')
+                    break
+
+    return github_uid, username, email, github_data
 
 
 class GitHubLogin(APIView):
@@ -48,43 +76,12 @@ class GitHubLogin(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
             access_token = access_token_data['access_token']
-            social_token = SocialToken(app=provider.app, token=access_token)
 
-            # 2. 完成登录，获取基础信息
-            login = adapter.complete_login(request, provider.app, social_token)
-
-            github_uid = login.account.extra_data.get('id')
-            username = login.account.extra_data.get('login')
-            email = login.account.extra_data.get('email')
+            # 2. 获取 GitHub 基础信息。不要走 allauth complete_login，避免其默认 5 秒超时请求邮箱接口。
+            github_uid, username, email, github_extra_data = fetch_github_profile(access_token)
 
             print(f"Initial Info: User={username}, Email={email}")
-
-            # --- 【核心修复】如果邮箱为空，主动去请求私有邮箱接口 ---
-            if not email:
-                print("Email is hidden. Fetching from /user/emails...")
-                try:
-                    # 使用 Token 请求 GitHub 邮箱接口
-                    email_resp = requests.get(
-                        "https://api.github.com/user/emails",
-                        headers={"Authorization": f"token {access_token}"}
-                    )
-                    if email_resp.status_code == 200:
-                        emails = email_resp.json()
-                        # 优先找主邮箱(primary)且已验证(verified)的
-                        for e in emails:
-                            if e.get('primary') and e.get('verified'):
-                                email = e.get('email')
-                                break
-                        # 如果没找到主邮箱，找任意一个已验证的
-                        if not email:
-                            for e in emails:
-                                if e.get('verified'):
-                                    email = e.get('email')
-                                    break
-                    print(f"Fetched Private Email: {email}")
-                except Exception as e:
-                    print(f"Failed to fetch private email: {e}")
-            # ------------------------------------------------------
+            print(f"Fetched GitHub Email: {email}")
 
             if not email:
                 return Response({'error': '无法从您的 GitHub 账户获取有效的邮箱地址，请检查 GitHub 设置。'},
@@ -110,7 +107,7 @@ class GitHubLogin(APIView):
                     user=user,
                     provider='github',
                     uid=github_uid,
-                    extra_data=login.account.extra_data
+                    extra_data=github_extra_data
                 )
 
             # 4. 生成 JWT
@@ -120,6 +117,10 @@ class GitHubLogin(APIView):
                 'refresh': str(refresh)
             }, status=status.HTTP_200_OK)
 
+        except RequestException as e:
+            traceback.print_exc()
+            return Response({"error": f"与 GitHub 通信超时或失败，请检查本机网络/代理后重试: {e}"},
+                            status=status.HTTP_504_GATEWAY)
         except HTTPError as e:
             return Response({"error": "与 GitHub 通信失败"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
@@ -155,16 +156,24 @@ class GitHubConnect(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
 
             access_token = access_token_data['access_token']
-            social_token = SocialToken(app=provider.app, token=access_token)
-            login = adapter.complete_login(request, provider.app, social_token)
+            github_uid, username, _email, github_extra_data = fetch_github_profile(access_token)
 
             # 绑定时也不需要额外的邮箱检查，主要检查 UID 是否冲突
-            if SocialAccount.objects.filter(provider='github', uid=login.account.uid).exists():
+            if SocialAccount.objects.filter(provider='github', uid=github_uid).exists():
                 return Response({"error": "此 GitHub 账户已被其他用户绑定。"}, status=status.HTTP_400_BAD_REQUEST)
 
-            login.connect(request, request.user)
+            SocialAccount.objects.create(
+                user=request.user,
+                provider='github',
+                uid=github_uid,
+                extra_data=github_extra_data or {"login": username}
+            )
             return Response({"message": "GitHub 账户成功绑定！"}, status=status.HTTP_200_OK)
 
+        except RequestException as e:
+            traceback.print_exc()
+            return Response({"error": f"与 GitHub 通信超时或失败，请检查本机网络/代理后重试: {e}"},
+                            status=status.HTTP_504_GATEWAY)
         except Exception as e:
             traceback.print_exc()
             return Response({"error": f"发生意外错误: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

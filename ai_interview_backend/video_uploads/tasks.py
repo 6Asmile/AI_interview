@@ -8,6 +8,12 @@ from .services import ffmpeg_service
 logger = logging.getLogger(__name__)
 
 
+def _mark_transcode_failed(transcode_task: VideoTranscodeTask, message: str):
+    transcode_task.status = VideoTranscodeTask.Status.FAILED
+    transcode_task.error_message = message[:1000]
+    transcode_task.save(update_fields=['status', 'error_message'])
+
+
 @shared_task(bind=True, max_retries=3)
 def merge_chunks_task(self, task_id: str):
     """合并分片任务"""
@@ -63,6 +69,32 @@ def merge_chunks_task(self, task_id: str):
         return {"success": False, "error": str(e)}
 
 
+@shared_task
+def start_transcode_after_merge(merge_result: dict, transcode_task_id: str):
+    """合并完成后补齐原始文件路径并启动转码。"""
+    try:
+        transcode_task = VideoTranscodeTask.objects.select_related('upload_task').get(id=transcode_task_id)
+    except VideoTranscodeTask.DoesNotExist:
+        logger.error(f"转码任务不存在: {transcode_task_id}")
+        return {"success": False, "error": "转码任务不存在"}
+
+    if not merge_result.get('success'):
+        error = merge_result.get('error') or '分片合并失败，无法开始转码'
+        _mark_transcode_failed(transcode_task, error)
+        return {"success": False, "error": error}
+
+    merged_file = merge_result.get('merged_file') or getattr(transcode_task.upload_task, 'merged_file_path', '')
+    if not merged_file:
+        error = '合并文件路径为空，无法开始转码'
+        _mark_transcode_failed(transcode_task, error)
+        return {"success": False, "error": error}
+
+    transcode_task.original_file = merged_file
+    transcode_task.save(update_fields=['original_file'])
+    transcode_video_task.delay(str(transcode_task.id))
+    return {"success": True, "transcode_task_id": str(transcode_task.id)}
+
+
 @shared_task(bind=True, max_retries=2)
 def transcode_video_task(self, transcode_task_id: str):
     """视频转码任务"""
@@ -72,11 +104,20 @@ def transcode_video_task(self, transcode_task_id: str):
         logger.error(f"转码任务不存在: {transcode_task_id}")
         return {"success": False, "error": "转码任务不存在"}
     
+    input_path = transcode_task.original_file
+    if not input_path and transcode_task.upload_task and transcode_task.upload_task.merged_file_path:
+        input_path = transcode_task.upload_task.merged_file_path
+        transcode_task.original_file = input_path
+
+    if not input_path:
+        error = "转码原始文件路径为空，请确认合并任务是否完成"
+        _mark_transcode_failed(transcode_task, error)
+        return {"success": False, "error": error}
+
     transcode_task.status = VideoTranscodeTask.Status.PROCESSING
     transcode_task.started_at = timezone.now()
+    transcode_task.error_message = ''
     transcode_task.save()
-    
-    input_path = transcode_task.original_file
     
     output_dir = os.path.join('media', 'videos', 'transcoded', str(transcode_task.id))
     os.makedirs(output_dir, exist_ok=True)

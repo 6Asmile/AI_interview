@@ -8,7 +8,12 @@ export interface AIModelItem {
   id: number;
   name: string;
   model_slug: string;
+  base_url: string;
+  provider: string;
+  model_type: 'chat' | 'embedding' | 'rerank' | 'asr' | 'tts';
   description: string;
+  supports_json_mode: boolean;
+  dimension?: number | null;
 }
 
 // 【核心修改】更新 getAIModelsApi 的返回类型
@@ -24,12 +29,40 @@ export const getAIModelsApi = (): Promise<PaginatedResponse<AIModelItem>> => {
 // AISettingsData 现在代表整个设置对象
 export interface AISettingsData {
   ai_model: AIModelItem | null; // 用户的默认模型
+  chat_model: AIModelItem | null;
+  embedding_model: AIModelItem | null;
+  rerank_model: AIModelItem | null;
+  asr_model: AIModelItem | null;
+  tts_model: AIModelItem | null;
   api_keys: Record<string, string>; // 用户的 Key 映射, e.g., { '1': 'key-abc', '3': 'key-xyz' }
+}
+
+export interface AIModelGatewayHealthResult {
+  ok: boolean;
+  model_type: AIModelItem['model_type'];
+  config: {
+    provider: string;
+    model_slug: string;
+    model_type: string;
+    base_url: string;
+    key_source: string;
+    has_api_key: boolean;
+    api_key_masked?: string;
+  };
+  latency_ms: number | null;
+  error?: string;
+  dimension?: number;
+  note?: string;
 }
 
 // 定义更新时发送的数据类型
 export interface UpdateAISettingsData {
     ai_model_id?: number | null; // 设为可选
+    chat_model_id?: number | null;
+    embedding_model_id?: number | null;
+    rerank_model_id?: number | null;
+    asr_model_id?: number | null;
+    tts_model_id?: number | null;
     api_keys?: Record<string, string>; // 设为可选
 }
 
@@ -48,6 +81,16 @@ export const updateAISettingsApi = (data: UpdateAISettingsData): Promise<AISetti
     url: '/settings/ai/',
     method: 'patch', 
     data,
+  });
+};
+
+export const checkAIModelGatewayHealthApi = (
+  model_type: AIModelItem['model_type']
+): Promise<AIModelGatewayHealthResult> => {
+  return request({
+    url: '/settings/ai/health/',
+    method: 'post',
+    data: { model_type },
   });
 };
 

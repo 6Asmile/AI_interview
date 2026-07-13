@@ -1,0 +1,99 @@
+name: ifaceoff-infra
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: Ifaceoff-infra-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_interview_db}
+      TZ: ${TZ:-Asia/Shanghai}
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"
+    volumes:
+      - ifaceoff_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - ifaceoff_infra_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: Ifaceoff-infra-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ifaceoff_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ifaceoff_infra_network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: Ifaceoff-infra-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - ifaceoff_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    networks:
+      - ifaceoff_infra_network
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: Ifaceoff-infra-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - ifaceoff_qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - ifaceoff_infra_network
+
+volumes:
+  ifaceoff_mysql_data:
+    name: Ifaceoff-infra-mysql-data
+  ifaceoff_redis_data:
+    name: Ifaceoff-infra-redis-data
+  ifaceoff_rabbitmq_data:
+    name: Ifaceoff-infra-rabbitmq-data
+  ifaceoff_qdrant_data:
+    name: Ifaceoff-infra-qdrant-data
+
+networks:
+  ifaceoff_infra_network:
+    name: Ifaceoff-infra-network
+    driver: bridge

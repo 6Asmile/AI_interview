@@ -55,8 +55,6 @@ import ProjectModule from '@/components/resume/modules/ProjectModule.vue';
 import SkillsModule from '@/components/resume/modules/SkillsModule.vue';
 import GenericListModule from '@/components/resume/modules/GenericListModule.vue';
 import CustomModule from '@/components/resume/modules/CustomModule.vue';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 
 const route = useRoute();
 const router = useRouter();
@@ -153,6 +151,10 @@ const exportToPDF = async () => {
     if (!resumeElement) { ElMessage.error('找不到简历内容，无法导出。'); return; }
     isExporting.value = true;
     try {
+        const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+            import('html2canvas'),
+            import('jspdf'),
+        ]);
         const canvas = await html2canvas(resumeElement as HTMLElement, { scale: 2.5, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' });
         const pdf = new jsPDF('p', 'pt', 'a4');
         const a4Width = 595.28; const a4Height = 841.89;

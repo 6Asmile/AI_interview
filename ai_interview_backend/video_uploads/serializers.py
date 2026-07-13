@@ -102,7 +102,7 @@ class TranscodeConfigSerializer(serializers.Serializer):
         required=False,
         default={
             's': 10.0,
-            'p': 7,
-            'r': 15
+            'p': 0.007,
+            'r': 0.015
         }
     )

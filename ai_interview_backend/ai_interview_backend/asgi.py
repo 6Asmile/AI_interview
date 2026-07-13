@@ -7,6 +7,7 @@ django_asgi_app = get_asgi_application()
 from channels.routing import ProtocolTypeRouter, URLRouter
 from chat.middleware import JwtAuthMiddleware
 import chat.routing
+import interviews.routing
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
@@ -14,7 +15,7 @@ application = ProtocolTypeRouter({
         URLRouter(
             # 这里直接使用 chat.routing 定义的列表
             # 这样 ws/chat/1/ 就能被正确匹配
-            chat.routing.websocket_urlpatterns
+            chat.routing.websocket_urlpatterns + interviews.routing.websocket_urlpatterns
         )
     ),
 })

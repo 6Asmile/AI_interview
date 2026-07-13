@@ -7,6 +7,7 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
   
   const isListening = ref(false);
   const error = ref<string | null>(null);
+  const interimTranscript = ref('');
   
   let recognition: any | null = null;
 
@@ -19,22 +20,26 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
     recognition.onstart = () => {
       isListening.value = true;
       error.value = null;
+      interimTranscript.value = '';
     };
 
     recognition.onresult = (event: any) => {
       let finalTranscript = '';
-      let interimTranscript = '';
+      let interimText = '';
 
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
           finalTranscript += event.results[i][0].transcript;
         } else {
-          interimTranscript += event.results[i][0].transcript;
+          interimText += event.results[i][0].transcript;
         }
       }
+
+      interimTranscript.value = interimText;
       
       // 将最终识别结果通过回调函数传递出去
       if (finalTranscript) {
+        interimTranscript.value = '';
         onResult(finalTranscript);
       }
     };
@@ -47,6 +52,7 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
 
     recognition.onend = () => {
       isListening.value = false;
+      interimTranscript.value = '';
     };
   }
 
@@ -66,6 +72,10 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
     }
   };
 
+  const clearInterimTranscript = () => {
+    interimTranscript.value = '';
+  };
+
   onUnmounted(() => {
     stop();
   });
@@ -74,7 +84,9 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
     isListening,
     isSupported,
     error,
+    interimTranscript,
     start,
     stop,
+    clearInterimTranscript,
   };
 }

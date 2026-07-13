@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, ElTable, ElTableColumn, ElTag, ElButton, ElTabs, ElTabPane, ElPagination, ElDialog, ElProgress } from 'element-plus';
 import { getInterviewHistoryApi, getAnalysisHistoryApi } from '@/api/modules/report';
-import { abandonUnfinishedInterviewApi, getRecordingStatusApi, type InterviewSessionItem } from '@/api/modules/interview';
+import { abandonUnfinishedInterviewApi, getRecordingStatusApi, type InterviewSessionItem, type RecordingStatusResponse } from '@/api/modules/interview';
 import type { ResumeAnalysisReportItem } from '@/api/modules/report';
 import { formatDateTime } from '@/utils/format';
 
@@ -29,14 +29,46 @@ const analysisPagination = ref({
 });
 
 const videoDialogVisible = ref(false);
-const currentRecordingStatus = ref<{
-  has_recording: boolean;
-  video_url: string | null;
-  status: string | null;
-  progress: number;
-  error_message: string | null;
-} | null>(null);
+const currentRecordingStatus = ref<RecordingStatusResponse | null>(null);
 const isLoadingRecording = ref(false);
+const currentRecordingSessionId = ref<string | null>(null);
+let recordingPollTimer: ReturnType<typeof window.setTimeout> | null = null;
+
+const clearRecordingPoll = () => {
+  if (recordingPollTimer) {
+    window.clearTimeout(recordingPollTimer);
+    recordingPollTimer = null;
+  }
+};
+
+const shouldPollRecording = (status: RecordingStatusResponse | null) => {
+  return Boolean(status?.has_recording && ['pending', 'uploading', 'transcoding'].includes(status.status || ''));
+};
+
+const loadRecordingStatus = async (sessionId: string, silent = false) => {
+  if (!silent) isLoadingRecording.value = true;
+
+  try {
+    const status = await getRecordingStatusApi(sessionId);
+    currentRecordingStatus.value = status;
+    clearRecordingPoll();
+
+    if (videoDialogVisible.value && shouldPollRecording(status)) {
+      recordingPollTimer = window.setTimeout(() => {
+        if (currentRecordingSessionId.value) {
+          loadRecordingStatus(currentRecordingSessionId.value, true);
+        }
+      }, 3000);
+    }
+  } catch (error) {
+    if (!silent) {
+      ElMessage.error('获取录像状态失败');
+      videoDialogVisible.value = false;
+    }
+  } finally {
+    if (!silent) isLoadingRecording.value = false;
+  }
+};
 
 // --- 数据获取 ---
 const fetchInterviewHistory = async () => {
@@ -74,6 +106,17 @@ onMounted(() => {
   fetchAnalysisHistory();
 });
 
+onUnmounted(() => {
+  clearRecordingPoll();
+});
+
+watch(videoDialogVisible, (visible) => {
+  if (!visible) {
+    clearRecordingPoll();
+    currentRecordingSessionId.value = null;
+  }
+});
+
 // --- 事件处理 ---
 const handleInterviewPageChange = (page: number) => {
   interviewPagination.value.currentPage = page;
@@ -97,30 +140,37 @@ const handleAbandon = async (_sessionId: string) => {
 };
 
 const handleViewRecording = async (sessionId: string) => {
-  isLoadingRecording.value = true;
   videoDialogVisible.value = true;
   currentRecordingStatus.value = null;
-  
-  try {
-    const status = await getRecordingStatusApi(sessionId);
-    currentRecordingStatus.value = status;
-  } catch (error) {
-    ElMessage.error('获取录像状态失败');
-    videoDialogVisible.value = false;
-  } finally {
-    isLoadingRecording.value = false;
-  }
+  currentRecordingSessionId.value = sessionId;
+  await loadRecordingStatus(sessionId);
 };
 
 const recordingStatusText = (status: string | null): string => {
   const statusMap: Record<string, string> = {
     'pending': '等待处理',
     'uploading': '上传中',
-    'transcoding': '转码中',
+    'transcoding': '处理中',
     'completed': '已完成',
     'failed': '处理失败'
   };
   return status ? statusMap[status] || '未知' : '无录像';
+};
+
+const playbackSourceText = (source?: string | null) => {
+  if (source === 'transcoded') return '压缩录像';
+  if (source === 'original') return '原始录像';
+  return '暂无可播放录像';
+};
+
+const transcodeStatusText = (status?: string | null) => {
+  const statusMap: Record<string, string> = {
+    pending: '等待压缩',
+    processing: '压缩中',
+    completed: '压缩完成',
+    failed: '压缩失败'
+  };
+  return status ? statusMap[status] || status : '未开始';
 };
 
 const recordingStatusType = (status: string | null): 'success' | 'warning' | 'info' | 'danger' => {
@@ -192,18 +242,33 @@ const getResumeTitle = (resumeId: number | null) => (resumeId ? `简历ID: ${res
       <div v-loading="isLoadingRecording">
         <div v-if="currentRecordingStatus">
           <div class="recording-info mb-4">
-            <p class="mb-2">
-              <span class="text-gray-500">录像状态：</span>
+            <div class="recording-status-row">
+              <span class="text-gray-500">播放源：</span>
+              <el-tag :type="currentRecordingStatus.video_url ? 'success' : 'info'" size="small">
+                {{ playbackSourceText(currentRecordingStatus.playback_source) }}
+              </el-tag>
               <el-tag :type="recordingStatusType(currentRecordingStatus.status)" size="small">
                 {{ recordingStatusText(currentRecordingStatus.status) }}
               </el-tag>
-            </p>
+            </div>
             <p v-if="currentRecordingStatus.status === 'transcoding'" class="mb-2">
-              <span class="text-gray-500">转码进度：</span>
+              <span class="text-gray-500">处理进度：</span>
               <el-progress :percentage="currentRecordingStatus.progress" :stroke-width="8" class="inline-progress" />
             </p>
+            <div v-if="currentRecordingStatus.playback_source === 'original'" class="recording-fallback-note">
+              当前播放原始录像。后台压缩状态：{{ transcodeStatusText(currentRecordingStatus.transcode_status) }}
+              <el-progress
+                v-if="currentRecordingStatus.transcode_status === 'processing'"
+                :percentage="currentRecordingStatus.transcode_progress || 0"
+                :stroke-width="6"
+                class="fallback-progress"
+              />
+            </div>
+            <p v-if="currentRecordingStatus.transcode_error_message" class="text-orange-600 text-sm">
+              压缩信息：{{ currentRecordingStatus.transcode_error_message }}
+            </p>
             <p v-if="currentRecordingStatus.error_message" class="text-red-500 text-sm">
-              错误信息：{{ currentRecordingStatus.error_message }}
+              状态说明：{{ currentRecordingStatus.error_message }}
             </p>
           </div>
           
@@ -231,7 +296,7 @@ const getResumeTitle = (resumeId: number | null) => (resumeId ? `简历ID: ${res
           
           <div v-else-if="currentRecordingStatus.status === 'transcoding'" class="text-center py-8">
             <el-progress type="circle" :percentage="currentRecordingStatus.progress" />
-            <p class="text-gray-500 mt-4">录像正在转码中...</p>
+            <p class="text-gray-500 mt-4">录像正在处理，完成后会自动刷新...</p>
           </div>
           
           <div v-else-if="currentRecordingStatus.status === 'failed'" class="text-center text-red-500 py-8">
@@ -257,8 +322,29 @@ const getResumeTitle = (resumeId: number | null) => (resumeId ? `简历ID: ${res
 }
 .recording-info {
   padding: 16px;
-  background-color: #f5f7fa;
-  border-radius: 8px;
+  border: 1px solid #e3ebf6;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  border-radius: 16px;
+}
+.recording-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.recording-fallback-note {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid #dbe8fb;
+  border-radius: 12px;
+  background: #f2f7ff;
+  color: #415a80;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.fallback-progress {
+  margin-top: 8px;
 }
 .inline-progress {
   display: inline-flex;

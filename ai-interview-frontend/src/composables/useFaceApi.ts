@@ -1,5 +1,4 @@
 import { ref } from 'vue';
-import * as faceapi from 'face-api.js';
 import { ElMessage } from 'element-plus';
 
 export const emotionMap: Record<string, string> = {
@@ -12,7 +11,16 @@ export const emotionMap: Record<string, string> = {
   surprised: '惊讶',
 };
 
-export type FaceExpressions = faceapi.FaceExpressions;
+export type FaceExpressions = import('face-api.js').FaceExpressions;
+
+let faceApiModule: typeof import('face-api.js') | null = null;
+
+const getFaceApi = async () => {
+  if (!faceApiModule) {
+    faceApiModule = await import('face-api.js');
+  }
+  return faceApiModule;
+};
 
 export function useFaceApi() {
   const modelsLoaded = ref(false);
@@ -25,6 +33,7 @@ export function useFaceApi() {
     const MODEL_URL = '/models';
     try {
       console.log('开始加载面部识别模型...');
+      const faceapi = await getFaceApi();
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -45,6 +54,7 @@ export function useFaceApi() {
     }
 
     try {
+      const faceapi = await getFaceApi();
       // --- [核心修改] 移除 withFaceLandmarks，因为它只为动作分析服务，可以节省性能 ---
       const detections = await faceapi
         .detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions())

@@ -1,0 +1,37 @@
+# Python / Django
+__pycache__/
+*.pyc
+/venv/
+/.idea/
+/db.sqlite3
+/.env
+/.env.docker
+/.env.infra
+/.env.local
+/.env.prod
+/*.sql
+/.agents/
+/.codex/
+/创新创业项目/
+/说明.txt
+logs/
+*.log
+
+# Node.js / Vue
+/node_modules/
+/dist/
+/.vscode/
+/npm-debug.log*
+/yarn-error.log*
+/pnpm-lock.yaml
+/.DS_Store
+
+# Frontend build files
+ai_interview-frontend/dist
+ai_interview-frontend/.vite
+ai_interview-frontend/.npm
+
+# Backend media files
+ai_interview_backend/media/
+ai_interview_backend/staticfiles/
+ai_interview_backend/celerybeat-schedule*

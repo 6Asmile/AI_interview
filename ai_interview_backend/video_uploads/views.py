@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from django.conf import settings
+from celery import chain
 
 from .models import FileUploadTask, FileChunk, VideoTranscodeTask
 from .serializers import (
@@ -17,7 +18,7 @@ from .serializers import (
     UploadProgressSerializer,
     VideoTranscodeTaskSerializer,
 )
-from .tasks import merge_chunks_task, transcode_video_task
+from .tasks import merge_chunks_task, start_transcode_after_merge
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +167,7 @@ class MergeChunksView(APIView):
         task.status = FileUploadTask.Status.MERGING
         task.save()
         
-        result = merge_chunks_task.delay(str(task.id))
-        
+        transcode_task = None
         if enable_transcode:
             transcode_task = VideoTranscodeTask.objects.create(
                 user=request.user,
@@ -180,18 +180,19 @@ class MergeChunksView(APIView):
                 crf=crf,
                 status=VideoTranscodeTask.Status.PENDING
             )
-            
-            def start_transcode_after_merge(merge_result):
-                if merge_result.get('success'):
-                    transcode_task.original_file = merge_result.get('merged_file')
-                    transcode_task.save()
-                    transcode_video_task.delay(str(transcode_task.id))
-            
+            result = chain(
+                merge_chunks_task.s(str(task.id)),
+                start_transcode_after_merge.s(str(transcode_task.id))
+            ).delay()
+        else:
+            result = merge_chunks_task.delay(str(task.id))
+
         return Response({
             'message': '合并任务已提交',
             'task_id': str(task.id),
             'merge_task_id': result.id,
-            'transcode_enabled': enable_transcode
+            'transcode_enabled': enable_transcode,
+            'transcode_task_id': str(transcode_task.id) if transcode_task else None
         }, status=status.HTTP_202_ACCEPTED)
 
 

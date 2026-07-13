@@ -21,8 +21,8 @@ class FFmpegService:
     
     DEFAULT_AUDIO_DENOISE_PARAMS = {
         's': 10.0,
-        'p': 7,
-        'r': 15
+        'p': 0.007,
+        'r': 0.015
     }
     
     def __init__(self):
@@ -202,11 +202,18 @@ class FFmpegService:
                 universal_newlines=True
             )
             
-            if duration and progress_callback:
-                import re
-                time_pattern = re.compile(r'time=(\d+):(\d+):(\d+\.?\d*)')
-                
+            import re
+            time_pattern = re.compile(r'time=(\d+):(\d+):(\d+\.?\d*)')
+            stderr_tail = []
+
+            if process.stderr:
                 for line in process.stderr:
+                    stderr_tail.append(line.strip())
+                    stderr_tail = stderr_tail[-20:]
+
+                    if not duration or not progress_callback:
+                        continue
+
                     match = time_pattern.search(line)
                     if match:
                         hours = int(match.group(1))
@@ -223,7 +230,7 @@ class FFmpegService:
                     progress_callback(100)
                 return True, "转码成功"
             else:
-                stderr = process.stderr.read() if process.stderr else ""
+                stderr = "\n".join(stderr_tail)
                 logger.error(f"FFmpeg 转码失败: {stderr}")
                 return False, f"转码失败: {stderr[:500]}"
                 

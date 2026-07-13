@@ -7,18 +7,70 @@ import { ref, onMounted, watch, nextTick } from 'vue';
 import { Marked } from 'marked';
 // [核心修正] 1. 导入官方的 highlight 扩展
 import { markedHighlight } from "marked-highlight";
-import hljs from 'highlight.js';
-import mermaid from 'mermaid';
-import katex from 'katex';
+import hljs from 'highlight.js/lib/core';
+import bash from 'highlight.js/lib/languages/bash';
+import css from 'highlight.js/lib/languages/css';
+import java from 'highlight.js/lib/languages/java';
+import javascript from 'highlight.js/lib/languages/javascript';
+import json from 'highlight.js/lib/languages/json';
+import markdown from 'highlight.js/lib/languages/markdown';
+import python from 'highlight.js/lib/languages/python';
+import sql from 'highlight.js/lib/languages/sql';
+import typescript from 'highlight.js/lib/languages/typescript';
+import xml from 'highlight.js/lib/languages/xml';
+import yaml from 'highlight.js/lib/languages/yaml';
 
 import 'highlight.js/styles/atom-one-dark.css';
-import 'katex/dist/katex.min.css';
 
 const props = defineProps<{
   content: string;
 }>();
 
 const markdownRoot = ref<HTMLDivElement | null>(null);
+
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('java', java);
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('js', javascript);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('md', markdown);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('py', python);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('ts', typescript);
+hljs.registerLanguage('html', xml);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerLanguage('yml', yaml);
+
+let mermaidModule: typeof import('mermaid').default | null = null;
+let katexModule: typeof import('katex') | null = null;
+let katexStylesLoaded = false;
+
+const getMermaid = async () => {
+  if (!mermaidModule) {
+    mermaidModule = (await import('mermaid')).default;
+    mermaidModule.initialize({
+      startOnLoad: false,
+      theme: 'default',
+    });
+  }
+  return mermaidModule;
+};
+
+const getKatex = async () => {
+  if (!katexStylesLoaded) {
+    await import('katex/dist/katex.min.css');
+    katexStylesLoaded = true;
+  }
+  if (!katexModule) {
+    katexModule = await import('katex');
+  }
+  return katexModule;
+};
 
 // [核心修正] 2. 正确实例化 Marked
 const markedInstance = new Marked();
@@ -32,13 +84,6 @@ markedInstance.use(markedHighlight({
   }
 }));
 
-// Mermaid 和 KaTeX 的配置保持不变
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default' 
-});
-
-
 const renderAll = async () => {
   if (!markdownRoot.value || !props.content) return;
 
@@ -50,25 +95,28 @@ const renderAll = async () => {
   // 渲染 Mermaid
   try {
     const mermaidElements = markdownRoot.value.querySelectorAll('code.language-mermaid');
-    const promises = Array.from(mermaidElements).map(async (el, index) => {
-      const id = `mermaid-chart-${Date.now()}-${index}`;
-      const pre = el.parentElement;
-      if (pre) {
-        try {
-          const { svg } = await mermaid.render(id, el.textContent || '');
-          const container = document.createElement('div');
-          container.innerHTML = svg;
-          container.classList.add('mermaid-container');
-          pre.replaceWith(container);
-        } catch(e) {
-          console.error('Mermaid render error:', e);
-          const errorNode = document.createElement('div');
-          errorNode.innerText = 'Mermaid diagram failed to render.';
-          pre.replaceWith(errorNode);
+    if (mermaidElements.length) {
+      const mermaid = await getMermaid();
+      const promises = Array.from(mermaidElements).map(async (el, index) => {
+        const id = `mermaid-chart-${Date.now()}-${index}`;
+        const pre = el.parentElement;
+        if (pre) {
+          try {
+            const { svg } = await mermaid.render(id, el.textContent || '');
+            const container = document.createElement('div');
+            container.innerHTML = svg;
+            container.classList.add('mermaid-container');
+            pre.replaceWith(container);
+          } catch(e) {
+            console.error('Mermaid render error:', e);
+            const errorNode = document.createElement('div');
+            errorNode.innerText = 'Mermaid diagram failed to render.';
+            pre.replaceWith(errorNode);
+          }
         }
-      }
-    });
-    await Promise.all(promises);
+      });
+      await Promise.all(promises);
+    }
   } catch (error) {
     console.error('Error processing Mermaid elements:', error);
   }
@@ -76,6 +124,8 @@ const renderAll = async () => {
   // 渲染 KaTeX
   try {
      const katexElements = markdownRoot.value.querySelectorAll('code.language-katex');
+      if (!katexElements.length) return;
+      const katex = await getKatex();
       katexElements.forEach(el => {
         const pre = el.parentElement;
         if (pre) {

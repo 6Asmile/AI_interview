@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vite/
+.npm/
+.env.local
+.env.*.local
+*.log
+tsconfig.*.tsbuildinfo
+.idea/
+.vscode/

@@ -4,18 +4,19 @@ from .models import AIModel, AISetting, Industry, JobPosition
 # system/admin.py
 @admin.register(AIModel)
 class AIModelAdmin(admin.ModelAdmin):
-    list_display = ('name', 'model_slug', 'base_url', 'is_active', 'supports_json_mode')
+    list_display = ('name', 'model_slug', 'provider', 'model_type', 'base_url', 'dimension', 'is_active', 'supports_json_mode')
     list_editable = ('is_active', 'supports_json_mode')
-    search_fields = ('name', 'model_slug')
+    list_filter = ('provider', 'model_type', 'is_active')
+    search_fields = ('name', 'model_slug', 'provider')
 
 @admin.register(AISetting)
 class AISettingAdmin(admin.ModelAdmin):
-    list_display = ('user', 'ai_model', 'updated_at')
+    list_display = ('user', 'chat_model', 'embedding_model', 'rerank_model', 'asr_model', 'tts_model', 'updated_at')
     # raw_id_fields = ('user',) # raw_id_fields 更适合用户量巨大时，我们可以暂时去掉
-    list_filter = ('ai_model',) # 使用 list_filter 替代
+    list_filter = ('chat_model', 'embedding_model', 'rerank_model', 'asr_model', 'tts_model') # 使用 list_filter 替代
     search_fields = ('user__username',) # 允许通过用户名搜索
     # autocomplete_fields 依赖于上面 AIModelAdmin 中的 search_fields
-    autocomplete_fields = ('ai_model',)
+    autocomplete_fields = ('ai_model', 'chat_model', 'embedding_model', 'rerank_model', 'asr_model', 'tts_model')
 
 @admin.register(Industry)
 class IndustryAdmin(admin.ModelAdmin):

@@ -224,12 +224,12 @@ const handleConnectGitHub = () => {
   const clientID = import.meta.env.VITE_GITHUB_CLIENT_ID;
   if (!clientID) { ElMessage.error('GitHub 登录未配置'); return; }
 
-  const redirectUri = "http://localhost:5173/oauth/callback"; // 指向统一回调页
+  const redirectUri = `${window.location.origin}/oauth/callback`; // 跟随当前前端端口
   
   // 在跳转前，在 localStorage 中设置一个清晰的标记
   localStorage.setItem('oauth_flow', 'connect');
 
-  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${redirectUri}&scope=user:email`;
+  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user:email`;
   window.location.href = githubAuthUrl;
 };
 

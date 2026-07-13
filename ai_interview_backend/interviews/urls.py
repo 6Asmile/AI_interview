@@ -1,10 +1,24 @@
 # interviews/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import InterviewSessionViewSet, PolishDescriptionView, ResumeAnalysisView # 导入新视图
+from .views import (
+    EvaluationDatasetViewSet,
+    EvaluationRunViewSet,
+    InterviewCalibrationCaseViewSet,
+    InterviewRubricViewSet,
+    InterviewSessionViewSet,
+    InterviewTemplateViewSet,
+    PolishDescriptionView,
+    ResumeAnalysisView,
+)
 router = DefaultRouter()
 # 注册 ViewSet，基础 URL 为 'interviews'
 router.register(r'interviews', InterviewSessionViewSet, basename='interview')
+router.register(r'interview-templates', InterviewTemplateViewSet, basename='interview-template')
+router.register(r'interview-rubrics', InterviewRubricViewSet, basename='interview-rubric')
+router.register(r'interview-calibration-cases', InterviewCalibrationCaseViewSet, basename='interview-calibration-case')
+router.register(r'evaluation-datasets', EvaluationDatasetViewSet, basename='evaluation-dataset')
+router.register(r'evaluation-runs', EvaluationRunViewSet, basename='evaluation-run')
 
 urlpatterns = [
     path('', include(router.urls)),

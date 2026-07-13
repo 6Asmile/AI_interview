@@ -18,8 +18,13 @@
               <el-option v-for="y in 11" :key="y-1" :label="`${y-1}年`" :value="`${y-1}年`" />
             </el-select>
           </el-form-item>
-          <el-form-item label="其他关键词 (选填)">
-            <el-input type="textarea" :rows="3" v-model="form.keywords" placeholder="输入其他相关技能、特长、项目经验等，AI会围绕它们进行扩展..." />
+          <el-form-item label="真实经历 / 技能 / 成果 (选填)">
+            <el-input
+              type="textarea"
+              :rows="4"
+              v-model="form.keywords"
+              placeholder="填写真实技能、项目、公司/实习、个人贡献和量化结果。信息不足时系统只生成待补充骨架，不会编造经历。"
+            />
           </el-form-item>
         </el-form>
       </div>
@@ -43,6 +48,13 @@
          <div v-loading="isGenerating" element-loading-text="AI 正在为您撰写简历，请稍候..." style="min-height: 200px;">
            <div v-if="generatedJson" class="preview-container">
              <h3>AI 生成预览</h3>
+             <el-alert
+               v-if="generatedMode === 'evidence_required_scaffold'"
+               type="warning"
+               :closable="false"
+               show-icon
+               title="当前输入缺少可验证经历，已生成待补充简历骨架。"
+             />
              <div class="mini-canvas">
                <ResumeCanvas :resume-json-prop="generatedJson" :template-id-prop="selectedTemplateId" :is-editor="false" />
              </div>
@@ -65,7 +77,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage, ElSteps, ElStep, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElButton } from 'element-plus';
+import { ElMessage, ElSteps, ElStep, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElButton, ElAlert } from 'element-plus';
 import { templates } from '@/resume-templates';
 import { generateResumeApi } from '@/api/modules/resumeEditor';
 import { createResumeApi } from '@/api/modules/resume';
@@ -79,6 +91,7 @@ const selectedTemplateId = ref(templates[0]?.id || 'default');
 const isGenerating = ref(false);
 const isCreating = ref(false);
 const generatedJson = ref<ResumeLayout | null>(null);
+const generatedMode = computed(() => (generatedJson.value as any)?.meta?.generation_mode || '');
 
 const isNextDisabled = computed(() => {
     if (activeStep.value === 0) {

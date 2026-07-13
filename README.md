@@ -1,255 +1,295 @@
-# iFaceOff - AI 模拟面试平台
+# iFaceoff
 
-**iFaceOff** 是一个面向求职者的、AI 驱动的求职赋能平台。它通过深度整合人工智能技术与现代 Web 技术，旨在为用户提供从简历优化、模拟面试、能力评估到求职经验分享的一站式解决方案。
+面向求职者与招聘团队的企业级 AI 模拟面试平台。iFaceoff 将可恢复的多 SubAgent 面试流程、知识库 RAG、结构化评估、语音交互、简历工具和招聘管理能力整合在同一个前后端系统中。
 
-[![Vue 3](https://img.shields.io/badge/Vue.js-3-42b883)](https://vuejs.org/)[![Django](https://img.shields.io/badge/Django-5-092e20)](https://www.djangoproject.com/)[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6)](https://www.typescriptlang.org/)[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)](https://www.docker.com/)[![FFmpeg](https://img.shields.io/badge/FFmpeg-Video-7733a1)](https://ffmpeg.org/)
+[![Vue 3](https://img.shields.io/badge/Vue-3.4-42b883)](https://vuejs.org/)
+[![Django](https://img.shields.io/badge/Django-5.2-092e20)](https://www.djangoproject.com/)
+[![LangGraph](https://img.shields.io/badge/Agent-LangGraph-1f2937)](https://github.com/langchain-ai/langgraph)
+[![Qdrant](https://img.shields.io/badge/Vector-Qdrant-dc244c)](https://qdrant.tech/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
----
+![iFaceoff AI 模拟面试](docs/images/interview-room.png)
 
-### 核心功能模块详解
+## 核心能力
 
-iFaceOff 打通了求职准备的全流程，提供了一系列高度智能化的工具。
+| 模块 | 能力 |
+| --- | --- |
+| Composite Agent V2 | 外部单一面试官，内部 Evaluation、EvidenceGuard、Strategy、Retrieval、Memory、Question、Safety、Report 等 SubAgent 协作 |
+| 可恢复面试流程 | LangGraph 条件路由、节点检查点、幂等恢复、生成重试、安全兜底、流式下一题 |
+| 企业级评估 | 规则评分与 AI 双评、能力矩阵、证据链、覆盖缺口、降级模式、可审计报告 |
+| 知识库 RAG | 多租户隔离、草稿与审批上线、Docling/OCR 解析、层级切块、混合检索、RRF、Rerank |
+| 多模态交互 | 文本/语音回答、ASR 分段转写、TTS 问题播报、低置信度确认、视频录制与异步转码 |
+| 模型网关 | Chat、Embedding、Rerank、ASR、TTS 分类型配置，支持 OpenAI-compatible 与 DashScope/百炼服务 |
+| 招聘体系 | 面试模板、阶段计划、评分量表、能力维度、校准样例、离线评估数据集 |
+| 求职工具 | 简历编辑、AI 润色、JD 匹配诊断、报告导出、历史面试复盘 |
+| 社区能力 | Markdown 博客、评论互动、通知、实时私信与 GitHub OAuth |
 
-#### 1. AI 模拟面试（支持视频录制）
+## 系统架构
 
-提供高度拟真的、可随时进行的 AI 模拟面试，集成了**浏览器端情绪识别**、**语音转文字**和**视频录制**技术，帮助用户克服紧张情绪，提升面试技巧。支持中断后继续面试。
+```mermaid
+flowchart TB
+    UI["Vue 3 Web\n面试 / 知识库 / 招聘管理"]
+    API["Django REST Framework\nHTTP API"]
+    WS["Django Channels\nASR / Chat WebSocket"]
+    AGENT["Composite Agent V2\nLangGraph Control Plane"]
+    TOOLS["Tool Executor\n权限 / Schema / 超时 / 重试 / 审计"]
+    RAG["Hybrid RAG\nVector + BM25 + Multi Query + RRF + Rerank"]
+    PARSER["Docling + OCR\n结构解析与层级切块"]
+    WORKER["Celery Worker / Beat"]
+    MYSQL[(MySQL)]
+    REDIS[(Redis)]
+    MQ[(RabbitMQ)]
+    QDRANT[(Qdrant)]
 
-**视频录制功能：**
-- 面试前可选择开启录像开关
-- 面试过程自动录制（WebRTC MediaRecorder）
-- 大文件分片上传 + 断点续传
-- FFmpeg 异步转码（hqdn3d 视频降噪 + anlmdn 音频降噪）
-- 面试结束后可查看录像回放
+    UI --> API
+    UI <--> WS
+    API --> AGENT
+    AGENT --> TOOLS
+    TOOLS --> RAG
+    API --> WORKER
+    WORKER --> PARSER
+    PARSER --> QDRANT
+    RAG --> QDRANT
+    RAG --> MYSQL
+    API --> MYSQL
+    API --> REDIS
+    WS --> REDIS
+    WORKER --> MQ
+```
 
-![AI 模拟面试房间](docs/images/interview-room.png)
-![面试录像回放](docs/images/interview-recording.png)
+后端对外只暴露一个综合面试 Agent。内部 SubAgent 运行在同一进程，由 LangGraph 负责条件路由和状态控制，不在候选人界面暴露内部角色。
 
-#### 2. 多维度深度评估报告
-面试结束后，系统会异步生成包含综合评分、能力雷达图、关键词分析、STAR 法则分析、情绪波动图等**多维度的深度评估报告**，提供量化的、可执行的优化建议。
+### Agent Loop
 
-![AI 面试评估报告 - 概览](docs/images/report-overview.png)
-![AI 面试评估报告 - 关键词与STAR法则分析](docs/images/report-keywords-star.png)
-![AI 面试评估报告 - 详情回顾](docs/images/report-details.png)
+```text
+Observe
+  -> Rule/AI Evaluate
+  -> Evidence Guard
+  -> Coverage & Memory Update
+  -> Strategy Plan
+  -> Hybrid Retrieval (optional)
+  -> Context Assembly
+  -> Question Generate
+  -> Safety Validate
+  -> Repair / Safe Fallback
+  -> Persist & Reflect
+```
 
-#### 3. 强大的简历中心
-*   **在线简历编辑器**：实现了模块化、可拖拽的画布式编辑体验，支持多套专业模板一键切换和 AI 文本润色。
-*   **AI 简历诊断**：上传简历并与岗位描述 (JD) 进行匹配度分析，生成优化建议。
-*   **AI 简历生成**：只需输入核心信息，即可由 AI 生成一份专业且完整的简历初稿。
+一次在线轮次拆分为共享 `run_id` 的 Prepare Graph 和 Finalize Graph。流式连接中断后，可以通过 `InterviewAgentRun` 与逐节点 `InterviewAgentNodeRun` 从最后状态恢复，避免重复评分、重复增加能力覆盖或重复创建题目。
 
-|                  在线简历编辑器                  |                   AI 润色建议                    |
-| :----------------------------------------------: | :----------------------------------------------: |
-| ![在线简历编辑器](docs/images/resume-editor.png) | ![AI 润色建议](docs/images/resume-editor-ai.png) |
+### RAG 数据链路
 
-|                   AI 生成简历                    |                   AI 简历诊断                    |
-| :----------------------------------------------: | :----------------------------------------------: |
-| ![AI 生成简历](docs/images/resume-generator.png) | ![AI 简历诊断](docs/images/resume-diagnosis.png) |
+1. 用户上传 Markdown、TXT、PDF、DOCX、XLSX、CSV 或 FAQ 数据。
+2. Docling 提取标题、段落、列表、表格、图片、页码和阅读顺序；扫描内容可由 OCR adapter 增强。
+3. 文档按结构层级切父块，对超长内容递归切分，并对相邻短块做语义合并。
+4. 用户提交审核，HR/Admin 审批通过后才执行 Embedding 与 Qdrant upsert。
+5. 面试检索执行多 Query、向量召回、中文关键词召回、RRF 融合和 Rerank。
+6. MySQL 对 Qdrant 候选结果进行租户、可见范围、审批状态和索引状态二次校验。
+7. 无向量模型、Rerank 或 Qdrant 时降级到关键词检索，不伪造知识来源。
 
-#### 4.  专业博客与互动社区
-内置 Markdown 编辑器，支持代码高亮、数学公式、流程图等。用户可以分享求职经验，并进行点赞、收藏、评论、关注等互动。我们还实现了基于内容的智能文章推荐算法，打造一个内容驱动的社区生态。
+只有 `approval_status=approved` 且 `status=indexed` 的文档能够进入在线面试。
 
-![博客社区主页](docs/images/blog-home.png)
-![文章详情页](docs/images/blog-post-detail.png)
+## 技术栈
 
-#### 5.  实时通知与私信
-*   **通知中心**：当用户的文章/评论被互动，或被其他用户关注时，系统会自动发送实时站内信。
-*   **实时私信**: 基于 WebSocket 和 Django Channels 实现，支持文本、图片、文件等富媒体通信和“对方正在输入”提示。
-*   **个性化设置**：用户可以根据自己的需求，配置偏好的 AI 模型和独立的 API Key。
+### 前端
 
-|                     通知中心                     |                 AI 设置                 |
-| :----------------------------------------------: | :-------------------------------------: |
-| ![通知中心](docs/images/notification-center.png) | ![AI 设置](docs/images/settings-ai.png) |
+- Vue 3、TypeScript、Vite
+- Element Plus、Pinia、Vue Router
+- ECharts、Mermaid、KaTeX、Highlight.js
+- MediaRecorder、WebSocket、face-api.js
 
-![通知中心](docs/images/notification-center.png)
+### 后端
 
-#### 6.  可视化后台管理
+- Python 3.12、Django 5.2、Django REST Framework
+- Django Channels、Uvicorn、Celery
+- MySQL、Redis、RabbitMQ、Qdrant
+- LangGraph、OpenAI-compatible API、DashScope
+- Docling、PaddleOCR、PyPDF、python-docx、openpyxl、jieba
+- FFmpeg 视频与音频处理
 
-基于 `django-simpleui` 提供了美观且功能强大的后台管理界面，方便运营者管理平台内容、用户、AI 模型、岗位等所有数据。
+## 目录结构
 
-![后台管理面板](docs/images/admin-panel.png)
+```text
+AI_interview/
+├── ai-interview-frontend/       # Vue 3 前端
+├── ai_interview_backend/        # Django/DRF/Channels/Celery 后端
+│   ├── interviews/              # Agent、评估、ASR/TTS、面试模板
+│   ├── knowledge/               # 文档解析、审批、切块与混合检索
+│   ├── system/                  # AI 模型设置与模型网关
+│   └── video_uploads/           # 分片上传与异步转码
+├── docker-compose.infra.yml     # 仅基础设施
+├── docker-compose.yml           # 完整应用栈
+├── scripts/                     # 一键启动脚本
+├── docs/                        # 部署说明与截图
+└── nginx/                       # 前端与 API/WebSocket 反向代理
+```
 
----
+## 快速开始
 
-###  技术架构
+### 方案一：本机开发 + Docker 基础设施
 
-项目采用**前后端分离**的现代化架构
+推荐开发时只用 Docker 启动 MySQL、Redis、RabbitMQ 和 Qdrant，前后端在本机运行，调试速度更快。
 
-*   **前端 (Frontend)** - `Vue 3`
-    *   **框架/构建**: `Vue 3` / `Vite`
-    *   **语言**: `TypeScript`
-    *   **UI / 状态管理**: `Element Plus` / `Pinia`
-    *   **核心库**: `face-api.js`, `md-editor-v3`, `axios`, `echarts`
-
-*   **后端 (Backend)** - `Django`
-    *   **框架**: `Django` & `Django REST Framework (DRF)`
-    *   **数据库**: `MySQL`
-    *   **实时通信**: `Django Channels`
-    *   **异步任务**: `Celery`
-    *   **消息中间件/缓存**: `RabbitMQ` / `Redis`
-    *   **API 文档**: `drf-spectacular` 
-
-*   **部署 (Deployment)**
-    *   **容器化**: `Docker` & `Docker Compose`
-    *   **Web 服务器**: `Nginx` (前端) + `Uvicorn` (后端 ASGI)
-
----
-
-### 🚀 部署指南
-
-#### 1. 先决条件
-*   [Git](https://git-scm.com/)
-*   Python 3.10+（适配 Django 5.x）
-*   Node.js 16+（适配 Vue 3/Vite）
-*   MySQL 5.7+/8.0（默认端口 3306）
-*   Redis（默认端口 6379）
-*   RabbitMQ（默认端口 5672，需启用 Web 插件：`rabbitmq-plugins enable rabbitmq_management`）
-
-#### 2. 克隆项目
-```bash
+```powershell
 git clone https://github.com/6Asmile/AI_interview.git
 cd AI_interview
+copy .env.infra.example .env.infra
+.\scripts\ifaceoff-infra.ps1 up
 ```
 
-#### 3. GitHub OAuth App 配置
-为了使用 GitHub 登录功能，您需要先在 GitHub 上创建一个 OAuth App。
+基础设施端口：
 
-1.  登录 GitHub，进入 **Settings** > **Developer settings** > **OAuth Apps**。
-2.  点击 **New OAuth App** 并填写：
-    *   **Application name**: `iFaceOff` (或自定义)
-    *   **Homepage URL**: `http://localhost` (如果是线上部署，请填写您的域名)
-    *   **Authorization callback URL**: `http://localhost/oauth/callback` (如果是线上部署，请填写 `https://your_domain.com/oauth/callback`)
-3.  创建应用后，您会得到一个 **Client ID**。
-4.  点击 **Generate a new client secret** 生成一个 **Client Secret**。
-5.  **将这两个值填入下面的 `.env` 配置文件中**。
+| 服务 | 地址 |
+| --- | --- |
+| MySQL | `127.0.0.1:3307` |
+| Redis | `127.0.0.1:6379` |
+| RabbitMQ | `127.0.0.1:5672` |
+| RabbitMQ 管理页 | `http://127.0.0.1:15672` |
+| Qdrant | `http://127.0.0.1:6333/dashboard` |
 
-#### 4. 环境配置
-在项目根目录下，有两个重要的 `.env` 配置文件需要您创建和修改。
+准备后端环境：
 
-##### a. 后端配置 (`ai-interview-backend/.env`)
-根据 `ai-interview-backend/.env.example` 创建并编辑 `.env` 文件。
-```bash
-cp ai-interview-backend/.env.example ai-interview-backend/.env
-```
-然后，打开并编辑 `ai-interview-backend/.env`，**所有标记为 `<...>` 的值都必须被替换**：
-```env
-# 数据库连接信息 
-DB_NAME=ai_interview_db
-DB_USER=root
-DB_PASSWORD=<your_strong_db_password> # 数据库密码
-DB_HOST=db
-DB_PORT=3306
-
-# Django 配置
-SECRET_KEY=<your_strong_django_secret_key> # 
-DEBUG=True
-ALLOWED_HOSTS=127.0.0.1,localhost,backend
-CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 # 开发环境，生产环境请改为你的前端域名
-
-# Redis & RabbitMQ (使用 Docker 内部主机名)
-REDIS_HOST=redis
-RABBITMQ_HOST=rabbitmq
-
-# 邮件发送配置 (用于注册验证码)
-EMAIL_HOST=<your_smtp_server> # 例如: smtp.qq.com
-EMAIL_HOST_USER=<your_email_address>
-EMAIL_HOST_PASSWORD=<your_email_auth_code> # 16位授权码
-
-# GitHub OAuth 配置
-GITHUB_CLIENT_ID=<your_github_client_id>
-GITHUB_CLIENT_SECRET=<your_github_client_secret>
-
-# 默认 AI 服务的 API Key
-DEEPSEEK_API_KEY=<your_ai_service_api_key>
-```
-> **提示**: 可以使用在线工具搜索 "Django Secret Key Generator" 来生成 `SECRET_KEY`。
-
-##### b. 前端配置 (`ai-interview-frontend/.env.production`)
-通常，生产环境的默认配置无需修改，它会通过 Nginx 代理将 API 请求转发到后端。
-
-```bash
-cp ai-interview-frontend/.env.development ai-interview-frontend/.env.production
+```powershell
+cd ai_interview_backend
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-打开并编辑 `ai-interview-frontend/.env.production`，修改 API 基础地址：
+本机开发时将 `.env` 中的连接地址改为：
 
-```env
-VITE_API_BASE_URL=http://localhost:8000/api/v1 # 指向本地后端服务
+```dotenv
+DB_HOST=127.0.0.1
+DB_PORT=3307
+REDIS_HOST=127.0.0.1
+RABBITMQ_HOST=127.0.0.1
+QDRANT_URL=http://127.0.0.1:6333
+INTERVIEW_AGENT_ENGINE=composite_v2
 ```
 
-开发环境配置（`ai-interview-frontend/.env.development`）建议同步修改：
+启动后端和异步任务：
 
-```env
-VITE_API_BASE_URL=http://localhost:8000/api/v1
-```
-
-#### 5. 构建并启动服务
-* #### a. 后端依赖安装与启动
-
-  ```bash
-  # 进入后端目录
-  cd ai-interview-backend
-  # 安装后端依赖
-  pip install -r requirements.txt
-  # 启动Django ASGI服务（支持WebSocket）
-  daphne -b 0.0.0.0 -p 8000 ai_interview.asgi:application
-  # 新开终端，启动Celery Worker（处理异步任务，如面试报告生成）
-  celery -A ai_interview worker --loglevel=info
-  # （可选）新开终端，启动Celery Beat（定时任务，如有需要）
-  celery -A ai_interview beat --loglevel=info
-  ```
-
-  #### b. 前端依赖安装与启动
-
-  ```bash
-  # 进入前端目录（新终端）
-  cd ai-interview-frontend
-  # 安装前端依赖
-  npm install
-  # 开发环境启动（热更新，推荐）
-  npm run dev
-  # 生产环境启动（打包后启动静态服务）
-  # npm run build
-  # 安装serve工具（如需生产环境启动）：npm install -g serve
-  # serve -s dist -p 80
-  ```
-
-#### 6. 初始化数据库与 GitHub App
-当启动后，我们需要执行数据库迁移、创建管理员账户，并在 Django 后台配置 GitHub App。
-
-```bash
-# 进入后端目录（新终端）
-cd ai-interview-backend
-# 1. 执行数据库迁移
+```powershell
 python manage.py migrate
-# 2. 创建超级管理员 (按照提示输入)
 python manage.py createsuperuser
+uvicorn ai_interview_backend.asgi:application --reload --host 0.0.0.0 --port 8000
+
+# 新终端
+celery -A ai_interview_backend worker -l info -P solo
 ```
 
-**3. 配置 Django 后台的 GitHub App**
-*   访问 `http://localhost/admin/` 并用刚才创建的管理员账户登录。
-*   在左侧导航栏找到 `SOCIAL ACCOUNTS` -> **Social applications**。
-*   点击右上角的 `ADD SOCIAL APPLICATION`。
-*   **Provider**: 选择 `GitHub`。
-*   **Name**: 填写 `GitHub` (或自定义)。
-*   **Client ID**: 粘贴您从 GitHub 获取的 Client ID。
-*   **Secret key**: 粘贴您从 GitHub 获取的 Client Secret。
-*   在 `Sites` 区域，将 `example.com` 移动到右侧的 `Chosen sites` 框中。
-*   点击 `Save`。
+启动前端：
 
-#### 7. 访问应用
-
-*   **前端应用**: `http://localhost`
-*   **后台管理**: `http://localhost/admin/`
-*   **API 文档**: `http://localhost/api/v1/schema/swagger-ui/`
-
-#### 8. 停止服务
-```bash
-- 后端服务：直接关闭启动 Daphne、Celery Worker、Celery Beat 的终端窗口即可；
-- 前端服务：在启动前端的终端中按 `Ctrl+C` 停止；
-
-- 本地依赖服务（MySQL/Redis/RabbitMQ）：通过系统服务管理器停止（如 Windows 服务、Linux systemctl）。
+```powershell
+cd ..\ai-interview-frontend
+npm ci
+npm run dev
 ```
----
 
-### 📄 许可证
+访问：
 
-本项目采用 [MIT License](LICENSE)。
+- 前端：`http://localhost:5173`
+- API 文档：`http://localhost:8000/api/v1/schema/swagger-ui/`
+- Django Admin：`http://localhost:8000/admin/`
+
+详细说明见 [基础设施 Docker 文档](docs/docker-ifaceoff-infra.md)。
+
+### 方案二：完整 Docker Compose
+
+完整模式会同时启动 Vue/Nginx、Django、Celery、MySQL、Redis、RabbitMQ 和 Qdrant。
+
+```powershell
+copy .env.docker.example .env.docker
+notepad .env.docker
+.\scripts\ifaceoff-docker.ps1 up
+```
+
+启动后访问：
+
+- Web：`http://localhost`
+- API 文档：`http://localhost:8000/api/v1/schema/swagger-ui/`
+- RabbitMQ：`http://localhost:15672`
+- Qdrant：`http://localhost:6333/dashboard`
+
+生产或共享环境中必须修改 `.env.docker` 内的 `SECRET_KEY`、数据库密码和模型 API Key。详细说明见 [完整 Docker 部署文档](docs/docker-ifaceoff.md)。
+
+## 模型配置
+
+系统按模型类型分别配置：
+
+- Chat：回答评估、问题生成及可选语义判断
+- Embedding：知识库向量索引与召回
+- Rerank：混合召回结果精排
+- ASR：语音回答转写
+- TTS：问题语音合成
+
+配置优先级为用户 AI 设置高于系统环境变量。API Key 不通过接口明文返回；保存掩码不会覆盖原密钥。
+
+推荐登录后在“AI 设置”页面选择模型、填写对应 Key，并调用健康检查接口验证。未配置模型时，在线面试会明确进入规则评分或无 RAG 降级模式。
+
+## 知识库上线流程
+
+```text
+创建/批量导入
+  -> 异步解析与 OCR
+  -> 结构化切块预览
+  -> 提交审核
+  -> HR/Admin 审批
+  -> Embedding 与 Qdrant 索引
+  -> 面试检索
+```
+
+普通用户只能管理自己的私有知识库；公共库由管理员发布。编辑已审批文档后会自动回到草稿状态，需要重新审核和索引。
+
+## 测试与质量检查
+
+后端：
+
+```powershell
+cd ai_interview_backend
+python manage.py check
+python manage.py makemigrations --check --dry-run
+python manage.py test interviews.tests knowledge.tests system.tests
+```
+
+前端：
+
+```powershell
+cd ai-interview-frontend
+npm ci
+npm run build
+```
+
+当前测试覆盖 Agent 条件路由、无模型降级、节点契约、工具权限、RAG 租户隔离、审批过滤、上下文预算、问题修复、报告证据链、流式 API 与恢复幂等。
+
+## 关键配置
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `INTERVIEW_AGENT_ENGINE` | `default` | 可选 `default`、`langgraph`、`composite`、`composite_v2` |
+| `AGENT_STATE_SCHEMA_VERSION` | `2` | Agent 状态版本 |
+| `AGENT_MAX_GENERATION_RETRIES` | `2` | 问题校验失败后的最大修复次数 |
+| `AGENT_CONTEXT_TOKEN_BUDGET` | `6000` | 面试上下文预算 |
+| `AGENT_EVALUATION_CONFIDENCE_THRESHOLD` | `0.6` | 能力覆盖最低置信度 |
+| `DOCUMENT_PARSER` | `docling` | 文档结构解析器 |
+| `DOCLING_ENABLE_OCR` | `true` | 是否启用 OCR |
+| `HYBRID_SEARCH_TOPN` | `30` | 混合检索候选数量 |
+| `HYBRID_SEARCH_TOPK` | `4` | 最终注入 Agent 的证据数量 |
+| `QDRANT_URL` | - | Qdrant HTTP 地址 |
+
+## 安全设计
+
+- RBAC：Candidate、HR、Admin 权限分离
+- 私有知识库按用户隔离，公共库只读
+- 未审批、归档、索引失败内容禁止进入 RAG
+- Qdrant 命中结果必须经过 MySQL 二次归属校验
+- Agent 工具调用执行权限、Schema、超时、重试和审计
+- RAG 内容按不可信证据注入，不能覆盖 System Prompt
+- AI 结论必须引用真实回答证据，无依据时标记并剔除
+- `.env`、数据库备份、媒体文件和运行时状态禁止提交
+
+## License
+
+[MIT License](LICENSE)

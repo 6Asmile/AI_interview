@@ -3,7 +3,7 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { 
   ElMessage, ElDialog, ElRadio, ElTable, ElTableColumn, ElPagination, ElButton, 
-  ElRow, ElCol, ElRadioGroup, ElSlider, ElInputNumber, ElEmpty, ElSwitch
+  ElRow, ElCol, ElRadioGroup, ElSlider, ElInputNumber, ElEmpty, ElSwitch, ElInput
 } from 'element-plus';
 import { useJobStore } from '@/store/modules/job';
 import { getResumeListApi, type ResumeItem } from '@/api/modules/resume';
@@ -40,17 +40,33 @@ watch(filteredJobs, (newJobs) => {
 
 // --- 开始面试面板相关状态 ---
 const startDialogVisible = ref(false);
+const startConfirmVisible = ref(false);
 const isStarting = ref(false);
 // 【核心修正】将状态的 null 类型改为 undefined，以匹配 Element Plus 组件的要求
 const selectedResumeId = ref<number | undefined>(undefined);
 const questionCount = ref(5);
 const recordingEnabled = ref(false);
+const jdText = ref('');
 const resumes = ref<ResumeItem[]>([]);
 const isLoadingResumes = ref(false);
 const resumePagination = ref({
   currentPage: 1,
   pageSize: 5,
   total: 0,
+});
+
+const selectedResumeTitle = computed(() => {
+  return resumes.value.find(r => r.id === selectedResumeId.value)?.title || '未选择简历';
+});
+
+const jdRecognitionText = computed(() => {
+  const length = jdText.value.trim().length;
+  if (!length) return '未填写 JD，将按岗位名称和简历生成问题';
+  return `已填写 JD，约 ${length} 字，将优先按岗位职责和技能要求提问`;
+});
+
+const estimatedDuration = computed(() => {
+  return `${questionCount.value * 3}-${questionCount.value * 5} 分钟`;
 });
 
 // --- 数据获取 ---
@@ -81,6 +97,14 @@ const handleStartClick = () => {
   startDialogVisible.value = true;
 };
 
+const openStartConfirm = async () => {
+  if (!selectedJob.value) return;
+  if (!resumes.value.length) {
+    await fetchResumes();
+  }
+  startConfirmVisible.value = true;
+};
+
 const handleResumePageChange = (page: number) => {
   resumePagination.value.currentPage = page;
   selectedResumeId.value = undefined; 
@@ -96,6 +120,9 @@ const handleStartInterview = async () => {
       question_count: questionCount.value,
       recording_enabled: recordingEnabled.value,
     };
+    if (jdText.value.trim()) {
+      payload.jd_text = jdText.value.trim();
+    }
     if (selectedResumeId.value) {
       payload.resume_id = selectedResumeId.value;
     }
@@ -199,6 +226,18 @@ const handleStartInterview = async () => {
                 <div v-else>{{ resumes.find(r => r.id === selectedResumeId)?.title || '点击选择简历' }}</div>
               </div>
             </div>
+            <div class="jd-setting">
+              <p>粘贴岗位 JD (可选，推荐)</p>
+              <el-input
+                v-model="jdText"
+                type="textarea"
+                :rows="5"
+                maxlength="3000"
+                show-word-limit
+                placeholder="粘贴真实岗位 JD，例如产品经理、游戏客户端开发、后端开发等。系统会按 JD 动态生成面试问题。"
+              />
+              <p class="jd-hint">填写 JD 后，面试官会优先围绕岗位职责、技能要求和业务场景提问，而不是套用固定模板。</p>
+            </div>
             <div class="question-count-setting">
                <p>设置面试问题数量</p>
                <div class="slider-wrapper">
@@ -218,7 +257,7 @@ const handleStartInterview = async () => {
               size="large"
               class="start-button"
               :disabled="!selectedJobId"
-              @click="handleStartInterview"
+              @click="openStartConfirm"
               :loading="isStarting"
             >
               {{ isStarting ? '正在开启...' : '开始面试' }}
@@ -254,6 +293,41 @@ const handleStartInterview = async () => {
         <span class="dialog-footer">
           <el-button @click="startDialogVisible = false">关闭</el-button>
         </span>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="startConfirmVisible" title="确认面试配置" width="560px" class="start-confirm-dialog">
+      <div class="confirm-summary">
+        <div class="confirm-hero">
+          <span>岗位</span>
+          <strong>{{ selectedJob?.name }}</strong>
+          <p>{{ jdRecognitionText }}</p>
+        </div>
+        <div class="confirm-grid">
+          <div>
+            <span>简历</span>
+            <strong>{{ selectedResumeTitle }}</strong>
+          </div>
+          <div>
+            <span>题量</span>
+            <strong>{{ questionCount }} 题</strong>
+          </div>
+          <div>
+            <span>录像</span>
+            <strong>{{ recordingEnabled ? '开启' : '关闭' }}</strong>
+          </div>
+          <div>
+            <span>预计时长</span>
+            <strong>{{ estimatedDuration }}</strong>
+          </div>
+        </div>
+        <p class="confirm-note">
+          开始后系统会先要求自我介绍，再根据岗位、JD 和简历逐步追问。请确认配置无误，避免误开面试。
+        </p>
+      </div>
+      <template #footer>
+        <el-button @click="startConfirmVisible = false">返回修改</el-button>
+        <el-button type="primary" :loading="isStarting" @click="handleStartInterview">确认开始</el-button>
       </template>
     </el-dialog>
   </div>
@@ -464,6 +538,7 @@ const handleStartInterview = async () => {
 
 .selected-job-info,
 .resume-selection,
+.jd-setting,
 .question-count-setting,
 .recording-setting {
   margin-bottom: 22px;
@@ -512,6 +587,7 @@ const handleStartInterview = async () => {
 }
 
 .resume-selection,
+.jd-setting,
 .question-count-setting,
 .recording-setting {
   padding: 18px;
@@ -521,9 +597,24 @@ const handleStartInterview = async () => {
 }
 
 .resume-selection p,
+.jd-setting p,
 .question-count-setting p,
 .recording-setting p {
   color: #576884;
+}
+
+.jd-setting :deep(.el-textarea__inner) {
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: none;
+  line-height: 1.6;
+}
+
+.jd-hint {
+  margin-top: 10px !important;
+  color: #8b97ab !important;
+  font-size: 12px !important;
+  line-height: 1.6;
 }
 
 .resume-box {
@@ -601,6 +692,76 @@ const handleStartInterview = async () => {
 
 :deep(.resume-dialog .el-dialog__body) {
   padding: 20px 24px 24px;
+}
+
+:deep(.start-confirm-dialog .el-dialog) {
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+.confirm-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.confirm-hero {
+  padding: 20px;
+  border-radius: 22px;
+  color: #fff;
+  background: linear-gradient(135deg, #225ccf 0%, #65a4ff 100%);
+  box-shadow: 0 18px 32px rgba(35, 99, 210, 0.18);
+}
+
+.confirm-hero span,
+.confirm-grid span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  opacity: 0.78;
+}
+
+.confirm-hero strong {
+  display: block;
+  font-size: 26px;
+}
+
+.confirm-hero p {
+  margin: 10px 0 0;
+  opacity: 0.88;
+  line-height: 1.6;
+}
+
+.confirm-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.confirm-grid div {
+  padding: 15px;
+  border: 1px solid #e2ebf8;
+  border-radius: 18px;
+  background: #f8fbff;
+}
+
+.confirm-grid span {
+  color: #7a8aa6;
+  opacity: 1;
+}
+
+.confirm-grid strong {
+  color: #213554;
+  font-size: 15px;
+}
+
+.confirm-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  color: #5d6f8d;
+  background: #f4f7fc;
+  line-height: 1.7;
 }
 
 @media (max-width: 1200px) {

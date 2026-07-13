@@ -1,7 +1,10 @@
 # system/views.py
 from rest_framework import generics, permissions
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from .models import AISetting, Industry, AIModel  # 导入
 from .serializers import AISettingSerializer, IndustryWithJobsSerializer, AIModelSerializer  # 导入
+from .model_gateway import ModelGateway
 
 class AIModelListView(generics.ListAPIView):
     """
@@ -27,6 +30,22 @@ class AISettingRetrieveUpdateView(generics.RetrieveUpdateAPIView):
         # get_or_create 返回一个 (object, created) 的元组
         obj, created = AISetting.objects.get_or_create(user=self.request.user)
         return obj
+
+
+class AIModelGatewayHealthView(APIView):
+    """
+    对当前用户配置的模型网关做轻量健康检查。
+    默认只检查是否配置；传入 model_type=chat|embedding|rerank 时会调用真实供应商。
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        model_type = request.data.get('model_type') or AIModel.ModelType.CHAT
+        allowed_types = {choice[0] for choice in AIModel.ModelType.choices}
+        if model_type not in allowed_types:
+            return Response({'ok': False, 'error': 'unsupported_model_type'}, status=400)
+        result = ModelGateway(request.user).health_check(model_type)
+        return Response(result)
 
 class IndustryWithJobsListView(generics.ListAPIView):
     """

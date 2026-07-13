@@ -1,11 +1,19 @@
 <template>
-  <div class="auth-container">
-    <el-card class="auth-card">
-      <template #header>
-        <div class="card-header">
-          <h2>IFaceOff - 注册</h2>
-        </div>
-      </template>
+  <div class="auth-shell">
+    <div class="auth-layout">
+      <section class="auth-visual">
+        <p class="auth-eyebrow">IFaceOff</p>
+        <h1>创建账号，开始一套完整的面试训练闭环</h1>
+        <p>从简历管理、岗位 JD 分析，到 AI 面试追问、录像复盘和最终报告，集中完成你的面试准备。</p>
+        <img src="/hero.webp" alt="AI 模拟面试平台" />
+      </section>
+
+      <el-card class="auth-card">
+      <div class="card-header">
+        <p class="auth-eyebrow">Create Account</p>
+        <h2>注册账号</h2>
+        <span>填写基础信息后即可进入平台。</span>
+      </div>
 
       <el-form
         ref="registerFormRef"
@@ -53,7 +61,8 @@
       <div class="auth-footer">
         已有账号？ <router-link to="/login">立即登录</router-link>
       </div>
-    </el-card>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -166,5 +175,127 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 样式已全局化，这里可以为空 */
+.auth-shell {
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(86, 151, 255, 0.18), transparent 30%),
+    radial-gradient(circle at 88% 14%, rgba(40, 204, 171, 0.13), transparent 26%),
+    linear-gradient(180deg, #f6f9ff 0%, #edf3fb 100%);
+}
+
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.78fr);
+  gap: 28px;
+  width: min(1180px, 100%);
+  min-height: calc(100vh - 64px);
+  margin: 0 auto;
+  align-items: center;
+}
+
+.auth-visual,
+.auth-card {
+  border: 1px solid rgba(201, 214, 236, 0.85);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 24px 60px rgba(47, 74, 119, 0.1);
+  overflow: hidden;
+}
+
+.auth-visual {
+  padding: 34px;
+}
+
+.auth-eyebrow {
+  margin: 0 0 10px;
+  color: #5d7bb0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.auth-visual h1 {
+  max-width: 620px;
+  margin: 0;
+  color: #1c2d4b;
+  font-size: clamp(34px, 3.5vw, 54px);
+  line-height: 1.15;
+}
+
+.auth-visual p:not(.auth-eyebrow) {
+  max-width: 600px;
+  margin: 18px 0 26px;
+  color: #60708f;
+  line-height: 1.8;
+}
+
+.auth-visual img {
+  display: block;
+  width: 100%;
+  max-height: 390px;
+  object-fit: cover;
+  border-radius: 24px;
+  border: 1px solid #dbe7f8;
+}
+
+.auth-card {
+  padding: 8px;
+}
+
+.auth-card :deep(.el-card__body) {
+  padding: 30px;
+}
+
+.card-header {
+  margin-bottom: 24px;
+}
+
+.card-header h2 {
+  margin: 0 0 8px;
+  color: #1d3150;
+  font-size: 30px;
+}
+
+.card-header span {
+  color: #6a7a94;
+}
+
+.auth-card :deep(.el-input__wrapper) {
+  min-height: 44px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px #dfe8f6 inset;
+}
+
+.beautiful-button {
+  width: 100%;
+  min-height: 46px;
+  border: none;
+  border-radius: 15px;
+  color: #fff;
+  background: linear-gradient(135deg, #255fd2 0%, #66a2ff 100%);
+}
+
+.auth-footer {
+  margin-top: 20px;
+  text-align: center;
+  color: #667792;
+}
+
+.auth-footer a {
+  color: #2869d8;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+@media (max-width: 920px) {
+  .auth-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-visual {
+    display: none;
+  }
+}
 </style>

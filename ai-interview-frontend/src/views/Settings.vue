@@ -1,20 +1,41 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { 
   ElMessage, ElForm, ElFormItem, ElSelect, ElOption, ElInput, 
-  ElButton, ElCard, ElRow, ElCol 
+  ElButton, ElCard, ElRow, ElCol, ElTag, ElSpace
 } from 'element-plus';
-import { getAISettingsApi, updateAISettingsApi, getAIModelsApi } from '@/api/modules/system';
-import type { AIModelItem, AISettingsData } from '@/api/modules/system';
+import { getAISettingsApi, updateAISettingsApi, getAIModelsApi, checkAIModelGatewayHealthApi } from '@/api/modules/system';
+import type { AIModelItem, AISettingsData, AIModelGatewayHealthResult } from '@/api/modules/system';
 
 // --- 响应式状态 ---
-const settingsForm = ref<Partial<AISettingsData> & { ai_model_id?: number | null }>({
+type SettingsForm = Partial<AISettingsData> & {
+  ai_model_id?: number | null;
+  chat_model_id?: number | null;
+  embedding_model_id?: number | null;
+  rerank_model_id?: number | null;
+  asr_model_id?: number | null;
+  tts_model_id?: number | null;
+};
+
+const settingsForm = ref<SettingsForm>({
   ai_model_id: null,
+  chat_model_id: null,
+  embedding_model_id: null,
+  rerank_model_id: null,
+  asr_model_id: null,
+  tts_model_id: null,
   api_keys: {},
 });
 const availableModels = ref<AIModelItem[]>([]);
 const isLoading = ref(true);
 const isSaving = ref(false);
+const healthChecking = ref<Record<string, boolean>>({});
+const healthResults = ref<Record<string, AIModelGatewayHealthResult>>({});
+const chatModels = computed(() => availableModels.value.filter(model => model.model_type === 'chat'));
+const embeddingModels = computed(() => availableModels.value.filter(model => model.model_type === 'embedding'));
+const rerankModels = computed(() => availableModels.value.filter(model => model.model_type === 'rerank'));
+const asrModels = computed(() => availableModels.value.filter(model => model.model_type === 'asr'));
+const ttsModels = computed(() => availableModels.value.filter(model => model.model_type === 'tts'));
 
 // --- 数据获取 ---
 const fetchData = async () => {
@@ -28,7 +49,12 @@ const fetchData = async () => {
     availableModels.value = modelsResponse.results;
     
     settingsForm.value = {
-      ai_model_id: settings.ai_model ? settings.ai_model.id : null,
+      ai_model_id: settings.chat_model?.id || settings.ai_model?.id || null,
+      chat_model_id: settings.chat_model?.id || settings.ai_model?.id || null,
+      embedding_model_id: settings.embedding_model?.id || null,
+      rerank_model_id: settings.rerank_model?.id || null,
+      asr_model_id: settings.asr_model?.id || null,
+      tts_model_id: settings.tts_model?.id || null,
       api_keys: { ...settings.api_keys },
     };
 
@@ -46,8 +72,13 @@ onMounted(fetchData);
 const handleSave = async () => {
   isSaving.value = true;
   try {
-    const payload: { ai_model_id?: number | null; api_keys?: Record<string, string> } = {
-      ai_model_id: settingsForm.value.ai_model_id,
+    const payload: { ai_model_id?: number | null; chat_model_id?: number | null; embedding_model_id?: number | null; rerank_model_id?: number | null; asr_model_id?: number | null; tts_model_id?: number | null; api_keys?: Record<string, string> } = {
+      ai_model_id: settingsForm.value.chat_model_id,
+      chat_model_id: settingsForm.value.chat_model_id,
+      embedding_model_id: settingsForm.value.embedding_model_id,
+      rerank_model_id: settingsForm.value.rerank_model_id,
+      asr_model_id: settingsForm.value.asr_model_id,
+      tts_model_id: settingsForm.value.tts_model_id,
       api_keys: settingsForm.value.api_keys,
     };
     await updateAISettingsApi(payload);
@@ -58,6 +89,39 @@ const handleSave = async () => {
   } finally {
     isSaving.value = false;
   }
+};
+
+const handleHealthCheck = async (modelType: AIModelItem['model_type']) => {
+  healthChecking.value[modelType] = true;
+  try {
+    const result = await checkAIModelGatewayHealthApi(modelType);
+    healthResults.value[modelType] = result;
+    if (result.ok) {
+      ElMessage.success(`${modelType} 模型连通性正常`);
+    } else {
+      ElMessage.warning(`${modelType} 模型检测失败：${result.error || '配置不可用'}`);
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.error || `${modelType} 模型检测失败`);
+  } finally {
+    healthChecking.value[modelType] = false;
+  }
+};
+
+const healthTagType = (modelType: AIModelItem['model_type']) => {
+  const result = healthResults.value[modelType];
+  if (!result) return 'info';
+  return result.ok ? 'success' : 'danger';
+};
+
+const healthText = (modelType: AIModelItem['model_type']) => {
+  const result = healthResults.value[modelType];
+  if (!result) return '未检测';
+  if (result.ok) {
+    const dimension = result.dimension ? ` · ${result.dimension}维` : '';
+    return `正常 · ${result.latency_ms ?? '-'}ms${dimension}`;
+  }
+  return result.error || '不可用';
 };
 </script>
 
@@ -72,19 +136,107 @@ const handleSave = async () => {
       </template>
 
       <el-form :model="settingsForm" label-position="top">
-        <el-form-item label="默认 AI 模型">
+        <el-form-item label="对话模型">
           <p class="form-item-description">
-            所有 AI 功能（面试、润色、分析）将优先使用您选择的默认模型。如果留空，将使用系统默认模型。
+            面试出题、回答评估、报告生成等对话型 AI 功能将使用该模型。
           </p>
-          <el-select v-model="settingsForm.ai_model_id" placeholder="请选择默认模型" clearable style="width: 100%;">
-            <el-option
-              v-for="model in availableModels"
-              :key="model.id"
-              :label="model.name"
-              :value="model.id"
-            />
-          </el-select>
+          <el-space fill style="width: 100%;">
+            <el-select v-model="settingsForm.chat_model_id" placeholder="请选择对话模型" clearable style="width: 100%;">
+              <el-option
+                v-for="model in chatModels"
+                :key="model.id"
+                :label="`${model.name} · ${model.provider}`"
+                :value="model.id"
+              />
+            </el-select>
+            <div class="health-row">
+              <el-button size="small" :loading="healthChecking.chat" @click="handleHealthCheck('chat')">检测</el-button>
+              <el-tag size="small" :type="healthTagType('chat')">{{ healthText('chat') }}</el-tag>
+            </div>
+          </el-space>
         </el-form-item>
+
+        <el-row :gutter="20">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="Embedding 模型">
+              <p class="form-item-description">
+                知识库索引和向量召回使用该模型，默认推荐阿里云 text-embedding-v3。
+              </p>
+              <el-select v-model="settingsForm.embedding_model_id" placeholder="请选择 Embedding 模型" clearable style="width: 100%;">
+                <el-option
+                  v-for="model in embeddingModels"
+                  :key="model.id"
+                  :label="`${model.name} · ${model.dimension || '-'}维`"
+                  :value="model.id"
+                />
+              </el-select>
+              <div class="health-row">
+                <el-button size="small" :loading="healthChecking.embedding" @click="handleHealthCheck('embedding')">检测</el-button>
+                <el-tag size="small" :type="healthTagType('embedding')">{{ healthText('embedding') }}</el-tag>
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="Rerank 模型">
+              <p class="form-item-description">
+                知识库召回后使用该模型重排，默认推荐阿里云 qwen-rerank。
+              </p>
+              <el-select v-model="settingsForm.rerank_model_id" placeholder="请选择 Rerank 模型" clearable style="width: 100%;">
+                <el-option
+                  v-for="model in rerankModels"
+                  :key="model.id"
+                  :label="`${model.name} · ${model.provider}`"
+                  :value="model.id"
+                />
+              </el-select>
+              <div class="health-row">
+                <el-button size="small" :loading="healthChecking.rerank" @click="handleHealthCheck('rerank')">检测</el-button>
+                <el-tag size="small" :type="healthTagType('rerank')">{{ healthText('rerank') }}</el-tag>
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="20">
+          <el-col :xs="24" :md="12">
+            <el-form-item label="ASR 语音识别模型">
+              <p class="form-item-description">
+                面试语音回答转写使用该模型。未配置时不会生成后端转写，前端可继续手动输入。
+              </p>
+              <el-select v-model="settingsForm.asr_model_id" placeholder="请选择 ASR 模型" clearable style="width: 100%;">
+                <el-option
+                  v-for="model in asrModels"
+                  :key="model.id"
+                  :label="`${model.name} · ${model.provider}`"
+                  :value="model.id"
+                />
+              </el-select>
+              <div class="health-row">
+                <el-button size="small" :loading="healthChecking.asr" @click="handleHealthCheck('asr')">检测</el-button>
+                <el-tag size="small" :type="healthTagType('asr')">{{ healthText('asr') }}</el-tag>
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :md="12">
+            <el-form-item label="TTS 语音合成模型">
+              <p class="form-item-description">
+                AI 面试官问题播放优先使用该模型生成语音；失败时自动使用浏览器 TTS。
+              </p>
+              <el-select v-model="settingsForm.tts_model_id" placeholder="请选择 TTS 模型" clearable style="width: 100%;">
+                <el-option
+                  v-for="model in ttsModels"
+                  :key="model.id"
+                  :label="`${model.name} · ${model.provider}`"
+                  :value="model.id"
+                />
+              </el-select>
+              <div class="health-row">
+                <el-button size="small" :loading="healthChecking.tts" @click="handleHealthCheck('tts')">检测</el-button>
+                <el-tag size="small" :type="healthTagType('tts')">{{ healthText('tts') }}</el-tag>
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
 
         <el-form-item label="API Key 管理">
           <p class="form-item-description">
@@ -102,6 +254,7 @@ const handleSave = async () => {
             >
               <el-col :span="8" class="model-name-col">
                 <span class="model-name">{{ model.name }}</span>
+                <small>{{ model.model_type }} · {{ model.provider }}</small>
               </el-col>
               <el-col :span="16">
                 <el-input
@@ -145,12 +298,29 @@ const handleSave = async () => {
 }
 .model-name-col {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
 }
 .model-name {
   color: #606266;
   font-size: 0.9rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-name-col small {
+  color: #909399;
+  font-size: 0.75rem;
+  margin-top: 3px;
+}
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.health-row .el-tag {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }

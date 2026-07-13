@@ -3,7 +3,7 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
-from .models import InterviewSession
+from .models import EvaluationRun, InterviewSession
 
 
 # @shared_task 装饰器让这个函数成为一个 Celery 任务，
@@ -36,3 +36,11 @@ def cleanup_stale_interviews():
     else:
         print("Celery 任务：没有发现需要清理的超时面试会话。")
         return "没有超时的面试会话。"
+
+
+@shared_task
+def run_evaluation_run(run_id: int):
+    from .evaluation import run_offline_rule_evaluation
+
+    run = EvaluationRun.objects.get(id=run_id)
+    return run_offline_rule_evaluation(run).summary

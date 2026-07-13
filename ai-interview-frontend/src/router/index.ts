@@ -12,12 +12,15 @@ const routes: Array<RouteRecordRaw> = [
   // 【注意】顶级面试房间路由已被移除
   // { path: '/interview/:id?', name: 'InterviewRoom', component: () => import('@/views/InterviewRoom.vue'), meta: { requiresAuth: true }, props: true },
   { path: '/oauth/callback', name: 'OAuthCallback', component: () => import('@/views/OAuthCallback.vue') },
+  { path: '/oaauth/callback', name: 'OAuthCallbackTypoCompat', component: () => import('@/views/OAuthCallback.vue') },
+  { path: '/oauth/callback:query(.*)', name: 'OAuthCallbackCompat', component: () => import('@/views/OAuthCallback.vue') },
   {
     path: '/dashboard',
     component: () => import('@/layouts/Layout.vue'),
     meta: { requiresAuth: true },
     children: [
-      { path: '', name: 'Dashboard', component: () => import('@/views/Dashboard.vue') },
+      { path: '', name: 'Dashboard', component: () => import('@/views/Home.vue') },
+      { path: 'interviews', name: 'InterviewSetup', component: () => import('@/views/Dashboard.vue') },
       
       // --- 【核心修改】将面试房间路由移到此处 ---
       { 
@@ -28,6 +31,8 @@ const routes: Array<RouteRecordRaw> = [
       },
       
       { path: 'resumes', name: 'ResumeManagement', component: () => import('@/views/Resume.vue') },
+      { path: 'knowledge', name: 'KnowledgeBase', component: () => import('@/views/KnowledgeBase.vue') },
+      { path: 'interview-admin', name: 'EnterpriseInterviewAdmin', component: () => import('@/views/EnterpriseInterviewAdmin.vue') },
       { path: 'history', name: 'History', component: () => import('@/views/History.vue') },
       { path: 'report/:id', name: 'ReportDetail', component: () => import('@/views/ReportDetail.vue') },
       { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') },

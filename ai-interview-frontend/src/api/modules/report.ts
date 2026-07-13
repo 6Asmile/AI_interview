@@ -7,6 +7,7 @@ import type { PaginatedResponse } from '@/types/api';
 export interface AbilityScore {
   name: string;
   score: number;
+  raw_score?: number;
 }
 
 
@@ -36,6 +37,21 @@ export interface StarAnalysisItem {
   is_behavioral_question: boolean;
   conforms_to_star: boolean;
   star_feedback: string;
+  overall_star_feedback?: string;
+  situation_analysis?: string;
+  task_analysis?: string;
+  action_analysis?: string;
+  result_analysis?: string;
+}
+
+export interface QuestionQualityBreakdownItem {
+  question_sequence: number;
+  quality_score?: number;
+  final_score?: number;
+  evaluation_mode?: string;
+  answer_level?: string;
+  follow_up_target?: string;
+  follow_up_reason?: string;
 }
 
 // 【核心改造】终极的、完整的报告内容类型
@@ -48,6 +64,12 @@ export interface InterviewReport {
   improvement_suggestions: string[];
   keyword_analysis: KeywordAnalysis; // 新增
   star_analysis: StarAnalysisItem[]; // 新增
+  verified_abilities?: string[];
+  unverified_risks?: string[];
+  question_quality_breakdown?: QuestionQualityBreakdownItem[];
+  coverage_summary?: Record<string, any>;
+  template_snapshot?: Record<string, any>;
+  evaluation_version?: Record<string, any>;
 }
 
 // --- API 函数 (保持不变) ---

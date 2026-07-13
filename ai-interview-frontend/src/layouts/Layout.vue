@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import { RouterView, RouterLink, useRoute } from 'vue-router';
 import { useAuthStore } from '@/store/modules/auth';
 import { useNotificationStore } from '@/store/modules/notification';
@@ -15,6 +15,10 @@ import { ArrowDown, ChatLineRound  } from '@element-plus/icons-vue'; // <-- 【�
 const authStore = useAuthStore();
 const notificationStore = useNotificationStore();
 const route = useRoute();
+const canManageInterviewSystem = computed(() => {
+  const role = (authStore.user?.role || '').toLowerCase();
+  return ['admin', 'hr'].includes(role);
+});
 
 onMounted(() => {
   if (authStore.isAuthenticated) {
@@ -32,7 +36,7 @@ onMounted(() => {
       </div>
       
       <el-menu :default-active="route.path" class="main-nav" mode="horizontal" router>
-        <el-menu-item index="/dashboard">仪表盘</el-menu-item>
+        <el-menu-item index="/dashboard">平台介绍</el-menu-item>
         <el-menu-item index="/dashboard/blog">博客社区</el-menu-item>
         <!-- 【核心新增】聊天/私信入口 -->
         <el-menu-item index="/dashboard/chat">
@@ -46,7 +50,10 @@ onMounted(() => {
           <el-menu-item index="/dashboard/ai-diagnosis">AI 简历诊断</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="/interviews">
-           <template #title>我的面试</template>
+          <template #title>我的面试</template>
+          <el-menu-item index="/dashboard/interviews">开始面试</el-menu-item>
+          <el-menu-item index="/dashboard/knowledge">知识库</el-menu-item>
+          <el-menu-item v-if="canManageInterviewSystem" index="/dashboard/interview-admin">企业面试体系</el-menu-item>
           <el-menu-item index="/dashboard/history">面试记录</el-menu-item>
         </el-sub-menu>
       </el-menu>

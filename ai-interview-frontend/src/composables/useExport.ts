@@ -1,7 +1,5 @@
 import { ref, nextTick } from 'vue';
 import type { Ref } from 'vue';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import { ElLoading, ElMessage } from 'element-plus';
 
 type PreExportHook = () => Promise<void> | void;
@@ -34,6 +32,11 @@ export function useExport(elementRef: Ref<HTMLElement | null>, filename: string)
       if (!elementRef.value) {
         throw new Error("导出目标元素已不存在。");
       }
+
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ]);
 
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
