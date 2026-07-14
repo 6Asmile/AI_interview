@@ -17,6 +17,10 @@
         <h2>登录账号</h2>
         <span>继续你的面试训练、简历诊断和复盘报告。</span>
       </div>
+      <div class="login-surface-switch">
+        <el-button type="primary">求职者登录</el-button>
+        <el-button @click="openAdminLogin">管理端登录</el-button>
+      </div>
       <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-width="80px" @keyup.enter="handleLogin">
         <el-form-item label="邮箱" prop="email">
           <el-input v-model="loginForm.email" placeholder="请输入邮箱" />
@@ -117,6 +121,12 @@ const handleGitHubLogin = () => {
   const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user:email`;
   window.location.href = githubAuthUrl;
 };
+
+const openAdminLogin = () => {
+  const apiBase = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+  const backendBase = apiBase.replace(/\/api\/v1\/?$/, '');
+  window.location.href = `${backendBase}/admin/login/?next=/admin/`;
+};
 </script>
 
 <style scoped>
@@ -210,6 +220,15 @@ const handleGitHubLogin = () => {
 .card-header {
   margin-bottom: 24px;
 }
+
+.login-surface-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.login-surface-switch .el-button { margin: 0; }
 
 .card-header h2 {
   margin: 0 0 8px;

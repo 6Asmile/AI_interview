@@ -54,6 +54,17 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     def get_object(self):
         return self.request.user
 
+
+class OnboardingCompleteView(views.APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        user.onboarding_step = 'completed'
+        user.onboarding_completed_at = timezone.now()
+        user.save(update_fields=['onboarding_step', 'onboarding_completed_at', 'updated_at'])
+        return Response(UserProfileSerializer(user, context={'request': request}).data)
+
 # --- 头像上传 ---
 class AvatarUploadView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]

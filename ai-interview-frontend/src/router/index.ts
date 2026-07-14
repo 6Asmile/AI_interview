@@ -6,7 +6,9 @@ import { checkUnfinishedInterviewApi } from '@/api/modules/interview';
 import { ElMessageBox, ElLoading, ElMessage } from 'element-plus';
 
 const routes: Array<RouteRecordRaw> = [
-  { path: '/', redirect: '/dashboard' },
+  { path: '/', name: 'Landing', component: () => import('@/views/Landing.vue') },
+  { path: '/about', name: 'About', component: () => import('@/views/About.vue') },
+  { path: '/onboarding', name: 'Onboarding', component: () => import('@/views/Onboarding.vue'), meta: { requiresAuth: true } },
   { path: '/login', name: 'Login', component: () => import('@/views/Login.vue') },
   { path: '/register', name: 'Register', component: () => import('@/views/Register.vue') },
   // 【注意】顶级面试房间路由已被移除
@@ -151,6 +153,10 @@ router.beforeEach(async (to, _from, next) => {
     } catch (error) {
       return next({ name: 'Login', query: { redirect: to.fullPath } });
     }
+  }
+
+  if (!authStore.user?.onboarding_completed_at && to.name !== 'Onboarding') {
+    return next({ name: 'Onboarding' });
   }
 
   const allowedRoles = to.meta.roles as string[] | undefined;

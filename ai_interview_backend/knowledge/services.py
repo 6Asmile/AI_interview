@@ -9,14 +9,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable
 
 from django.conf import settings
-from django.db.models import F, Q
+from django.db import transaction
+from django.db.models import F, Max, Q
 from django.utils import timezone
 from openai import OpenAI
 from system.ai_config import resolve_ai_config
 from system.model_gateway import ModelGateway
 from system.models import AIModel
 
-from .models import KnowledgeDocument, KnowledgeChunk
+from .models import KnowledgeChunk, KnowledgeChunkDraft, KnowledgeDocument, KnowledgeDocumentRevision
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ def _upsert_qdrant_chunk(client, chunk: KnowledgeChunk, vector: list[float]) -> 
     payload = {
         'chunk_id': str(chunk.id),
         'document_id': str(chunk.document_id),
+        'revision_id': str(chunk.revision_id) if chunk.revision_id else '',
         'title': chunk.document.title,
         'job_positions': chunk.document.job_positions,
         'ability_tags': chunk.document.ability_tags,
@@ -153,19 +155,31 @@ def _upsert_qdrant_chunk(client, chunk: KnowledgeChunk, vector: list[float]) -> 
     )
 
 
-def index_document(document: KnowledgeDocument) -> KnowledgeDocument:
-    if document.approval_status != KnowledgeDocument.ApprovalStatus.APPROVED:
+def index_document(document: KnowledgeDocument, revision: KnowledgeDocumentRevision | None = None) -> KnowledgeDocument:
+    if revision is None and document.draft_revision_id and document.draft_revision.status == KnowledgeDocumentRevision.Status.APPROVED:
+        revision = document.draft_revision
+    revision = revision or document.published_revision or document.draft_revision
+    if not revision and document.approval_status == KnowledgeDocument.ApprovalStatus.APPROVED:
+        revision = create_document_revision(document, document.created_by)
+        revision.status = KnowledgeDocumentRevision.Status.APPROVED
+        revision.approved_by = document.approved_by
+        revision.approved_at = document.approved_at or timezone.now()
+        revision.save(update_fields=['status', 'approved_by', 'approved_at', 'updated_at'])
+    if not revision or revision.status not in {
+        KnowledgeDocumentRevision.Status.APPROVED,
+        KnowledgeDocumentRevision.Status.PUBLISHED,
+    }:
         document.status = KnowledgeDocument.Status.DRAFT
-        document.error_message = '知识库必须审批通过后才能建立上线索引。'
+        document.error_message = '知识库版本必须审批通过后才能建立上线索引。'
         document.save(update_fields=['status', 'error_message', 'updated_at'])
         raise ValueError(document.error_message)
 
     document.status = KnowledgeDocument.Status.INDEXING
     document.error_message = ''
     document.save(update_fields=['status', 'error_message', 'updated_at'])
-    document.chunks.all().delete()
+    document.chunks.filter(revision=revision).delete()
 
-    chunk_specs = build_structured_chunk_specs(document)
+    chunk_specs = build_structured_chunk_specs(document, revision=revision)
     client = _qdrant_client()
     embedding_model = getattr(settings, 'EMBEDDING_MODEL', 'text-embedding-v3')
     embedding_errors = []
@@ -177,6 +191,7 @@ def index_document(document: KnowledgeDocument) -> KnowledgeDocument:
             parent_hash = hashlib.sha256(parent_spec['content'].encode('utf-8')).hexdigest()
             parent_chunk = KnowledgeChunk.objects.create(
                 document=document,
+                revision=revision,
                 chunk_index=chunk_index,
                 chunk_level=1,
                 heading_path=parent_spec.get('heading_path') or [],
@@ -211,6 +226,7 @@ def index_document(document: KnowledgeDocument) -> KnowledgeDocument:
                 content_hash = hashlib.sha256(child_content.encode('utf-8')).hexdigest()
                 chunk = KnowledgeChunk.objects.create(
                     document=document,
+                    revision=revision,
                     parent_chunk=parent_chunk,
                     chunk_index=chunk_index,
                     chunk_level=2,
@@ -255,7 +271,16 @@ def index_document(document: KnowledgeDocument) -> KnowledgeDocument:
                 chunk_index += 1
                 indexed_count += 1
 
+        previous_revision = document.published_revision
+        if previous_revision and previous_revision.id != revision.id:
+            previous_revision.status = KnowledgeDocumentRevision.Status.SUPERSEDED
+            previous_revision.save(update_fields=['status', 'updated_at'])
+        revision.status = KnowledgeDocumentRevision.Status.PUBLISHED
+        revision.published_at = timezone.now()
+        revision.save(update_fields=['status', 'published_at', 'updated_at'])
         document.status = KnowledgeDocument.Status.INDEXED
+        document.approval_status = KnowledgeDocument.ApprovalStatus.APPROVED
+        document.published_revision = revision
         document.chunk_count = indexed_count
         document.last_indexed_at = timezone.now()
         document.error_message = (
@@ -263,7 +288,12 @@ def index_document(document: KnowledgeDocument) -> KnowledgeDocument:
             + ' | '.join(embedding_errors)
             if embedding_errors else ''
         )[:2000]
-        document.save(update_fields=['status', 'chunk_count', 'last_indexed_at', 'error_message', 'updated_at'])
+        document.save(update_fields=[
+            'status', 'approval_status', 'published_revision', 'chunk_count',
+            'last_indexed_at', 'error_message', 'updated_at',
+        ])
+        if previous_revision and previous_revision.id != revision.id:
+            document.chunks.filter(revision=previous_revision).delete()
         return document
     except Exception as exc:
         document.status = KnowledgeDocument.Status.FAILED
@@ -272,8 +302,24 @@ def index_document(document: KnowledgeDocument) -> KnowledgeDocument:
         raise
 
 
-def build_structured_chunk_specs(document: KnowledgeDocument) -> list[dict]:
-    parsed = document.parsed_content or {}
+def build_structured_chunk_specs(
+    document: KnowledgeDocument,
+    revision: KnowledgeDocumentRevision | None = None,
+) -> list[dict]:
+    if revision and revision.chunk_drafts.exists():
+        return [
+            {
+                'content': chunk.content,
+                'heading_path': chunk.heading_path,
+                'page_start': chunk.page_start,
+                'page_end': chunk.page_end,
+                'block_type': chunk.block_type,
+                'metadata': chunk.metadata,
+            }
+            for chunk in revision.chunk_drafts.filter(is_excluded=False).order_by('order')
+            if chunk.content.strip()
+        ]
+    parsed = (revision.parsed_content if revision else document.parsed_content) or {}
     blocks = parsed.get('blocks') or []
     specs = []
     if blocks:
@@ -291,6 +337,7 @@ def build_structured_chunk_specs(document: KnowledgeDocument) -> list[dict]:
                 'page_start': block.get('page_start'),
                 'page_end': block.get('page_end'),
                 'block_type': block_type,
+                'metadata': block.get('metadata') or {},
             })
     else:
         for index, text in enumerate(split_text(document.content, chunk_size=1600, overlap=160)):
@@ -394,6 +441,77 @@ def semantic_merge_short_chunks(chunks: list[str], min_tokens: int = CHILD_MIN_T
     if buffer:
         merged.append(buffer)
     return merged
+
+
+def materialize_revision_drafts(revision: KnowledgeDocumentRevision) -> KnowledgeDocumentRevision:
+    revision.chunk_drafts.all().delete()
+    document = revision.document
+    original_parsed = document.parsed_content
+    document.parsed_content = revision.parsed_content or {}
+    try:
+        specs = build_structured_chunk_specs(document)
+    finally:
+        document.parsed_content = original_parsed
+
+    order = 0
+    for spec in specs:
+        block_type = spec.get('block_type') or 'paragraph'
+        contents = [spec['content']] if block_type in {'table', 'faq'} else recursive_split(
+            spec['content'], max_tokens=CHILD_MAX_TOKENS, overlap_tokens=CHILD_OVERLAP_TOKENS
+        )
+        contents = semantic_merge_short_chunks(contents)
+        for content in contents:
+            content = content.strip()
+            if not content:
+                continue
+            content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+            KnowledgeChunkDraft.objects.create(
+                revision=revision,
+                order=order,
+                block_type=block_type,
+                heading_path=spec.get('heading_path') or [],
+                page_start=spec.get('page_start'),
+                page_end=spec.get('page_end'),
+                content=content,
+                table_data=(spec.get('metadata') or {}).get('table_data') or [],
+                metadata=spec.get('metadata') or {},
+                token_count=_estimate_tokens(content),
+                content_hash=content_hash,
+            )
+            order += 1
+    return revision
+
+
+@transaction.atomic
+def create_document_revision(
+    document: KnowledgeDocument,
+    user=None,
+    *,
+    parsed_content: dict | None = None,
+    source_content: str | None = None,
+) -> KnowledgeDocumentRevision:
+    next_version = (
+        KnowledgeDocumentRevision.objects.filter(document=document)
+        .aggregate(value=Max('version_number'))['value'] or 0
+    ) + 1
+    revision = KnowledgeDocumentRevision.objects.create(
+        document=document,
+        version_number=next_version,
+        status=KnowledgeDocumentRevision.Status.DRAFT,
+        source_content=document.content if source_content is None else source_content,
+        parsed_content=document.parsed_content if parsed_content is None else parsed_content,
+        parser_snapshot={
+            'parser_name': document.parser_name,
+            'parser_version': document.parser_version,
+            'parser_fallback_reason': document.parser_fallback_reason,
+            'ocr_enabled': document.ocr_enabled,
+        },
+        created_by=user or document.created_by,
+    )
+    materialize_revision_drafts(revision)
+    document.draft_revision = revision
+    document.save(update_fields=['draft_revision', 'updated_at'])
+    return revision
 
 
 def build_preview_parsed_content(content: str, title: str = '切块预览') -> dict:
@@ -637,6 +755,9 @@ def _sql_fallback_search(
     chunks = KnowledgeChunk.objects.select_related('document').filter(
         _tenant_document_filter(user),
         document__status=KnowledgeDocument.Status.INDEXED,
+    ).filter(
+        Q(revision=F('document__published_revision'))
+        | Q(revision__isnull=True, document__published_revision__isnull=True),
         chunk_level=2,
     ).order_by('-document__updated_at', 'chunk_index')[:300]
     for chunk in chunks:
@@ -809,6 +930,10 @@ def _candidate_filter_reason(
         return 'approval_not_approved'
     if document.status != KnowledgeDocument.Status.INDEXED:
         return 'document_not_indexed'
+    if document.published_revision_id and chunk.revision_id != document.published_revision_id:
+        return 'revision_not_published'
+    if not document.published_revision_id and chunk.revision_id:
+        return 'revision_not_published'
     if not _tenant_document_allowed(document, user):
         return 'tenant_scope_denied'
 
@@ -976,6 +1101,9 @@ def search_knowledge_context(
     trace['eligible_chunk_count'] = KnowledgeChunk.objects.filter(
         _tenant_document_filter(user),
         chunk_level=2,
+    ).filter(
+        Q(revision=F('document__published_revision'))
+        | Q(revision__isnull=True, document__published_revision__isnull=True),
     ).count()
     parallelism = int(getattr(settings, 'HYBRID_SEARCH_PARALLELISM', os.getenv('HYBRID_SEARCH_PARALLELISM', 4)) or 4)
     parallelism = max(1, min(parallelism, len(queries) or 1))
@@ -1025,6 +1153,9 @@ def search_knowledge_context(
         chunks = KnowledgeChunk.objects.select_related('document').filter(
             id__in=candidate_ids,
             chunk_level=2,
+        ).filter(
+            Q(revision=F('document__published_revision'))
+            | Q(revision__isnull=True, document__published_revision__isnull=True),
         )
         chunk_by_id = {str(chunk.id): chunk for chunk in chunks}
         filter_counts = Counter()
@@ -1103,6 +1234,9 @@ def keyword_search_rankings(
         _tenant_document_filter(user),
         document__status=KnowledgeDocument.Status.INDEXED,
         chunk_level=2,
+    ).filter(
+        Q(revision=F('document__published_revision'))
+        | Q(revision__isnull=True, document__published_revision__isnull=True),
     ).order_by('-document__updated_at')[:500])
     chunks = [
         chunk for chunk in chunks

@@ -7,6 +7,14 @@
       </div>
       <el-button v-if="activeTab !== 'tasks'" type="primary" :icon="Plus" @click="openCreate">{{ createLabel }}</el-button>
     </header>
+    <el-alert
+      v-if="loadErrors.length"
+      class="load-alert"
+      type="warning"
+      :title="`部分数据暂时不可用：${loadErrors.join('、')}`"
+      :closable="false"
+      show-icon
+    />
 
     <el-tabs v-model="activeTab" class="workspace-tabs">
       <el-tab-pane label="职业事实" name="facts">
@@ -55,10 +63,10 @@
 
       <el-tab-pane label="投递管道" name="applications">
         <div class="pipeline" v-loading="loading">
-          <section v-for="column in pipelineColumns" :key="column.status" class="pipeline-column">
-            <header><strong>{{ column.label }}</strong><span>{{ applicationsByStatus[column.status].length }}</span></header>
-            <el-empty v-if="!applicationsByStatus[column.status].length" :image-size="48" description="暂无" />
-            <article v-for="item in applicationsByStatus[column.status]" :key="item.id" class="application-card">
+          <section v-for="column in pipelineColumns" :key="column.value" class="pipeline-column">
+            <header><strong>{{ column.label }}</strong><span>{{ applicationsByStatus[column.value]?.length || 0 }}</span></header>
+            <el-empty v-if="!applicationsByStatus[column.value]?.length" :image-size="48" description="暂无" />
+            <article v-for="item in applicationsByStatus[column.value] || []" :key="item.id" class="application-card">
               <strong>{{ item.job_target_detail.company_name }}</strong>
               <p>{{ item.job_target_detail.position_name }}</p>
               <el-select :model-value="item.status" size="small" @change="value => changeApplicationStatus(item, value)">
@@ -141,6 +149,7 @@ const facts = ref<CareerFact[]>([]);
 const targets = ref<JobTarget[]>([]);
 const applications = ref<JobApplication[]>([]);
 const tasks = ref<LearningTask[]>([]);
+const loadErrors = ref<string[]>([]);
 const factDialog = ref(false);
 const targetDialog = ref(false);
 const applicationDialog = ref(false);
@@ -161,7 +170,16 @@ const createLabel = computed(() => activeTab.value === 'facts' ? '新增事实' 
 
 async function loadAll() {
   loading.value = true;
-  try { [facts.value, targets.value, applications.value, tasks.value] = await Promise.all([getCareerFactsApi(), getJobTargetsApi(), getApplicationsApi(), getLearningTasksApi()]); }
+  loadErrors.value = [];
+  try {
+    const results = await Promise.allSettled([getCareerFactsApi(), getJobTargetsApi(), getApplicationsApi(), getLearningTasksApi()]);
+    const labels = ['职业事实', '目标岗位', '投递管道', '补强任务'];
+    const targetsForResult = [facts, targets, applications, tasks] as Array<{ value: any[] }>;
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') targetsForResult[index].value = result.value;
+      else loadErrors.value.push(labels[index]);
+    });
+  }
   finally { loading.value = false; }
 }
 onMounted(loadAll);
@@ -190,6 +208,7 @@ async function changeTaskStatus(item: LearningTask, value: LearningTask['status'
 .page-header h1 { margin: 0; color: #1f2937; font-size: 28px; letter-spacing: 0; }
 .page-header p { margin: 8px 0 0; color: #667085; }
 .workspace-tabs { margin-top: 18px; padding: 0 20px 20px; background: #fff; border: 1px solid #e1e6ee; border-radius: 8px; }
+.load-alert { margin-top: 16px; }
 .pipeline { display: grid; grid-template-columns: repeat(5, minmax(210px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
 .pipeline-column { min-height: 420px; padding: 12px; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; }
 .pipeline-column > header { display: flex; justify-content: space-between; margin-bottom: 12px; color: #344054; }

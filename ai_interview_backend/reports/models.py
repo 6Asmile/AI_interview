@@ -10,6 +10,17 @@ class ResumeAnalysisReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='analysis_reports')
     resume = models.ForeignKey(Resume, on_delete=models.CASCADE, related_name='analysis_reports')
+    resume_version = models.ForeignKey(
+        'resumes.ResumeVersion', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='analysis_reports', verbose_name='简历版本快照来源'
+    )
+    job_target = models.ForeignKey(
+        'careers.JobTarget', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='resume_analysis_reports', verbose_name='目标岗位来源'
+    )
+    resume_snapshot = models.JSONField(default=dict, blank=True, verbose_name='简历版本快照')
+    model_config_snapshot = models.JSONField(default=dict, blank=True, verbose_name='模型配置快照')
+    evidence_sources = models.JSONField(default=list, blank=True, verbose_name='证据来源')
 
     # 存储原始的 JD 文本，以便追溯
     jd_text = models.TextField(verbose_name='目标岗位JD')

@@ -8,7 +8,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import CommunityIdentity, CommunityTopicLink, CommunityWebhookEvent
-from .services import CommunityIntegrationError, build_discourse_sso_response, search_public_content, verify_signature
+from .services import CommunityIntegrationError, build_discourse_sso_response, database_public_content, search_public_content, verify_signature
+
+
+def can_manage_community(user):
+    return bool(user and user.is_authenticated and (
+        user.is_staff or user.is_superuser or getattr(user, 'role', '') in ('admin', 'hr')
+    ))
 
 
 class DiscourseConnectView(APIView):
@@ -103,3 +109,39 @@ class PublicSearchView(APIView):
             return Response({'results': [], 'degraded': False, 'reason': ''})
         return Response(search_public_content(query, min(int(request.query_params.get('limit', 20)), 50)))
 
+
+class CommunityFeedView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({
+            'results': database_public_content('', min(int(request.query_params.get('limit', 20)), 50)),
+            'source': 'database',
+        })
+
+
+class CommunityIndexStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not can_manage_community(request.user):
+            return Response({'detail': '无权查看搜索索引状态。'}, status=status.HTTP_403_FORBIDDEN)
+        from blog.models import Post
+        from knowledge.models import KnowledgeDocument
+        return Response({
+            'configured': bool(getattr(settings, 'MEILISEARCH_URL', '') and getattr(settings, 'MEILISEARCH_API_KEY', '')),
+            'published_posts': Post.objects.filter(status=Post.PostStatus.PUBLISHED).count(),
+            'published_knowledge': KnowledgeDocument.objects.filter(
+                visibility=KnowledgeDocument.Visibility.PUBLIC,
+                approval_status=KnowledgeDocument.ApprovalStatus.APPROVED,
+                status=KnowledgeDocument.Status.INDEXED,
+            ).count(),
+            'community_topics': CommunityTopicLink.objects.count(),
+        })
+
+    def post(self, request):
+        if not can_manage_community(request.user):
+            return Response({'detail': '无权重建搜索索引。'}, status=status.HTTP_403_FORBIDDEN)
+        from .tasks import rebuild_public_search_indexes
+        result = rebuild_public_search_indexes.delay()
+        return Response({'status': 'queued', 'task_id': result.id}, status=status.HTTP_202_ACCEPTED)

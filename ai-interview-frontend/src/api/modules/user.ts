@@ -26,6 +26,8 @@ export interface UserProfile {
   skills_profile: string[];
   availability: string;
   profile_visibility: 'private' | 'community' | 'public';
+  onboarding_step: string;
+  onboarding_completed_at: string | null;
   mfa_enabled: boolean;
   mfa_required: boolean;
 }
@@ -57,6 +59,7 @@ export interface ChangePasswordData { old_password?: string; new_password1: stri
 
 export const getUserProfileApi = (): Promise<UserProfile> => request({ url: '/auth/profile/', method: 'get' });
 export const updateUserProfileApi = (data: Partial<UserProfile>): Promise<UserProfile> => request({ url: '/auth/profile/', method: 'patch', data });
+export const completeOnboardingApi = (): Promise<UserProfile> => request({ url: '/auth/onboarding/complete/', method: 'post' });
 export const uploadAvatarApi = (formData: FormData): Promise<{ avatar_url: string }> => request({ url: '/auth/upload-avatar/', method: 'post', data: formData, headers: { 'Content-Type': 'multipart/form-data' } });
 export const changePasswordApi = (data: ChangePasswordData) => request({ url: '/auth/password/change/', method: 'post', data });
 export const connectGitHubApi = (code: string): Promise<{ message: string }> => request({ url: '/auth/github/connect/', method: 'post', data: { code } });

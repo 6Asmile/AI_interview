@@ -40,6 +40,8 @@ export interface KnowledgeDocument {
   parser_fallback_reason: string;
   parsed_content?: Record<string, any>;
   ocr_enabled: boolean;
+  draft_revision?: string | null;
+  published_revision?: string | null;
   visibility: KnowledgeVisibility;
   job_positions: string[];
   ability_tags: string[];
@@ -65,6 +67,38 @@ export interface KnowledgeDocument {
   can_submit_review: boolean;
   can_approve: boolean;
   chunks?: KnowledgeChunk[];
+}
+
+export interface KnowledgeChunkDraft {
+  id: string;
+  revision: string;
+  parent?: string | null;
+  order: number;
+  block_type: string;
+  heading_path: string[];
+  page_start: number | null;
+  page_end: number | null;
+  content: string;
+  table_data: any[];
+  metadata: Record<string, any>;
+  token_count: number;
+  content_hash: string;
+  is_excluded: boolean;
+  updated_at: string;
+}
+
+export interface KnowledgeDocumentRevision {
+  id: string;
+  document: string;
+  version_number: number;
+  status: 'draft' | 'pending_review' | 'approved' | 'published' | 'rejected' | 'superseded';
+  parser_snapshot: Record<string, any>;
+  rejection_reason: string;
+  chunk_count: number;
+  submitted_at: string | null;
+  approved_at: string | null;
+  published_at: string | null;
+  created_at: string;
 }
 
 export interface KnowledgeImportFileItem {
@@ -180,6 +214,32 @@ export const updateKnowledgeDocumentApi = (
     data,
   });
 };
+
+export const getKnowledgeRevisionsApi = (id: string): Promise<KnowledgeDocumentRevision[]> => request({
+  url: `/knowledge/documents/${id}/revisions/`, method: 'get',
+});
+export const getKnowledgeChunkDraftsApi = (id: string): Promise<KnowledgeChunkDraft[]> => request({
+  url: `/knowledge/documents/${id}/chunk-drafts/`, method: 'get',
+});
+export const updateKnowledgeChunkDraftApi = (
+  documentId: string,
+  chunkId: string,
+  data: Partial<Pick<KnowledgeChunkDraft, 'content' | 'block_type' | 'heading_path' | 'is_excluded' | 'metadata' | 'table_data'>>,
+): Promise<KnowledgeChunkDraft> => request({
+  url: `/knowledge/documents/${documentId}/chunk-drafts/${chunkId}/`, method: 'patch', data,
+});
+export const deleteKnowledgeChunkDraftApi = (documentId: string, chunkId: string): Promise<void> => request({
+  url: `/knowledge/documents/${documentId}/chunk-drafts/${chunkId}/`, method: 'delete',
+});
+export const reorderKnowledgeChunkDraftsApi = (documentId: string, chunkIds: string[]): Promise<KnowledgeChunkDraft[]> => request({
+  url: `/knowledge/documents/${documentId}/chunk-drafts/reorder/`, method: 'post', data: { chunk_ids: chunkIds },
+});
+export const mergeKnowledgeChunkDraftsApi = (documentId: string, chunkIds: string[]): Promise<KnowledgeChunkDraft> => request({
+  url: `/knowledge/documents/${documentId}/chunk-drafts/merge/`, method: 'post', data: { chunk_ids: chunkIds },
+});
+export const splitKnowledgeChunkDraftApi = (documentId: string, chunkId: string, splitAt: number): Promise<KnowledgeChunkDraft[]> => request({
+  url: `/knowledge/documents/${documentId}/chunk-drafts/${chunkId}/split/`, method: 'post', data: { split_at: splitAt },
+});
 
 export const deleteKnowledgeDocumentApi = (id: string): Promise<void> => {
   return request({

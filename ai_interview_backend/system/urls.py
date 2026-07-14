@@ -13,6 +13,7 @@ from .views import (
     RoutePolicyTargetViewSet,
     RoutePolicyViewSet,
     UsageBudgetViewSet,
+    SystemReadinessView,
 )
 
 
@@ -27,6 +28,7 @@ router.register('gateway/requests', ModelRequestLedgerViewSet, basename='gateway
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('system/readiness/', SystemReadinessView.as_view(), name='system-readiness'),
     path('settings/ai/', AISettingRetrieveUpdateView.as_view(), name='ai-settings'),
     path('settings/ai/health/', AIModelGatewayHealthView.as_view(), name='ai-settings-health'),
     path('jobs-by-industry/', IndustryWithJobsListView.as_view(), name='jobs-by-industry-list'),

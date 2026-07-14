@@ -19,6 +19,7 @@ from dotenv import load_dotenv # 添加这一行
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(os.path.join(BASE_DIR, '.env')) # 添加这一行，加载 .env 文件
+load_dotenv(os.path.join(BASE_DIR.parent, '.env.infra'), override=False)
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
@@ -372,6 +373,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chat.tasks.publish_pending_chat_outbox',
         'schedule': 60,
     },
+    'mark-stale-resume-imports': {
+        'task': 'resumes.tasks.mark_stale_resume_import_jobs',
+        'schedule': 300,
+    },
+    'mark-stale-knowledge-jobs': {
+        'task': 'knowledge.tasks.mark_stale_knowledge_jobs',
+        'schedule': 300,
+    },
 }
 #celery -A ai_interview_backend worker -l info -P gevent
 # celery -A ai_interview_backend beat -l info
@@ -412,11 +421,11 @@ DISCOURSE_BASE_URL = os.getenv('DISCOURSE_BASE_URL', '')
 DISCOURSE_CONNECT_SECRET = os.getenv('DISCOURSE_CONNECT_SECRET', '')
 DISCOURSE_WEBHOOK_SECRET = os.getenv('DISCOURSE_WEBHOOK_SECRET', '')
 MEILISEARCH_URL = os.getenv('MEILISEARCH_URL', 'http://127.0.0.1:7700')
-MEILISEARCH_API_KEY = os.getenv('MEILISEARCH_API_KEY', '')
+MEILISEARCH_API_KEY = os.getenv('MEILISEARCH_API_KEY', os.getenv('MEILI_MASTER_KEY', ''))
 CLAMAV_HOST = os.getenv('CLAMAV_HOST', '127.0.0.1')
 CLAMAV_PORT = int(os.getenv('CLAMAV_PORT', '3310'))
 CLAMAV_REQUIRED = os.getenv('CLAMAV_REQUIRED', 'false').lower() in ('1', 'true', 'yes', 'on')
-QDRANT_URL = os.getenv('QDRANT_URL', '')
+QDRANT_URL = os.getenv('QDRANT_URL', f"http://127.0.0.1:{os.getenv('QDRANT_PORT', '6333')}")
 QDRANT_COLLECTION = os.getenv('QDRANT_COLLECTION', 'interview_knowledge')
 EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
 EMBEDDING_API_KEY = os.getenv('EMBEDDING_API_KEY', '')

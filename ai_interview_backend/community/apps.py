@@ -6,3 +6,5 @@ class CommunityConfig(AppConfig):
     name = 'community'
     verbose_name = '技术社区集成'
 
+    def ready(self):
+        from . import signals  # noqa: F401

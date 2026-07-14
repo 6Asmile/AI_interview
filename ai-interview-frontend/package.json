@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@vavt/v3-extension": "^4.0.0",
@@ -36,6 +37,7 @@
     "yup": "^1.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.0.0-alpha.13",
     "@types/diff-match-patch": "^1.0.36",
     "@types/lodash-es": "^4.17.12",

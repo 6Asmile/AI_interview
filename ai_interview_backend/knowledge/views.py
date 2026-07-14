@@ -1,4 +1,8 @@
+import hashlib
+
+from django.db import models, transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -6,10 +10,18 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import KnowledgeDocument, KnowledgeImportBatch, KnowledgeImportFile
+from .models import (
+    KnowledgeChunkDraft,
+    KnowledgeDocument,
+    KnowledgeDocumentRevision,
+    KnowledgeImportBatch,
+    KnowledgeImportFile,
+)
 from .serializers import (
+    KnowledgeChunkDraftSerializer,
     KnowledgeChunkPreviewSerializer,
     KnowledgeDocumentRejectSerializer,
+    KnowledgeDocumentRevisionSerializer,
     KnowledgeDocumentSerializer,
     KnowledgeImportBatchSerializer,
 )
@@ -52,7 +64,9 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = KnowledgeDocument.objects.select_related('created_by').prefetch_related('chunks')
+        queryset = KnowledgeDocument.objects.select_related(
+            'created_by', 'draft_revision', 'published_revision'
+        ).prefetch_related('chunks')
         user = self.request.user
         if not can_manage_knowledge_review(user):
             queryset = queryset.filter(
@@ -111,7 +125,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         visibility = serializer.validated_data.get('visibility', KnowledgeDocument.Visibility.PRIVATE)
         if visibility == KnowledgeDocument.Visibility.PUBLIC and not can_publish_public_knowledge(self.request.user):
             raise PermissionDenied('只有管理员可以发布公共知识库。')
-        serializer.save(
+        document = serializer.save(
             created_by=self.request.user,
             approval_status=KnowledgeDocument.ApprovalStatus.DRAFT,
             status=KnowledgeDocument.Status.DRAFT,
@@ -129,6 +143,8 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
                 }],
             },
         )
+        from .services import create_document_revision
+        create_document_revision(document, self.request.user)
 
     def perform_update(self, serializer):
         document = self.get_object()
@@ -158,29 +174,38 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             }
         document = serializer.save()
         if should_reset_approval:
-            document.approval_status = KnowledgeDocument.ApprovalStatus.DRAFT
-            document.status = KnowledgeDocument.Status.DRAFT
+            from .services import create_document_revision
+            create_document_revision(document, self.request.user)
+            if not document.published_revision_id:
+                document.approval_status = KnowledgeDocument.ApprovalStatus.DRAFT
+                document.status = KnowledgeDocument.Status.DRAFT
             document.rejection_reason = ''
             document.submitted_at = None
-            document.approved_at = None
-            document.approved_by = None
             document.error_message = ''
-            document.chunks.all().delete()
-            document.chunk_count = 0
             document.parse_status = serializer.validated_data.get('parse_status', document.parse_status)
             document.save(update_fields=[
                 'approval_status', 'status', 'rejection_reason', 'submitted_at',
-                'approved_at', 'approved_by', 'error_message', 'chunk_count',
-                'parse_status', 'updated_at',
+                'error_message', 'parse_status', 'updated_at',
             ])
 
     def perform_destroy(self, instance):
         self._ensure_can_edit(instance)
         instance.delete()
 
-    def _schedule_reindex(self, document: KnowledgeDocument):
-        if document.approval_status != KnowledgeDocument.ApprovalStatus.APPROVED:
-            raise PermissionDenied('知识库必须审批通过后才能重建上线索引。')
+    def _schedule_reindex(self, document: KnowledgeDocument, revision=None):
+        revision = revision or document.published_revision
+        if not revision and document.approval_status == KnowledgeDocument.ApprovalStatus.APPROVED:
+            from .services import create_document_revision
+            revision = create_document_revision(document, document.created_by or self.request.user)
+            revision.status = KnowledgeDocumentRevision.Status.APPROVED
+            revision.approved_by = document.approved_by
+            revision.approved_at = document.approved_at or timezone.now()
+            revision.save(update_fields=['status', 'approved_by', 'approved_at', 'updated_at'])
+        if not revision or revision.status not in {
+            KnowledgeDocumentRevision.Status.APPROVED,
+            KnowledgeDocumentRevision.Status.PUBLISHED,
+        }:
+            raise PermissionDenied('知识库版本必须审批通过后才能重建上线索引。')
         document.status = KnowledgeDocument.Status.INDEXING
         document.error_message = ''
         document.save(update_fields=['status', 'error_message', 'updated_at'])
@@ -188,7 +213,7 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             reindex_knowledge_document.delay(str(document.id))
         except Exception:
             from .services import index_document
-            index_document(document)
+            index_document(document, revision=revision)
 
     @action(detail=True, methods=['post'], url_path='reindex')
     def reindex(self, request, pk=None):
@@ -209,12 +234,20 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
     def submit_review(self, request, pk=None):
         document = self.get_object()
         self._ensure_can_edit(document)
-        if document.approval_status == KnowledgeDocument.ApprovalStatus.APPROVED:
-            return Response({'detail': '已上线知识库无需重复提交审核。'}, status=status.HTTP_400_BAD_REQUEST)
-        document.approval_status = KnowledgeDocument.ApprovalStatus.PENDING_REVIEW
+        revision = document.draft_revision
+        if not revision:
+            from .services import create_document_revision
+            revision = create_document_revision(document, request.user)
+        if revision.status not in {KnowledgeDocumentRevision.Status.DRAFT, KnowledgeDocumentRevision.Status.REJECTED}:
+            return Response({'detail': '当前编辑版本不能重复提交审核。'}, status=status.HTTP_400_BAD_REQUEST)
+        revision.status = KnowledgeDocumentRevision.Status.PENDING_REVIEW
+        revision.rejection_reason = ''
+        revision.submitted_at = timezone.now()
+        revision.save(update_fields=['status', 'rejection_reason', 'submitted_at', 'updated_at'])
+        if not document.published_revision_id:
+            document.approval_status = KnowledgeDocument.ApprovalStatus.PENDING_REVIEW
         document.rejection_reason = ''
-        from django.utils import timezone
-        document.submitted_at = timezone.now()
+        document.submitted_at = revision.submitted_at
         document.save(update_fields=['approval_status', 'rejection_reason', 'submitted_at', 'updated_at'])
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
 
@@ -236,19 +269,29 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         document = self.get_object()
         self._ensure_can_review()
-        if document.approval_status != KnowledgeDocument.ApprovalStatus.PENDING_REVIEW:
+        revision = document.draft_revision
+        if not revision or revision.status != KnowledgeDocumentRevision.Status.PENDING_REVIEW:
             return Response({'detail': '只有待审核知识库可以审批通过。'}, status=status.HTTP_400_BAD_REQUEST)
         if document.parse_status != KnowledgeDocument.ParseStatus.PARSED:
             return Response({'detail': '知识库解析完成后才能审批上线。'}, status=status.HTTP_400_BAD_REQUEST)
-        from django.utils import timezone
+        revision.status = KnowledgeDocumentRevision.Status.APPROVED
+        revision.approved_by = request.user
+        revision.approved_at = timezone.now()
+        revision.rejection_reason = ''
+        revision.save(update_fields=['status', 'approved_by', 'approved_at', 'rejection_reason', 'updated_at'])
         document.approval_status = KnowledgeDocument.ApprovalStatus.APPROVED
         document.approved_by = request.user
-        document.approved_at = timezone.now()
+        document.approved_at = revision.approved_at
         document.rejection_reason = ''
         document.save(update_fields=['approval_status', 'approved_by', 'approved_at', 'rejection_reason', 'updated_at'])
-        self._schedule_reindex(document)
+        self._schedule_reindex(document, revision=revision)
         document.refresh_from_db()
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='publish')
+    def publish(self, request, pk=None):
+        """兼容显式发布接口；审批通过后由索引任务原子切换在线版本。"""
+        return self.approve(request, pk=pk)
 
     @action(detail=True, methods=['post'], url_path='reject')
     def reject(self, request, pk=None):
@@ -256,16 +299,21 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         self._ensure_can_review()
         serializer = KnowledgeDocumentRejectSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        if document.approval_status != KnowledgeDocument.ApprovalStatus.PENDING_REVIEW:
+        revision = document.draft_revision
+        if not revision or revision.status != KnowledgeDocumentRevision.Status.PENDING_REVIEW:
             return Response({'detail': '只有待审核知识库可以拒绝。'}, status=status.HTTP_400_BAD_REQUEST)
-        document.approval_status = KnowledgeDocument.ApprovalStatus.REJECTED
+        revision.status = KnowledgeDocumentRevision.Status.REJECTED
+        revision.rejection_reason = serializer.validated_data['rejection_reason']
+        revision.approved_by = None
+        revision.approved_at = None
+        revision.save(update_fields=['status', 'rejection_reason', 'approved_by', 'approved_at', 'updated_at'])
+        if not document.published_revision_id:
+            document.approval_status = KnowledgeDocument.ApprovalStatus.REJECTED
         document.rejection_reason = serializer.validated_data['rejection_reason']
-        document.approved_by = None
-        document.approved_at = None
-        document.status = KnowledgeDocument.Status.DRAFT
+        if not document.published_revision_id:
+            document.status = KnowledgeDocument.Status.DRAFT
         document.save(update_fields=[
-            'approval_status', 'rejection_reason', 'approved_by', 'approved_at',
-            'status', 'updated_at',
+            'approval_status', 'rejection_reason', 'status', 'updated_at',
         ])
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
 
@@ -277,6 +325,166 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         document.status = KnowledgeDocument.Status.DRAFT
         document.save(update_fields=['approval_status', 'status', 'updated_at'])
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+    def _editable_revision(self, document):
+        self._ensure_can_edit(document)
+        revision = document.draft_revision
+        if not revision:
+            from .services import create_document_revision
+            revision = create_document_revision(document, self.request.user)
+        if revision.status not in {
+            KnowledgeDocumentRevision.Status.DRAFT,
+            KnowledgeDocumentRevision.Status.REJECTED,
+        }:
+            raise PermissionDenied('待审核或已发布版本不可直接修改，请先创建新的编辑版本。')
+        if revision.status == KnowledgeDocumentRevision.Status.REJECTED:
+            revision.status = KnowledgeDocumentRevision.Status.DRAFT
+            revision.rejection_reason = ''
+            revision.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+        return revision
+
+    @action(detail=True, methods=['get'], url_path='revisions')
+    def revisions(self, request, pk=None):
+        document = self.get_object()
+        revisions = document.revisions.select_related('created_by', 'approved_by').all()
+        return Response(KnowledgeDocumentRevisionSerializer(revisions, many=True).data)
+
+    @action(detail=True, methods=['get', 'post'], url_path='chunk-drafts')
+    def chunk_drafts(self, request, pk=None):
+        document = self.get_object()
+        revision = document.draft_revision
+        if request.method == 'GET':
+            if not revision:
+                return Response([])
+            return Response(KnowledgeChunkDraftSerializer(revision.chunk_drafts.all(), many=True).data)
+        revision = self._editable_revision(document)
+        serializer = KnowledgeChunkDraftSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        content = serializer.validated_data['content'].strip()
+        if not content:
+            return Response({'detail': '知识块内容不能为空。'}, status=status.HTTP_400_BAD_REQUEST)
+        order = serializer.validated_data.get('order', revision.chunk_drafts.count())
+        revision.chunk_drafts.filter(order__gte=order).update(order=models.F('order') + 100000)
+        for chunk in revision.chunk_drafts.filter(order__gte=order + 100000).order_by('order'):
+            chunk.order -= 99999
+            chunk.save(update_fields=['order', 'updated_at'])
+        chunk = serializer.save(
+            revision=revision,
+            order=order,
+            token_count=max(1, len(content) // 2),
+            content_hash=hashlib.sha256(content.encode('utf-8')).hexdigest(),
+        )
+        return Response(KnowledgeChunkDraftSerializer(chunk).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=['patch', 'delete'],
+        url_path=r'chunk-drafts/(?P<chunk_id>[0-9a-f-]+)',
+    )
+    def chunk_draft_detail(self, request, pk=None, chunk_id=None):
+        document = self.get_object()
+        revision = self._editable_revision(document)
+        try:
+            chunk = revision.chunk_drafts.get(id=chunk_id)
+        except KnowledgeChunkDraft.DoesNotExist:
+            return Response({'detail': '知识块不存在。'}, status=status.HTTP_404_NOT_FOUND)
+        if request.method == 'DELETE':
+            removed_order = chunk.order
+            chunk.delete()
+            revision.chunk_drafts.filter(order__gt=removed_order).update(order=models.F('order') - 1)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = KnowledgeChunkDraftSerializer(chunk, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        content = serializer.validated_data.get('content', chunk.content).strip()
+        chunk = serializer.save(
+            content=content,
+            token_count=max(1, len(content) // 2),
+            content_hash=hashlib.sha256(content.encode('utf-8')).hexdigest(),
+        )
+        return Response(KnowledgeChunkDraftSerializer(chunk).data)
+
+    @action(detail=True, methods=['post'], url_path='chunk-drafts/reorder')
+    def reorder_chunk_drafts(self, request, pk=None):
+        document = self.get_object()
+        revision = self._editable_revision(document)
+        ids = [str(item) for item in request.data.get('chunk_ids') or []]
+        chunks = list(revision.chunk_drafts.filter(id__in=ids))
+        if len(chunks) != len(ids) or len(ids) != revision.chunk_drafts.count():
+            return Response({'detail': '排序列表必须包含当前版本的全部知识块。'}, status=status.HTTP_400_BAD_REQUEST)
+        by_id = {str(item.id): item for item in chunks}
+        with transaction.atomic():
+            revision.chunk_drafts.update(order=models.F('order') + 100000)
+            for order, chunk_id in enumerate(ids):
+                chunk = by_id[chunk_id]
+                chunk.order = order
+                chunk.save(update_fields=['order', 'updated_at'])
+        return Response(KnowledgeChunkDraftSerializer(revision.chunk_drafts.all(), many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='chunk-drafts/merge')
+    def merge_chunk_drafts(self, request, pk=None):
+        document = self.get_object()
+        revision = self._editable_revision(document)
+        ids = [str(item) for item in request.data.get('chunk_ids') or []]
+        chunks = list(revision.chunk_drafts.filter(id__in=ids).order_by('order'))
+        if len(chunks) < 2 or [str(item.id) for item in chunks] != ids:
+            return Response({'detail': '请选择至少两个顺序相邻的知识块。'}, status=status.HTTP_400_BAD_REQUEST)
+        if any(chunks[index + 1].order != chunks[index].order + 1 for index in range(len(chunks) - 1)):
+            return Response({'detail': '只能合并顺序相邻的知识块。'}, status=status.HTTP_400_BAD_REQUEST)
+        first = chunks[0]
+        content = '\n\n'.join(item.content.strip() for item in chunks if item.content.strip())
+        first.content = content
+        first.token_count = max(1, len(content) // 2)
+        first.content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        first.save(update_fields=['content', 'token_count', 'content_hash', 'updated_at'])
+        for chunk in chunks[1:]:
+            chunk.delete()
+        remaining = list(revision.chunk_drafts.order_by('order'))
+        revision.chunk_drafts.update(order=models.F('order') + 100000)
+        for order, chunk in enumerate(remaining):
+            chunk.order = order
+            chunk.save(update_fields=['order', 'updated_at'])
+        return Response(KnowledgeChunkDraftSerializer(first).data)
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'chunk-drafts/(?P<chunk_id>[0-9a-f-]+)/split',
+    )
+    def split_chunk_draft(self, request, pk=None, chunk_id=None):
+        document = self.get_object()
+        revision = self._editable_revision(document)
+        try:
+            chunk = revision.chunk_drafts.get(id=chunk_id)
+        except KnowledgeChunkDraft.DoesNotExist:
+            return Response({'detail': '知识块不存在。'}, status=status.HTTP_404_NOT_FOUND)
+        split_at = int(request.data.get('split_at') or 0)
+        if split_at <= 0 or split_at >= len(chunk.content):
+            return Response({'detail': 'split_at 必须位于知识块内容中间。'}, status=status.HTTP_400_BAD_REQUEST)
+        left, right = chunk.content[:split_at].strip(), chunk.content[split_at:].strip()
+        if not left or not right:
+            return Response({'detail': '拆分后的知识块不能为空。'}, status=status.HTTP_400_BAD_REQUEST)
+        revision.chunk_drafts.filter(order__gt=chunk.order).update(order=models.F('order') + 100000)
+        for item in revision.chunk_drafts.filter(order__gte=chunk.order + 100001).order_by('order'):
+            item.order -= 99999
+            item.save(update_fields=['order', 'updated_at'])
+        chunk.content = left
+        chunk.token_count = max(1, len(left) // 2)
+        chunk.content_hash = hashlib.sha256(left.encode('utf-8')).hexdigest()
+        chunk.save(update_fields=['content', 'token_count', 'content_hash', 'updated_at'])
+        created = KnowledgeChunkDraft.objects.create(
+            revision=revision,
+            order=chunk.order + 1,
+            block_type=chunk.block_type,
+            heading_path=chunk.heading_path,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
+            content=right,
+            table_data=[],
+            metadata=chunk.metadata,
+            token_count=max(1, len(right) // 2),
+            content_hash=hashlib.sha256(right.encode('utf-8')).hexdigest(),
+        )
+        return Response(KnowledgeChunkDraftSerializer([chunk, created], many=True).data)
 
     @action(detail=False, methods=['post'], url_path='preview-chunks')
     def preview_chunks(self, request):

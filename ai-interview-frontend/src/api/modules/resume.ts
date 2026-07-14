@@ -42,6 +42,7 @@ export interface ResumeItem {
   current_version?: ResumeVersion | null;
   version_count?: number;
   latest_import_job?: ResumeImportJob | null;
+  import_job?: ResumeImportJob | null;
 }
 
 export interface ResumeVersion {
@@ -131,6 +132,7 @@ export const deleteResumeApi = (id: number) => {
 export const getResumeVersionsApi = (id: number): Promise<ResumeVersion[]> => request({ url: `/resumes/${id}/versions/`, method: 'get' });
 export const restoreResumeVersionApi = (resumeId: number, versionId: number): Promise<ResumeVersion> => request({ url: `/resumes/${resumeId}/versions/${versionId}/restore/`, method: 'post' });
 export const getResumeImportsApi = async (): Promise<ResumeImportJob[]> => { const response: any = await request({ url: '/resume-imports/', method: 'get' }); return Array.isArray(response) ? response : (response.results || []); };
+export const getResumeImportApi = (jobId: number): Promise<ResumeImportJob> => request({ url: `/resume-imports/${jobId}/`, method: 'get' });
 export const confirmResumeImportApi = (jobId: number, resume_json?: Record<string, any>): Promise<ResumeVersion> => request({ url: `/resume-imports/${jobId}/confirm/`, method: 'post', data: resume_json ? { resume_json } : {} });
 export const retryResumeImportApi = (jobId: number): Promise<ResumeImportJob> => request({ url: `/resume-imports/${jobId}/retry/`, method: 'post' });
 export const getResumeFitScoreApi = (resumeId: number, jd_text: string) => request({ url: `/resumes/${resumeId}/fit-score/`, method: 'post', data: { jd_text } });

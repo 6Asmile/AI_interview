@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
@@ -253,6 +254,7 @@ class DocumentParsingService:
         blocks = []
         heading_path: list[str] = []
         buffer: list[str] = []
+        table_buffer: list[str] = []
 
         def flush_buffer():
             if buffer:
@@ -263,12 +265,39 @@ class DocumentParsingService:
                 ))
                 buffer.clear()
 
+        def is_table_separator(line: str) -> bool:
+            cells = [cell.strip() for cell in line.strip('|').split('|')]
+            return bool(cells) and all(re.fullmatch(r':?-{3,}:?', cell or '') for cell in cells)
+
+        def flush_table():
+            if not table_buffer:
+                return
+            rows = [line for line in table_buffer if line and not is_table_separator(line)]
+            if rows:
+                header = rows[0]
+                column_count = max(1, len(header.strip('|').split('|')))
+                separator = '| ' + ' | '.join(['---'] * column_count) + ' |'
+                text = '\n'.join([header, separator, *rows[1:]])
+                blocks.append(ParsedKnowledgeBlock(
+                    block_type='table',
+                    text=text,
+                    heading_path=list(heading_path),
+                    metadata={
+                        'format': 'markdown_table',
+                        'row_count': len(rows),
+                        'column_count': column_count,
+                    },
+                ))
+            table_buffer.clear()
+
         for line in (markdown or '').splitlines():
             stripped = line.strip()
             if not stripped:
+                flush_table()
                 flush_buffer()
                 continue
             if stripped.startswith('#'):
+                flush_table()
                 flush_buffer()
                 level = len(stripped) - len(stripped.lstrip('#'))
                 heading = stripped[level:].strip()
@@ -277,9 +306,11 @@ class DocumentParsingService:
                 blocks.append(ParsedKnowledgeBlock('heading', heading, list(heading_path)))
             elif stripped.startswith('|') and stripped.endswith('|'):
                 flush_buffer()
-                blocks.append(ParsedKnowledgeBlock('table', stripped, list(heading_path)))
+                table_buffer.append(stripped)
             else:
+                flush_table()
                 buffer.append(stripped)
+        flush_table()
         flush_buffer()
         return blocks
 

@@ -16,6 +16,9 @@ __pycache__/
 /说明.txt
 logs/
 *.log
+.ifaceoff-dev-pids.json
+ai-interview-frontend/test-results/
+ai-interview-frontend/playwright-report/
 
 # Node.js / Vue
 /node_modules/

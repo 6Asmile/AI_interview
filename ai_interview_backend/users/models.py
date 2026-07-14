@@ -42,6 +42,8 @@ class User(AbstractUser):
         default='private',
         verbose_name='资料可见性',
     )
+    onboarding_step = models.CharField(max_length=40, blank=True, default='', verbose_name='新手引导步骤')
+    onboarding_completed_at = models.DateTimeField(null=True, blank=True, verbose_name='新手引导完成时间')
 
     # # 关联企业，这里我们先用字符串定义，避免循环导入问题
     # # 等到创建了 Company 模型后再正式关联

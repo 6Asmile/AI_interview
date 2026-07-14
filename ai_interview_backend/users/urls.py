@@ -13,6 +13,7 @@ from .views_auth import (
     PrivacyRequestView,
     MFAStatusView,
     MFASetupView,
+    OnboardingCompleteView,
     MFAVerifyView,
     MFADisableView,
 )
@@ -24,6 +25,7 @@ urlpatterns = [
     path('send-code/', SendCodeView.as_view(), name='send-code'),
     path('upload-avatar/', AvatarUploadView.as_view(), name='upload-avatar'),
     path('profile/', UserProfileView.as_view(), name='user-profile'),
+    path('onboarding/complete/', OnboardingCompleteView.as_view(), name='onboarding-complete'),
     path('password/change/', PasswordChangeView.as_view(), name='password-change'),
     path('notification-preferences/', NotificationPreferenceView.as_view(), name='notification-preferences'),
     path('sessions/', AuthSessionListView.as_view(), name='auth-sessions'),

@@ -60,6 +60,14 @@ class KnowledgeDocument(models.Model):
     parser_fallback_reason = models.TextField(blank=True, verbose_name='解析降级原因')
     parsed_content = models.JSONField(default=dict, blank=True, verbose_name='结构化解析结果')
     ocr_enabled = models.BooleanField(default=False, verbose_name='是否启用OCR')
+    draft_revision = models.ForeignKey(
+        'KnowledgeDocumentRevision', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', verbose_name='当前编辑版本'
+    )
+    published_revision = models.ForeignKey(
+        'KnowledgeDocumentRevision', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', verbose_name='当前发布版本'
+    )
     visibility = models.CharField(
         max_length=20,
         choices=Visibility.choices,
@@ -123,6 +131,75 @@ class KnowledgeDocument(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class KnowledgeDocumentRevision(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', '编辑中'
+        PENDING_REVIEW = 'pending_review', '待审核'
+        APPROVED = 'approved', '已批准'
+        PUBLISHED = 'published', '已发布'
+        REJECTED = 'rejected', '已拒绝'
+        SUPERSEDED = 'superseded', '已替换'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE, related_name='revisions')
+    version_number = models.PositiveIntegerField()
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    source_content = models.TextField(blank=True)
+    parsed_content = models.JSONField(default=dict, blank=True)
+    parser_snapshot = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='knowledge_revisions'
+    )
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='approved_knowledge_revisions'
+    )
+    rejection_reason = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-version_number']
+        constraints = [
+            models.UniqueConstraint(fields=['document', 'version_number'], name='uniq_knowledge_document_revision'),
+        ]
+
+    def __str__(self):
+        return f'{self.document.title} v{self.version_number}'
+
+
+class KnowledgeChunkDraft(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    revision = models.ForeignKey(KnowledgeDocumentRevision, on_delete=models.CASCADE, related_name='chunk_drafts')
+    parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
+    order = models.PositiveIntegerField()
+    block_type = models.CharField(max_length=40, default='paragraph', db_index=True)
+    heading_path = models.JSONField(default=list, blank=True)
+    page_start = models.PositiveIntegerField(null=True, blank=True)
+    page_end = models.PositiveIntegerField(null=True, blank=True)
+    content = models.TextField()
+    table_data = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    token_count = models.PositiveIntegerField(default=0)
+    content_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    is_excluded = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['revision', 'order'], name='uniq_knowledge_revision_chunk_order'),
+        ]
+
+    def __str__(self):
+        return f'{self.revision} #{self.order}'
 
 
 class KnowledgeImportBatch(models.Model):
@@ -202,6 +279,10 @@ class KnowledgeChunk(models.Model):
         related_name='chunks',
         verbose_name='所属文档'
     )
+    revision = models.ForeignKey(
+        KnowledgeDocumentRevision, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='published_chunks', verbose_name='发布版本'
+    )
     parent_chunk = models.ForeignKey(
         'self',
         on_delete=models.CASCADE,
@@ -230,7 +311,9 @@ class KnowledgeChunk(models.Model):
         verbose_name = '知识库分片'
         verbose_name_plural = verbose_name
         ordering = ['document', 'chunk_index']
-        unique_together = ('document', 'chunk_index')
+        constraints = [
+            models.UniqueConstraint(fields=['revision', 'chunk_index'], name='uniq_knowledge_revision_chunk_index'),
+        ]
 
     def __str__(self):
         return f'{self.document.title} #{self.chunk_index}'

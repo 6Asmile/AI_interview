@@ -222,7 +222,15 @@ export const getAIReferenceAnswerApi = (questionId: number): Promise<AIReference
 // --- 非流式 API ---
 export const getInterviewSessionApi = (sessionId: string): Promise<InterviewSessionItem> => { return request({ url: `/interviews/${sessionId}/`, method: 'get' }); };
 export const checkUnfinishedInterviewApi = (): Promise<UnfinishedCheckResponse> => { return request({ url: '/interviews/check-unfinished/', method: 'get' }); };
-export const abandonUnfinishedInterviewApi = (): Promise<{ message: string }> => { return request({ url: '/interviews/abandon-unfinished/', method: 'post' }); };
+export const abandonInterviewApi = (sessionId: string): Promise<{ message: string; session_id: string }> => request({
+  url: `/interviews/${sessionId}/abandon/`,
+  method: 'post',
+});
+export const abandonUnfinishedInterviewApi = (sessionId?: string): Promise<{ message: string; session_id?: string }> => request({
+  url: '/interviews/abandon-unfinished/',
+  method: 'post',
+  data: sessionId ? { session_id: sessionId } : {},
+});
 export const startInterviewApi = (data: StartInterviewData, force: boolean = false): Promise<InterviewSessionItem> => {
   return request({ url: `/interviews/start/?force=${force}`, method: 'post', data });
 };

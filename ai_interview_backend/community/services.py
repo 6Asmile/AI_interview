@@ -1,10 +1,52 @@
 import base64
+import base64
 import hashlib
 import hmac
 from urllib.parse import parse_qs, urlencode
 
 import requests
 from django.conf import settings
+from django.db.models import Q
+
+
+def database_public_content(query: str = '', limit: int = 20) -> list[dict]:
+    from blog.models import Post
+    from knowledge.models import KnowledgeDocument
+    from .models import CommunityTopicLink
+
+    query = (query or '').strip()
+    posts = Post.objects.filter(status=Post.PostStatus.PUBLISHED)
+    documents = KnowledgeDocument.objects.filter(
+        visibility=KnowledgeDocument.Visibility.PUBLIC,
+        approval_status=KnowledgeDocument.ApprovalStatus.APPROVED,
+        status=KnowledgeDocument.Status.INDEXED,
+    )
+    if query:
+        posts = posts.filter(Q(title__icontains=query) | Q(excerpt__icontains=query) | Q(content__icontains=query))
+        documents = documents.filter(Q(title__icontains=query) | Q(content__icontains=query))
+    results = [{
+        'index': 'public_blog', 'id': item.id, 'title': item.title,
+        'excerpt': item.excerpt or item.content[:220], 'url': f'/dashboard/blog/{item.id}',
+        'published_at': item.published_at or item.created_at,
+    } for item in posts.order_by('-is_featured', '-published_at', '-created_at')[:limit]]
+    results.extend({
+        'index': 'public_knowledge', 'id': str(item.id), 'title': item.title,
+        'excerpt': item.content[:220], 'url': '', 'published_at': item.approved_at or item.updated_at,
+    } for item in documents.order_by('-approved_at', '-updated_at')[:limit])
+    topics = CommunityTopicLink.objects.exclude(topic_url='')
+    if query:
+        topics = topics.filter(metadata__icontains=query)
+    results.extend({
+        'index': 'community_topics', 'id': item.discourse_topic_id,
+        'title': (item.metadata or {}).get('title') or item.topic_slug,
+        'excerpt': (item.metadata or {}).get('excerpt') or '', 'url': item.topic_url,
+        'published_at': item.last_posted_at or item.updated_at,
+    } for item in topics.order_by('-last_posted_at', '-updated_at')[:limit])
+    results.sort(key=lambda item: item.get('published_at') or '', reverse=True)
+    for item in results:
+        value = item.get('published_at')
+        item['published_at'] = value.isoformat() if hasattr(value, 'isoformat') else value
+    return results[:limit]
 
 
 class CommunityIntegrationError(RuntimeError):
@@ -49,7 +91,7 @@ def build_discourse_sso_response(user, encoded_payload: str, signature: str) -> 
 def search_public_content(query: str, limit: int = 20) -> dict:
     url = str(getattr(settings, 'MEILISEARCH_URL', '') or '').rstrip('/')
     if not url:
-        return {'results': [], 'degraded': True, 'reason': 'meilisearch_not_configured'}
+        return {'results': database_public_content(query, limit), 'degraded': True, 'reason': 'meilisearch_not_configured'}
     headers = {'Content-Type': 'application/json'}
     api_key = str(getattr(settings, 'MEILISEARCH_API_KEY', '') or '')
     if api_key:
@@ -74,5 +116,8 @@ def search_public_content(query: str, limit: int = 20) -> dict:
                 results.append({'index': index_uid, **hit})
         return {'results': results[:limit], 'degraded': False, 'reason': ''}
     except Exception as exc:
-        return {'results': [], 'degraded': True, 'reason': f'meilsearch_unavailable:{type(exc).__name__}'}
-
+        return {
+            'results': database_public_content(query, limit),
+            'degraded': True,
+            'reason': f'meilisearch_unavailable:{type(exc).__name__}',
+        }

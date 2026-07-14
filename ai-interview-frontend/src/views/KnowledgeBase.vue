@@ -28,20 +28,26 @@ import {
   createKnowledgeDocumentApi,
   debugKnowledgeSearchApi,
   deleteKnowledgeDocumentApi,
+  deleteKnowledgeChunkDraftApi,
+  getKnowledgeChunkDraftsApi,
   getKnowledgeDocumentsApi,
   getKnowledgeImportBatchesApi,
   importKnowledgeBatchApi,
+  mergeKnowledgeChunkDraftsApi,
   previewKnowledgeChunksApi,
   previewStructuredKnowledgeChunksApi,
   reindexKnowledgeDocumentApi,
   reparseKnowledgeDocumentApi,
+  splitKnowledgeChunkDraftApi,
   approveKnowledgeDocumentApi,
   rejectKnowledgeDocumentApi,
   submitKnowledgeDocumentReviewApi,
   updateKnowledgeDocumentApi,
+  updateKnowledgeChunkDraftApi,
   type KnowledgeApprovalStatus,
   type KnowledgeChunkPreviewItem,
   type KnowledgeChunkPreviewParent,
+  type KnowledgeChunkDraft,
   type KnowledgeDifficulty,
   type KnowledgeDocument,
   type KnowledgeDocumentPayload,
@@ -60,6 +66,7 @@ const pageSize = ref(10);
 const formRef = ref<FormInstance>();
 const dialogVisible = ref(false);
 const previewVisible = ref(false);
+const chunkEditorVisible = ref(false);
 const importVisible = ref(false);
 const debugVisible = ref(false);
 const rejectVisible = ref(false);
@@ -79,6 +86,10 @@ const uploadFiles = ref<any[]>([]);
 const editingDocument = ref<KnowledgeDocument | null>(null);
 const rejectingDocument = ref<KnowledgeDocument | null>(null);
 const rejectReason = ref('');
+const chunkEditorDocument = ref<KnowledgeDocument | null>(null);
+const chunkDrafts = ref<KnowledgeChunkDraft[]>([]);
+const selectedChunkIds = ref<string[]>([]);
+const savingChunkId = ref('');
 
 const filters = reactive({
   search: '',
@@ -307,6 +318,55 @@ const previewCurrentContent = async () => {
   } finally {
     previewLoading.value = false;
   }
+};
+
+const openChunkEditor = async (document: KnowledgeDocument) => {
+  chunkEditorDocument.value = document;
+  selectedChunkIds.value = [];
+  chunkEditorVisible.value = true;
+  chunkDrafts.value = await getKnowledgeChunkDraftsApi(document.id);
+};
+
+const saveChunkDraft = async (chunk: KnowledgeChunkDraft) => {
+  if (!chunkEditorDocument.value) return;
+  savingChunkId.value = chunk.id;
+  try {
+    const updated = await updateKnowledgeChunkDraftApi(chunkEditorDocument.value.id, chunk.id, {
+      content: chunk.content,
+      block_type: chunk.block_type,
+      heading_path: chunk.heading_path,
+      is_excluded: chunk.is_excluded,
+      table_data: chunk.table_data,
+      metadata: chunk.metadata,
+    });
+    Object.assign(chunk, updated);
+    ElMessage.success('知识块已保存');
+  } finally { savingChunkId.value = ''; }
+};
+
+const deleteChunkDraft = async (chunk: KnowledgeChunkDraft) => {
+  if (!chunkEditorDocument.value) return;
+  await ElMessageBox.confirm('删除后该知识块不会进入后续审批与检索，是否继续？', '删除知识块', { type: 'warning' });
+  await deleteKnowledgeChunkDraftApi(chunkEditorDocument.value.id, chunk.id);
+  chunkDrafts.value = await getKnowledgeChunkDraftsApi(chunkEditorDocument.value.id);
+};
+
+const mergeSelectedChunks = async () => {
+  if (!chunkEditorDocument.value || selectedChunkIds.value.length < 2) return ElMessage.warning('请选择至少两个相邻知识块');
+  const orderedIds = chunkDrafts.value.filter(item => selectedChunkIds.value.includes(item.id)).map(item => item.id);
+  await mergeKnowledgeChunkDraftsApi(chunkEditorDocument.value.id, orderedIds);
+  chunkDrafts.value = await getKnowledgeChunkDraftsApi(chunkEditorDocument.value.id);
+  selectedChunkIds.value = [];
+};
+
+const splitChunk = async (chunk: KnowledgeChunkDraft) => {
+  if (!chunkEditorDocument.value) return;
+  const result = await ElMessageBox.prompt(`输入拆分位置，范围 1-${Math.max(1, chunk.content.length - 1)}`, '拆分知识块', {
+    inputPattern: /^\d+$/,
+    inputErrorMessage: '请输入有效字符位置',
+  });
+  await splitKnowledgeChunkDraftApi(chunkEditorDocument.value.id, chunk.id, Number(result.value));
+  chunkDrafts.value = await getKnowledgeChunkDraftsApi(chunkEditorDocument.value.id);
 };
 
 const applyFilters = () => {
@@ -549,6 +609,7 @@ onMounted(async () => {
         <el-table-column label="操作" width="380" fixed="right">
           <template #default="{ row }">
             <el-button :icon="View" size="small" @click="openEdit(row)">查看</el-button>
+            <el-button v-if="row.can_edit && row.draft_revision" size="small" @click="openChunkEditor(row)">编辑块</el-button>
             <el-button
               v-if="row.can_submit_review"
               size="small"
@@ -686,6 +747,38 @@ onMounted(async () => {
           </div>
         </div>
         <div v-if="!previewParents.length" class="empty-preview">没有可预览的切块。</div>
+      </div>
+    </el-drawer>
+
+    <el-drawer v-model="chunkEditorVisible" title="解析后知识块编辑" size="760px">
+      <div class="chunk-editor-toolbar">
+        <div>
+          <strong>{{ chunkEditorDocument?.title }}</strong>
+          <p>修改仅作用于待审批版本，不会直接改变线上检索内容。</p>
+        </div>
+        <el-button :disabled="selectedChunkIds.length < 2" @click="mergeSelectedChunks">合并所选</el-button>
+      </div>
+      <div class="chunk-editor-list">
+        <article v-for="chunk in chunkDrafts" :key="chunk.id" class="chunk-editor-item">
+          <header>
+            <el-checkbox v-model="selectedChunkIds" :value="chunk.id">#{{ chunk.order + 1 }}</el-checkbox>
+            <el-select v-model="chunk.block_type" size="small" style="width: 120px">
+              <el-option v-for="(label, value) in blockTypeLabel" :key="value" :label="label" :value="value" />
+            </el-select>
+            <el-switch v-model="chunk.is_excluded" active-text="排除" />
+            <span>{{ chunk.token_count }} tokens</span>
+          </header>
+          <el-input v-model="chunk.content" type="textarea" :rows="chunk.block_type === 'table' ? 8 : 5" />
+          <footer>
+            <span v-if="chunk.heading_path?.length">{{ chunk.heading_path.join(' / ') }}</span>
+            <div>
+              <el-button size="small" @click="splitChunk(chunk)">拆分</el-button>
+              <el-button size="small" type="danger" @click="deleteChunkDraft(chunk)">删除</el-button>
+              <el-button size="small" type="primary" :loading="savingChunkId === chunk.id" @click="saveChunkDraft(chunk)">保存</el-button>
+            </div>
+          </footer>
+        </article>
+        <el-empty v-if="!chunkDrafts.length" description="当前编辑版本没有知识块" />
       </div>
     </el-drawer>
 
@@ -1081,6 +1174,23 @@ onMounted(async () => {
   color: #909399;
   text-align: center;
 }
+
+.chunk-editor-toolbar,
+.chunk-editor-item header,
+.chunk-editor-item footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-editor-toolbar { padding-bottom: 16px; border-bottom: 1px solid #e4e7ed; }
+.chunk-editor-toolbar p { margin: 6px 0 0; color: #667085; }
+.chunk-editor-list { display: grid; gap: 12px; padding: 16px 0; }
+.chunk-editor-item { padding: 14px; border: 1px solid #dfe5ec; background: #fff; }
+.chunk-editor-item header { justify-content: flex-start; margin-bottom: 10px; color: #667085; }
+.chunk-editor-item header span:last-child { margin-left: auto; }
+.chunk-editor-item footer { margin-top: 10px; color: #667085; font-size: 12px; }
 
 .import-history {
   margin-top: 16px;

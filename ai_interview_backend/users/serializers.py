@@ -27,9 +27,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'phone', 'avatar', 'role', 'date_joined',
             'has_password', 'socialaccount_set', 'headline', 'location', 'years_experience',
             'target_roles', 'skills_profile', 'availability', 'profile_visibility',
+            'onboarding_step', 'onboarding_completed_at',
             'mfa_enabled', 'mfa_required',
         )
-        read_only_fields = ('email', 'role', 'date_joined', 'mfa_enabled', 'mfa_required')
+        read_only_fields = ('email', 'role', 'date_joined', 'onboarding_completed_at', 'mfa_enabled', 'mfa_required')
 
     def get_has_password(self, obj):
         return obj.has_usable_password()

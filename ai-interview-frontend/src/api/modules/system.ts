@@ -1,4 +1,12 @@
 import request from '@/api/request';
+
+export interface SystemReadiness {
+  ok: boolean;
+  async_jobs_available: boolean;
+  components: Record<string, { ok: boolean; critical: boolean; reason?: string; latency_ms?: number }>;
+}
+
+export const getSystemReadinessApi = (): Promise<SystemReadiness> => request({ url: '/system/readiness/', method: 'get' });
 // 【核心修改】导入通用分页类型
 import type { PaginatedResponse } from '@/types/api';
 

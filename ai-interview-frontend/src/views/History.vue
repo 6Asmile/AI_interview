@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, ElTable, ElTableColumn, ElTag, ElButton, ElTabs, ElTabPane, ElPagination, ElDialog, ElProgress } from 'element-plus';
 import { getInterviewHistoryApi, getAnalysisHistoryApi } from '@/api/modules/report';
-import { abandonUnfinishedInterviewApi, getRecordingStatusApi, type InterviewSessionItem, type RecordingStatusResponse } from '@/api/modules/interview';
+import { abandonInterviewApi, getRecordingStatusApi, type InterviewSessionItem, type RecordingStatusResponse } from '@/api/modules/interview';
 import type { ResumeAnalysisReportItem } from '@/api/modules/report';
 import { formatDateTime } from '@/utils/format';
 
@@ -128,10 +128,10 @@ const handleAnalysisPageChange = (page: number) => {
   fetchAnalysisHistory();
 };
 
-const handleAbandon = async (_sessionId: string) => {
+const handleAbandon = async (sessionId: string) => {
   try {
     await ElMessageBox.confirm('确定要放弃这次进行中的面试吗？', '确认', { type: 'warning' });
-    await abandonUnfinishedInterviewApi();
+    await abandonInterviewApi(sessionId);
     ElMessage.success('面试已放弃');
     fetchInterviewHistory();
   } catch (error) {

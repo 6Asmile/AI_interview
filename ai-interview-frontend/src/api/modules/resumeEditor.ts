@@ -83,3 +83,13 @@ export const generateResumeApi = (name: string, position: string, experience_yea
     data: { name, position, experience_years, keywords }
   });
 };
+
+export const analyzeResumeVersionApi = (data: {
+  resume_version_id: number;
+  job_target_id?: number;
+  jd_text?: string;
+}): Promise<ResumeAnalysisReportItem> => request({
+  url: '/analyze-resume/',
+  method: 'post',
+  data,
+});

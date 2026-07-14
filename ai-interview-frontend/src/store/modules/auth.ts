@@ -26,7 +26,7 @@ export const useAuthStore = defineStore('auth', {
       try {
         const userProfile = await getUserProfileApi();
         this.user = userProfile;
-        await router.push('/dashboard');
+        await router.push(userProfile.onboarding_completed_at ? '/dashboard' : '/onboarding');
       } catch (fetchUserError) {
         console.error("登录成功但获取用户信息失败", fetchUserError);
         this.clearAuth();

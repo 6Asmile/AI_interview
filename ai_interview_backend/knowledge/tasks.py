@@ -1,9 +1,44 @@
+from datetime import timedelta
+
 from celery import shared_task
 from django.conf import settings
+from django.utils import timezone
 
 from .importers import parse_knowledge_file
 from .models import KnowledgeDocument, KnowledgeImportBatch, KnowledgeImportFile
-from .services import index_document
+from .services import create_document_revision, index_document
+
+
+@shared_task
+def mark_stale_knowledge_jobs(timeout_minutes=45):
+    threshold = timezone.now() - timedelta(minutes=max(5, int(timeout_minutes)))
+    documents = KnowledgeDocument.objects.filter(
+        parse_status__in=[KnowledgeDocument.ParseStatus.PENDING, KnowledgeDocument.ParseStatus.PARSING],
+        updated_at__lt=threshold,
+    )
+    parse_count = documents.update(
+        parse_status=KnowledgeDocument.ParseStatus.FAILED,
+        parser_fallback_reason='解析任务超时，请确认 Celery Worker 后重新解析。',
+    )
+    indexing = KnowledgeDocument.objects.filter(
+        status=KnowledgeDocument.Status.INDEXING,
+        updated_at__lt=threshold,
+    )
+    index_count = indexing.update(
+        status=KnowledgeDocument.Status.FAILED,
+        error_message='索引任务超时，请确认 Celery Worker 与向量库后重试。',
+    )
+    import_files = KnowledgeImportFile.objects.filter(
+        status__in=[KnowledgeImportFile.Status.PENDING, KnowledgeImportFile.Status.PROCESSING],
+        updated_at__lt=threshold,
+    )
+    import_count = import_files.update(
+        status=KnowledgeImportFile.Status.FAILED,
+        error_message='导入任务超时，请确认 Celery Worker 后重试。',
+    )
+    for batch in KnowledgeImportBatch.objects.filter(import_files__status=KnowledgeImportFile.Status.FAILED).distinct():
+        refresh_import_batch_stats(batch)
+    return {'parse_failed': parse_count, 'index_failed': index_count, 'import_failed': import_count}
 
 
 def refresh_import_batch_stats(batch: KnowledgeImportBatch):
@@ -66,6 +101,7 @@ def process_import_file(import_file_id: str):
         import_file.document = document
         import_file.status = KnowledgeImportFile.Status.IMPORTED
         import_file.save(update_fields=['document', 'status', 'updated_at'])
+        create_document_revision(document, batch.uploaded_by)
         return document
     except Exception as exc:
         import_file.status = KnowledgeImportFile.Status.FAILED
@@ -82,7 +118,10 @@ def process_import_file(import_file_id: str):
 
 @shared_task
 def process_knowledge_import_file(import_file_id: str):
-    document = process_import_file(import_file_id)
+    try:
+        document = process_import_file(import_file_id)
+    except KnowledgeImportFile.DoesNotExist:
+        return {'import_file_id': import_file_id, 'skipped': True, 'reason': 'record_deleted'}
     return {'import_file_id': import_file_id, 'document_id': str(document.id)}
 
 
@@ -110,15 +149,16 @@ def reparse_knowledge_document(document_id: str):
         document.parser_fallback_reason = parsed.parser_fallback_reason
         document.parsed_content = parsed.parsed_content
         document.ocr_enabled = parsed.ocr_enabled
-        document.status = KnowledgeDocument.Status.DRAFT
-        document.approval_status = KnowledgeDocument.ApprovalStatus.DRAFT
-        document.chunk_count = 0
-        document.chunks.all().delete()
+        if not document.published_revision_id:
+            document.status = KnowledgeDocument.Status.DRAFT
+            document.approval_status = KnowledgeDocument.ApprovalStatus.DRAFT
+            document.chunk_count = 0
         document.save(update_fields=[
             'content', 'source_type', 'file_type', 'parse_status', 'parser_name',
             'parser_version', 'parser_fallback_reason', 'parsed_content', 'ocr_enabled',
             'status', 'approval_status', 'chunk_count', 'updated_at',
         ])
+        create_document_revision(document, document.created_by)
     except Exception as exc:
         document.parse_status = KnowledgeDocument.ParseStatus.FAILED
         document.parser_fallback_reason = str(exc)[:2000]
@@ -133,9 +173,10 @@ def reparse_knowledge_document(document_id: str):
 
 
 @shared_task
-def reindex_knowledge_document(document_id: str):
+def reindex_knowledge_document(document_id: str, revision_id: str | None = None):
     document = KnowledgeDocument.objects.get(id=document_id)
-    index_document(document)
+    revision = document.revisions.get(id=revision_id) if revision_id else None
+    index_document(document, revision=revision)
     return {
         'document_id': str(document.id),
         'status': document.status,

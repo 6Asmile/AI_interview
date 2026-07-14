@@ -10,7 +10,7 @@
     </section>
     <el-alert v-if="searchResult.degraded" :title="`公开搜索暂时降级：${searchResult.reason}`" type="warning" show-icon :closable="false" />
     <section class="results-section" v-loading="loading">
-      <el-empty v-if="searched && !searchResult.results.length" description="没有找到公开内容" />
+      <el-empty v-if="!loading && !searchResult.results.length" description="暂时没有公开内容" />
       <article v-for="item in searchResult.results" :key="`${item.index}-${item.id || item.url}`" class="result-row">
         <el-tag size="small" type="info">{{ sourceName(item.index) }}</el-tag>
         <div><h2>{{ item.title || item.name || '未命名内容' }}</h2><p>{{ item.summary || item.excerpt || item.content || '' }}</p></div>
@@ -24,12 +24,19 @@
 import { onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Link, Search } from '@element-plus/icons-vue';
-import { getCommunityStatusApi, searchCommunityApi, type CommunityStatus } from '@/api/modules/community';
+import { getCommunityFeedApi, getCommunityStatusApi, searchCommunityApi, type CommunityStatus } from '@/api/modules/community';
 const router = useRouter(); const query = ref(''); const loading = ref(false); const searched = ref(false); const statusInfo = reactive<CommunityStatus>({ configured: false, community_url: '', identity: null }); const searchResult = reactive<any>({ results: [], degraded: false, reason: '' });
-onMounted(async () => Object.assign(statusInfo, await getCommunityStatusApi()));
+onMounted(async () => {
+  loading.value = true;
+  try {
+    const [status, feed]: any[] = await Promise.all([getCommunityStatusApi(), getCommunityFeedApi()]);
+    Object.assign(statusInfo, status);
+    Object.assign(searchResult, { results: feed.results || [], degraded: false, reason: '' });
+  } finally { loading.value = false; }
+});
 async function search() { if (!query.value.trim()) return; loading.value = true; searched.value = true; try { Object.assign(searchResult, await searchCommunityApi(query.value.trim())); } finally { loading.value = false; } }
 function openCommunity() { window.open(statusInfo.community_url, '_blank', 'noopener'); }
-function openUrl(url: string) { window.open(url, '_blank', 'noopener'); }
+function openUrl(url: string) { if (url.startsWith('/')) router.push(url); else window.open(url, '_blank', 'noopener'); }
 function sourceName(index: string) { return ({ public_blog: '精选文章', public_knowledge: '公共知识', community_topics: '社区主题' } as Record<string,string>)[index] || index; }
 </script>
 

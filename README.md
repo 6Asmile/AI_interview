@@ -1,147 +1,223 @@
 # iFaceoff
 
-以可信职业事实和简历版本为核心的 AI 求职平台：从职业事实库、主简历、JD 定制、模拟面试，到投递跟踪、证据化评估和学习计划，形成可追溯的求职闭环。
+> 以可信职业事实为起点，连接简历、岗位、模拟面试、评估报告和求职进度的 AI 求职平台。
 
 [![Vue 3](https://img.shields.io/badge/Vue-3.4-42b883)](https://vuejs.org/)
 [![Django](https://img.shields.io/badge/Django-5.2-092e20)](https://www.djangoproject.com/)
-[![Agent](https://img.shields.io/badge/Agent-Composite_V3-111827)](https://github.com/langchain-ai/langgraph)
-[![Vector](https://img.shields.io/badge/Vector-Qdrant-dc244c)](https://qdrant.tech/)
-[![Gateway](https://img.shields.io/badge/Gateway-LiteLLM-16a34a)](https://docs.litellm.ai/)
+[![LangGraph](https://img.shields.io/badge/Agent-Composite_V3-111827)](https://github.com/langchain-ai/langgraph)
+[![Qdrant](https://img.shields.io/badge/Vector-Qdrant-dc244c)](https://qdrant.tech/)
+[![LiteLLM](https://img.shields.io/badge/Gateway-LiteLLM-16a34a)](https://docs.litellm.ai/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](LICENSE)
 
-![iFaceoff AI 模拟面试](docs/images/interview-room.png)
+![iFaceoff current landing page](docs/images/landing-latest.png)
+
+iFaceoff 不是单独的“AI 出题器”。系统围绕可验证的职业事实建立完整链路：简历内容必须来自用户确认的数据，面试问题可以引用经过审批的知识库证据，评分必须引用候选人的真实回答，模型不可用时明确降级而不是伪造结果。
 
 ## 产品闭环
 
-```text
-职业事实库
-  -> 主简历与不可变版本
-  -> JD 定制与 iFaceoff Fit 分析
-  -> 自适应 AI 模拟面试
-  -> 能力证据与风险报告
-  -> 投递管道与学习任务
-  -> 新事实人工确认后回流
+```mermaid
+flowchart LR
+    FACT["职业事实库"] --> RESUME["主简历与版本"]
+    RESUME --> JOB["目标岗位与真实 JD"]
+    JOB --> MATCH["简历诊断与定制"]
+    MATCH --> INTERVIEW["自适应模拟面试"]
+    INTERVIEW --> REPORT["证据化评估报告"]
+    REPORT --> PLAN["投递进度与补强任务"]
+    PLAN --> FACT
 ```
 
-iFaceoff 不把模型生成内容当作事实。简历经历、候选人证据、知识库来源、面试评分和报告结论都必须能追溯到真实输入；模型不可用或输出不合法时，系统明确降级，不伪造成功结果。
+- **事实优先**：AI 只能使用已确认的教育、工作、项目、技能、成果和真实 JD。
+- **版本可复现**：面试和分析绑定不可变简历版本、JD 快照、模板版本和模型配置。
+- **证据可审计**：题目、检索来源、评分、能力覆盖和报告结论均保存来源链路。
+- **失败不伪装**：缺少模型、向量库、Rerank 或语音服务时进入可解释降级。
 
-## 核心模块
+## 当前界面
 
-| 模块 | 当前能力 |
+<table>
+  <tr>
+    <td width="50%"><strong>求职工作台</strong><br><img src="docs/images/career-workspace-latest.png" alt="求职工作台"></td>
+    <td width="50%"><strong>自适应面试入口</strong><br><img src="docs/images/interview-setup-latest.png" alt="模拟面试入口"></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>解析后知识块编辑</strong><br><img src="docs/images/knowledge-chunks-latest.png" alt="知识块编辑器"></td>
+    <td width="50%"><strong>真实简历与 JD 诊断</strong><br><img src="docs/images/resume-diagnosis-latest.png" alt="简历诊断"></td>
+  </tr>
+</table>
+
+![技术社区真实内容 Feed](docs/images/community-feed-latest.png)
+
+以上截图由 Playwright 在当前版本、真实本地服务和现有业务数据上重新生成，不使用前端 Mock 数据。
+
+## 核心能力
+
+| 模块 | 已实现能力 |
 | --- | --- |
-| Resume V2 | JSON Resume 兼容结构、职业事实库、不可变版本、差异建议、异步 Docling/OCR 导入、人工确认、PDF/DOCX/JSON 导出基础 |
-| 求职工作台 | 岗位目标、JD、投递阶段、面试安排、Offer、学习任务与个人求职看板 |
-| Composite Agent V3 | 外部单一面试官，内部 Evidence、Strategy、Retrieval、Memory、Question、Safety、Report 等 SubAgent 协作 |
-| 自适应面试 | 目标时长和能力覆盖驱动结束；按回答强弱执行澄清、验证、深挖、挑战、迁移或换题；支持主题栈和自然承接 |
-| 企业级评估 | 规则与 AI 双评、量表锚点、真实证据链、能力矩阵、覆盖缺口、可审计 Trace 与离线评估 |
-| 知识库 RAG | 私有/公共隔离、HR/Admin 审批、Docling + OCR、层级递归语义切块、Multi Query、向量 + BM25、RRF、Rerank |
-| 模型网关 | 加密 BYOK/平台凭据、任务别名、部署与路由策略、预算、调用账本、Fallback，并可接 LiteLLM 数据面 |
-| 多模态 | ASR 分段转写、低置信度确认、TTS 缓存和浏览器兜底、音视频记录；多模态状态不直接决定候选人分数 |
-| 个人安全 | JWT 刷新轮换与黑名单、登录审计、活动会话、TOTP/恢复码、通知偏好、数据导出和注销申请 |
-| 社区与通信 | Discourse SSO/Webhook、Meilisearch 公开搜索；私信幂等、送达/已读、回复、编辑、撤回、屏蔽、举报、附件扫描和 Outbox |
+| 简历与职业事实 | JSON Resume 兼容结构、职业事实库、不可变 `ResumeVersion`、异步导入、人工确认、真实 JD 分析、证据来源与历史快照 |
+| 求职工作台 | 目标岗位、JD、投递管道、面试安排、Offer、补强任务；模块独立加载，局部接口失败不会导致整页白屏 |
+| Composite Agent V3 | 外部只有一个综合面试官，内部由 Conversation、Evaluation、Evidence Guard、Strategy、Retrieval、Memory、Question、Safety、Report 等 SubAgent 协作 |
+| 自适应面试 | 目标时长与能力覆盖共同决定结束；依据回答证据执行澄清、验证、深挖、挑战、迁移、换题或收尾；支持主题栈与自然承接 |
+| 企业级评估 | 规则评分与 AI 评分双轨、量表锚点、STAR/技术深度/证据质量、能力矩阵、风险标记、置信度、Trace 和明确降级模式 |
+| 企业知识库 | 用户私有与系统公共隔离、HR/Admin 审批、导入批次、Docling/OCR、修订版本、逐 Chunk 编辑、冻结发布和历史版本保留 |
+| Hybrid RAG | Multi Query、向量召回、中文关键词召回、RRF 融合、Rerank、已用块去重、租户和审批二次校验、检索 Trace |
+| 模型网关 | Chat/Embedding/Rerank/ASR/TTS 模型类型、加密凭据、任务别名、路由策略、预算、调用账本和 LiteLLM 数据面 |
+| 多模态体验 | 音频分片、ASR 转写与置信度确认、TTS 缓存与浏览器兜底、媒体记录；语音和表情不直接决定能力分数 |
+| 社区与搜索 | 本地已发布文章和公共知识 Feed、Meilisearch 全量/增量索引、Discourse SSO/Webhook 扩展入口、私人内容不进入公开索引 |
+| 私信与附件 | WebSocket 会话、文本与图片粘贴、Emoji、IME/组合键处理、附件上传、屏蔽举报以及可靠消息状态基础 |
+| 账号与安全 | Candidate/HR/Admin RBAC、独立 Django Admin 登录、JWT、MFA 能力、活动会话、隐私偏好、租户隔离和敏感字段脱敏 |
 
-## 架构
+## 系统架构
 
 ```mermaid
 flowchart TB
-    WEB["Vue 3 Web"]
-    API["Django REST API"]
-    WS["Django Channels"]
-    AGENT["Composite Agent V3 / LangGraph"]
-    TOOLS["Tool Executor"]
-    RAG["Hybrid RAG"]
-    WORKER["Celery Worker / Beat"]
-    MYSQL[(MySQL)]
-    REDIS[(Redis)]
-    MQ[(RabbitMQ)]
-    QDRANT[(Qdrant)]
-    GATEWAY["LiteLLM Proxy"]
-    PG[(PostgreSQL)]
-    SEARCH[(Meilisearch)]
-    SCAN["ClamAV"]
-    DISCOURSE["Discourse external service"]
+    subgraph UX["交互层"]
+        WEB["Vue 3 Web"]
+        SPEECH["ASR / TTS / Media"]
+    end
+
+    subgraph APP["业务与 Agent 层"]
+        API["Django REST API"]
+        WS["Django Channels"]
+        AGENT["Composite Agent V3 / LangGraph"]
+        TOOLS["Agent Tool Executor"]
+        MEMORY["Session / Event / Evidence Memory"]
+    end
+
+    subgraph DATA["数据与检索层"]
+        MYSQL[(MySQL)]
+        REDIS[(Redis)]
+        MQ[(RabbitMQ)]
+        QDRANT[(Qdrant)]
+        SEARCH[(Meilisearch)]
+    end
+
+    subgraph AI["模型与异步层"]
+        WORKER["Celery Worker / Beat"]
+        GATEWAY["LiteLLM Proxy"]
+        PG[(LiteLLM PostgreSQL)]
+        SCAN["ClamAV"]
+    end
 
     WEB --> API
     WEB <--> WS
+    WEB --> SPEECH
     API --> AGENT
     AGENT --> TOOLS
-    TOOLS --> RAG
+    AGENT <--> MEMORY
     TOOLS --> GATEWAY
-    RAG --> QDRANT
-    RAG --> MYSQL
+    TOOLS --> QDRANT
     API --> MYSQL
     API --> REDIS
     API --> SEARCH
-    API --> DISCOURSE
     API --> SCAN
     WORKER --> MQ
     WORKER --> MYSQL
+    WORKER --> QDRANT
     GATEWAY --> PG
 ```
 
-### 面试 Agent Loop
+### 隐藏式多 SubAgent
+
+候选人端始终只看到一个面试官。内部使用职责受限的 SubAgent 和统一状态 DTO，不允许任意节点修改整份状态：
 
 ```text
 Observe
   -> Evaluate Evidence
-  -> Update Topic State
-  -> Estimate Ability Confidence
+  -> Guard Unsupported Claims
+  -> Update Topic and Ability Confidence
   -> Decide Termination
   -> Select Next Action
   -> Retrieve if Needed
+  -> Assemble Budgeted Context
   -> Generate Dialogue Turn
   -> Safety Validate
-  -> Repair / Deterministic Fallback
+  -> Repair or Deterministic Fallback
   -> Persist, Reflect and Update Memory
 ```
 
-面试不再由固定 10 题决定结束。模板锁定评分标准和允许的阶段，Agent 在约束内根据目标时长、必验能力、回答证据、追问深度和候选人反问动态推进。宽松或严格只改变语气、节奏和挑战率，不改变同一回答的评分量表。
+`AgentToolExecutor` 统一处理工具权限、Schema 校验、超时、幂等重试、降级和审计。模型只参与需要语义判断的节点，租户权限、证据校验、重复题、多问题、阶段边界和发布状态由确定性规则兜底。
 
-### RAG 链路
+### 自适应面试策略
 
-1. 上传 Markdown、TXT、PDF、DOCX、XLSX、CSV、图片或 FAQ。
-2. Celery 异步调用 Docling 提取标题、段落、表格、图片、页码和阅读顺序；扫描内容由 OCR adapter 增强。
-3. 按标题/FAQ/表格等结构生成父块，超长块递归切分，邻近短块按语义合并。
-4. 用户提交审核，HR/Admin 审批后才执行 Embedding 和 Qdrant upsert。
-5. 检索按面试策略生成多 Query，并行执行向量和中文关键词召回，经 RRF 融合后 Rerank。
-6. MySQL 二次校验租户、可见性、审批、索引状态和已用 chunk；向量库 payload 不能单独作为权限依据。
-7. 无 Embedding、Rerank 或 Qdrant 时降级为关键词检索；无已审批证据时继续面试但不声称“基于题库”。
+- 默认以 **30 分钟目标时长**、最低时长、能力覆盖和异常轮次上限共同控制进度，不再固定为 10 题。
+- 回答被结构化为 `insufficient / ambiguous / partial / solid / strong / contradictory` 证据状态。
+- 弱回答先澄清，部分回答补齐链路，强回答追问边界或迁移场景；连续无证据后换题，避免死循环。
+- 项目话题可穿插基础知识追问，再通过主题栈返回项目验证真实方案和个人贡献。
+- 宽松、严格、八股、项目深挖等风格只改变语气、节奏和挑战率，不改变评分量表。
+- 真实模拟隐藏过程分数和内部策略，训练模式可展示即时反馈。
+
+### 知识库与 RAG
+
+```mermaid
+flowchart LR
+    UPLOAD["PDF / DOCX / XLSX / MD / FAQ / Image"]
+    PARSE["Docling + OCR + Fallback"]
+    DRAFT["Revision + Editable Chunk Drafts"]
+    REVIEW["Human Review"]
+    PUBLISH["Freeze Published Revision"]
+    INDEX["Embedding + Qdrant"]
+    RETRIEVE["Multi Query + Vector + BM25"]
+    FUSION["RRF + Rerank"]
+    GUARD["MySQL Tenant / Approval / Version Guard"]
+
+    UPLOAD --> PARSE --> DRAFT --> REVIEW --> PUBLISH --> INDEX
+    INDEX --> RETRIEVE --> FUSION --> GUARD
+```
+
+1. 大文件由 Celery 异步解析，任务状态和失败原因可查询、可重试。
+2. Docling 优先保留标题、阅读顺序、页码、表格和图片结构；OCR 只补充真实识别文本。
+3. 标题/FAQ/表格形成父块，超长内容递归切分，短块按相邻结构和语义合并。
+4. 解析结果先进入 `KnowledgeChunkDraft`，支持编辑、拆分、合并、排序和排除。
+5. 审批后冻结不可变发布版本；修改生成新草稿，旧线上版本在新版审批前继续服务。
+6. Qdrant 结果必须经过 MySQL 的租户、可见性、审批状态和发布版本二次校验。
+7. 无向量或 Rerank 服务时可降级关键词检索；没有合法证据时面试继续，但报告不得声称使用题库覆盖。
 
 ## 技术栈
 
-- Frontend: Vue 3、TypeScript、Vite、Element Plus、Pinia、ECharts
-- Backend: Python 3.12、Django 5.2、DRF、Channels、Uvicorn、Celery
-- Agent: LangGraph、结构化 Prompt、节点契约、幂等 Run/NodeRun、上下文预算
-- Data: MySQL、Redis、RabbitMQ、Qdrant、PostgreSQL、Meilisearch
-- AI: OpenAI-compatible、DashScope/百炼、LiteLLM、Embedding、Rerank、ASR、TTS
-- Document: Docling、OCR adapter、PyPDF、python-docx、openpyxl、jieba
-- Security: encrypted credentials、JWT blacklist、TOTP、ClamAV、RBAC、tenant guard
+- **Frontend**：Vue 3、TypeScript、Vite、Element Plus、Pinia、ECharts、Playwright
+- **Backend**：Python 3.12、Django 5.2、DRF、Channels、Celery、Uvicorn
+- **Agent**：LangGraph、结构化 Prompt、节点契约、Trace、Context Budget、Tool Registry
+- **Data**：MySQL、Redis、RabbitMQ、Qdrant、PostgreSQL、Meilisearch
+- **AI**：OpenAI-compatible、DashScope/百炼、LiteLLM、Embedding、Rerank、ASR、TTS
+- **Document**：Docling adapter、OCR adapter、PyPDF、python-docx、openpyxl、jieba
+- **Security**：encrypted credentials、JWT、MFA、RBAC、tenant guard、ClamAV
 
-## 目录
+## 项目结构
 
 ```text
 AI_interview/
-├── ai-interview-frontend/        # Vue 3 应用
+├── ai-interview-frontend/          # Vue 3 应用与 Playwright 测试
 ├── ai_interview_backend/
-│   ├── careers/                  # 职业事实、岗位目标、投递与学习任务
-│   ├── resumes/                  # JSON Resume、版本、导入和建议
-│   ├── interviews/               # Composite Agent、评估、ASR/TTS
-│   ├── knowledge/                # 审批、解析、切块、混合检索
-│   ├── system/                   # 模型配置、加密凭据和 GatewayExecutor
-│   ├── community/                # Discourse 与公开搜索集成
-│   ├── chat/                     # 可靠私信、附件和 Outbox
-│   └── users/                    # 身份、MFA、会话与隐私
-├── docker/litellm/config.yaml
-├── docker-compose.infra.yml      # 仅基础设施，项目名 Ifaceoff-infra
-├── docker-compose.yml            # 完整应用栈
-└── scripts/
+│   ├── careers/                    # 职业事实、岗位、投递和学习任务
+│   ├── resumes/                    # 简历版本、导入、建议和分析
+│   ├── interviews/                 # Composite Agent、评估、语音和 Trace
+│   ├── knowledge/                  # 审批、修订、切块、索引和混合检索
+│   ├── system/                     # AI 设置、模型网关和 readiness
+│   ├── community/                  # 内容 Feed、搜索和 Discourse 集成
+│   ├── chat/                       # 私信、附件和 WebSocket
+│   ├── reports/                    # 证据化报告和分析快照
+│   └── users/                      # 身份、角色、引导和隐私
+├── docker/                         # LiteLLM 等服务配置
+├── docs/                           # 部署说明与当前产品截图
+├── scripts/
+│   ├── ifaceoff-infra.ps1          # 只管理基础设施容器
+│   ├── ifaceoff-dev.ps1            # 管理本地应用进程
+│   └── ifaceoff-docker.ps1         # 完整容器化部署
+├── docker-compose.infra.yml        # MySQL/Redis/MQ/Qdrant 等
+└── docker-compose.yml              # 完整应用栈
 ```
 
-## 本地开发
+## 本地启动
 
-### 1. 一键启动基础设施
+### 环境要求
 
-应用本身在本机运行，MySQL、Redis、RabbitMQ、Qdrant、LiteLLM/PostgreSQL、Meilisearch 和 ClamAV 使用 Docker：
+- Windows PowerShell 7 或兼容终端
+- Python 3.12
+- Node.js 20+
+- Docker Desktop / Docker Compose v2
+
+### 1. 获取代码并启动基础设施
+
+基础设施和应用进程刻意分离。日常开发只将 MySQL、Redis、RabbitMQ、Qdrant、LiteLLM/PostgreSQL、Meilisearch 和 ClamAV 放进 Docker。
 
 ```powershell
 git clone https://github.com/6Asmile/AI_interview.git
@@ -150,7 +226,7 @@ Copy-Item .env.infra.example .env.infra
 .\scripts\ifaceoff-infra.ps1 up
 ```
 
-| 服务 | 本机地址 |
+| 服务 | 默认地址 |
 | --- | --- |
 | MySQL | `127.0.0.1:3307` |
 | Redis | `127.0.0.1:6379` |
@@ -161,14 +237,7 @@ Copy-Item .env.infra.example .env.infra
 | Meilisearch | `http://127.0.0.1:7700` |
 | ClamAV | `127.0.0.1:3310` |
 
-查看状态或停止：
-
-```powershell
-.\scripts\ifaceoff-infra.ps1 status
-.\scripts\ifaceoff-infra.ps1 down
-```
-
-### 2. 启动后端
+### 2. 安装应用依赖并迁移
 
 ```powershell
 cd ai_interview_backend
@@ -177,74 +246,124 @@ python -m venv venv
 pip install -r requirements.txt
 Copy-Item .env.example .env
 python manage.py migrate
-uvicorn ai_interview_backend.asgi:application --reload --host 0.0.0.0 --port 8000
-```
 
-异步任务使用单独终端：
-
-```powershell
-cd ai_interview_backend
-celery -A ai_interview_backend worker -l info -P solo
-celery -A ai_interview_backend beat -l info
-```
-
-### 3. 启动前端
-
-```powershell
-cd ai-interview-frontend
+cd ..\ai-interview-frontend
 npm ci
-npm run dev
+cd ..
 ```
 
-- Web: `http://127.0.0.1:5173`
-- API: `http://127.0.0.1:8000/api/v1/`
-- Swagger: `http://127.0.0.1:8000/api/v1/schema/swagger-ui/`
-- Admin: `http://127.0.0.1:8000/admin/`
+请根据 `.env.infra` 修改后端 `.env` 中的数据库、消息队列和服务地址。不要提交真实 API Key、JWT Secret 或数据库密码。
 
-完整容器化应用仍使用 `docker-compose.yml` 和 `.\scripts\ifaceoff-docker.ps1 up`，与基础设施模式相互独立。
+### 3. 一键启动本地应用
+
+```powershell
+.\scripts\ifaceoff-dev.ps1 up
+.\scripts\ifaceoff-dev.ps1 status
+```
+
+该脚本启动 Django、Celery Worker、Celery Beat 和 Vite，并将 PID 与日志保存在本地忽略目录。停止或重启：
+
+```powershell
+.\scripts\ifaceoff-dev.ps1 down
+.\scripts\ifaceoff-dev.ps1 restart
+```
+
+### 4. 检查运行状态
+
+- Web：`http://127.0.0.1:5173`
+- API：`http://127.0.0.1:8000/api/v1/`
+- Readiness：`http://127.0.0.1:8000/api/v1/system/readiness/`
+- Swagger：`http://127.0.0.1:8000/api/v1/schema/swagger-ui/`
+- Django Admin：`http://127.0.0.1:8000/admin/`
+
+Readiness 会分别报告 Database、Redis、RabbitMQ、Celery Worker、Qdrant、Meilisearch 和 LiteLLM 状态。异步服务不可用时，上传页面会展示队列不可用，而不是让任务无限停留在 `pending`。
+
+完整容器化部署仍可使用：
+
+```powershell
+.\scripts\ifaceoff-docker.ps1 up
+```
+
+两种启动方式不要混用同一组端口。更多说明见 [基础设施部署](docs/docker-ifaceoff-infra.md) 与 [完整容器部署](docs/docker-ifaceoff.md)。
 
 ## 关键配置
 
 ```dotenv
 INTERVIEW_AGENT_ENGINE=composite_v3
+AGENT_CONTEXT_TOKEN_BUDGET=12000
+AGENT_MAX_GENERATION_RETRIES=2
+
 MODEL_CREDENTIAL_ENCRYPTION_KEY=
-LITELLM_PROXY_URL=http://127.0.0.1:4000
+LITELLM_PROXY_URL=http://127.0.0.1:4000/v1
+QDRANT_URL=http://127.0.0.1:6333
 MEILISEARCH_URL=http://127.0.0.1:7700
-CLAMAV_HOST=127.0.0.1
-CLAMAV_PORT=3310
+MEILISEARCH_API_KEY=
+
+DOCUMENT_PARSER=docling
+DOCLING_ENABLE_OCR=true
+OCR_ENGINE=paddleocr
+HYBRID_SEARCH_TOPN=30
+HYBRID_SEARCH_TOPK=4
+
 DISCOURSE_BASE_URL=
 DISCOURSE_CONNECT_SECRET=
 DISCOURSE_WEBHOOK_SECRET=
 ```
 
-生产环境必须显式配置凭据加密密钥、JWT/Django 密钥和各基础设施密码。API Key 仅以密文保存，接口只返回掩码；日志、Trace 和前端状态不得出现明文密钥。
+生产环境必须显式配置凭据加密密钥、Django/JWT Secret 和基础设施密码。模型 API Key 仅以密文保存，接口只返回掩码；Prompt、Trace、日志和前端状态不得出现明文密钥。
 
-Discourse 按官方 `discourse_docker` 方式独立部署，通过 SSO/API/Webhook 接入，不复制或嵌入其源码。未配置 Discourse 或 Meilisearch 时，社区接口返回明确降级状态。
-
-## API 概览
+## API 入口
 
 - `/api/v2/career-facts/`, `/job-targets/`, `/applications/`, `/learning-tasks/`
 - `/api/v2/resumes/`, `/resume-imports/`, `/resume-suggestions/`
-- `/api/v1/interviews/`, `/knowledge/`
+- `/api/v1/analyze-resume/`
+- `/api/v1/interviews/`, `/api/v1/interviews/{id}/abandon/`
+- `/api/v1/knowledge/documents/`, `/revisions/`, `/chunk-drafts/`, `/publish/`
+- `/api/v1/community/feed/`, `/community/search/`
 - `/api/v1/gateway/credentials/`, `/deployments/`, `/aliases/`, `/requests/`
-- `/api/v1/community/discourse/`, `/community/search/`
-- `/api/v1/auth/mfa/`, `/auth/sessions/`, `/auth/privacy/`
+- `/api/v1/system/readiness/`
 
-旧简历和 AI 设置 API 保留兼容入口；历史 `api_keys` 在读取或迁移时转为加密 `ProviderCredential`，不继续写入明文 JSON。
+旧简历和 AI 设置 API 保留兼容层，新增流程优先使用版本化 `/api/v2` 资源。
 
-## 质量检查
+## 数据一致性与运维
+
+- 面试会话状态以 MySQL 为事实来源，Redis 只做缓存；检查未完成面试时会修复失效缓存。
+- 放弃面试必须携带明确的 `session_id`；旧兼容接口在存在多个运行会话时返回 `409`。
+- 陈旧会话对账默认 dry-run：
+
+```powershell
+python manage.py reconcile_interview_sessions
+python manage.py reconcile_interview_sessions --apply
+```
+
+- 知识库草稿、待审核、拒绝、归档和旧修订不会进入 RAG。
+- 社区公开索引只包含已发布文章、公共知识和外部公开主题，不索引简历、私信或私有知识库。
+
+## 质量验证
 
 ```powershell
 cd ai_interview_backend
 python manage.py check
 python manage.py makemigrations --check --dry-run
-python manage.py test resumes.tests careers.tests system.tests chat.tests users.tests community.tests interviews.tests knowledge.tests --noinput
+python manage.py test interviews.tests knowledge.tests system.tests resumes.tests community.tests careers.tests --noinput
 
 cd ..\ai-interview-frontend
 npm run build
+$env:IFACEOFF_E2E_EMAIL='your-test-account@example.com'
+$env:IFACEOFF_E2E_PASSWORD='your-test-password'
+npm run test:e2e
 ```
 
-测试使用真实匿名化业务样例验证规则和数据链路；provider boundary fake 只用于超时、错误和降级故障注入，不作为简历、评分、知识库或社区业务数据。
+当前发布前实测结果：
+
+- Django 定向回归：**101 tests passed**
+- Django system check：**0 issues**
+- Migration drift：**No changes detected**
+- Vue production build：**passed**
+- Playwright 关键流程：**2 suites passed**
+- Readiness：MySQL、Redis、RabbitMQ、Celery、Qdrant、Meilisearch、LiteLLM **all healthy**
+
+测试业务数据来自本地真实或匿名化样例；provider boundary fake 仅用于超时、异常和降级故障注入，不作为简历、知识库、评分或社区内容。
 
 ## License
 

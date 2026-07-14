@@ -258,6 +258,7 @@ class InterviewSession(models.Model):
     covered_topics = models.JSONField(default=list, blank=True, verbose_name='已覆盖话题')
     pending_topics = models.JSONField(default=list, blank=True, verbose_name='待追问话题')
     perception_summary = models.JSONField(default=dict, blank=True, verbose_name='感知摘要')
+    last_activity_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name='最后活动时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
     
     recording_enabled = models.BooleanField(default=False, verbose_name='是否开启录像')

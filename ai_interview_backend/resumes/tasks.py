@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import timedelta
 
 from celery import shared_task
 from django.core.files import File
@@ -12,9 +13,32 @@ from .json_resume import imported_text_to_json_resume
 from .models import Resume, ResumeImportJob
 
 
+@shared_task
+def mark_stale_resume_import_jobs(timeout_minutes=30):
+    threshold = timezone.now() - timedelta(minutes=max(5, int(timeout_minutes)))
+    jobs = ResumeImportJob.objects.filter(
+        status__in=[ResumeImportJob.Status.PENDING, ResumeImportJob.Status.PROCESSING],
+        updated_at__lt=threshold,
+    )
+    count = 0
+    for job in jobs.select_related('resume').iterator():
+        previous = job.status
+        job.status = ResumeImportJob.Status.FAILED
+        job.error_message = f'任务在 {previous} 状态超过 {timeout_minutes} 分钟，请确认 Celery Worker 后重试。'
+        job.completed_at = timezone.now()
+        job.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+        job.resume.status = Resume.Status.FAILED
+        job.resume.save(update_fields=['status', 'updated_at'])
+        count += 1
+    return {'failed_jobs': count}
+
+
 @shared_task(bind=True, autoretry_for=(), retry_backoff=False)
 def process_resume_import_job(self, job_id: int):
-    job = ResumeImportJob.objects.select_related('resume').get(pk=job_id)
+    try:
+        job = ResumeImportJob.objects.select_related('resume').get(pk=job_id)
+    except ResumeImportJob.DoesNotExist:
+        return {'status': 'skipped', 'reason': 'record_deleted', 'job_id': job_id}
     if job.status not in {ResumeImportJob.Status.PENDING, ResumeImportJob.Status.FAILED}:
         return {'status': job.status}
     job.status = ResumeImportJob.Status.PROCESSING

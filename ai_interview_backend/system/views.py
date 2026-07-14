@@ -1,4 +1,11 @@
 # system/views.py
+import time
+import uuid
+
+import requests
+from django.conf import settings
+from django.core.cache import cache
+from django.db import connection
 from django.db.models import Q
 from rest_framework import generics, permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
@@ -29,6 +36,93 @@ from .serializers import (
     UsageBudgetSerializer,
 )
 from .model_gateway import ModelGateway
+
+
+class SystemReadinessView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        checks = {}
+
+        def run(name, callback, *, critical=False):
+            started = time.monotonic()
+            try:
+                detail = callback()
+                checks[name] = {
+                    'ok': True,
+                    'critical': critical,
+                    'latency_ms': int((time.monotonic() - started) * 1000),
+                    **(detail or {}),
+                }
+            except Exception as exc:
+                checks[name] = {
+                    'ok': False,
+                    'critical': critical,
+                    'latency_ms': int((time.monotonic() - started) * 1000),
+                    'reason': type(exc).__name__,
+                }
+
+        def check_database():
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1')
+                cursor.fetchone()
+            return {}
+
+        def check_cache():
+            key = f'readiness:{uuid.uuid4()}'
+            cache.set(key, 'ok', timeout=10)
+            if cache.get(key) != 'ok':
+                raise RuntimeError('cache_roundtrip_failed')
+            cache.delete(key)
+            return {}
+
+        def check_broker():
+            from ai_interview_backend.celery_app import app
+            with app.connection_for_write().ensure_connection(max_retries=0):
+                return {}
+
+        def check_worker():
+            from ai_interview_backend.celery_app import app
+            replies = app.control.inspect(timeout=1).ping() or {}
+            if not replies:
+                raise RuntimeError('no_worker_heartbeat')
+            return {'workers': len(replies)}
+
+        def check_http(url, headers=None):
+            response = requests.get(url, headers=headers or {}, timeout=2)
+            response.raise_for_status()
+            return {'status_code': response.status_code}
+
+        run('database', check_database, critical=True)
+        run('redis', check_cache, critical=True)
+        run('rabbitmq', check_broker, critical=True)
+        run('celery_worker', check_worker, critical=True)
+
+        qdrant_url = str(getattr(settings, 'QDRANT_URL', '') or '').rstrip('/')
+        if qdrant_url:
+            run('qdrant', lambda: check_http(f'{qdrant_url}/collections'))
+        else:
+            checks['qdrant'] = {'ok': False, 'critical': False, 'reason': 'not_configured'}
+
+        meili_url = str(getattr(settings, 'MEILISEARCH_URL', '') or '').rstrip('/')
+        meili_headers = {}
+        if getattr(settings, 'MEILISEARCH_API_KEY', ''):
+            meili_headers['Authorization'] = f"Bearer {settings.MEILISEARCH_API_KEY}"
+        if meili_url:
+            run('meilisearch', lambda: check_http(f'{meili_url}/health', meili_headers))
+        else:
+            checks['meilisearch'] = {'ok': False, 'critical': False, 'reason': 'not_configured'}
+
+        litellm_url = str(getattr(settings, 'LITELLM_PROXY_URL', '') or '').rstrip('/')
+        litellm_health_url = litellm_url.removesuffix('/v1') + '/health/liveliness'
+        run('litellm', lambda: check_http(litellm_health_url))
+
+        critical_ok = all(item['ok'] for item in checks.values() if item.get('critical'))
+        return Response({
+            'ok': critical_ok,
+            'async_jobs_available': bool(checks.get('celery_worker', {}).get('ok')),
+            'components': checks,
+        }, status=200 if critical_ok else 503)
 
 class AIModelListView(generics.ListAPIView):
     """

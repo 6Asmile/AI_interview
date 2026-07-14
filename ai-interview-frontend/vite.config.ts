@@ -18,6 +18,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      '/api/v2': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
       // 【核心新增】代理媒体文件请求
       '/media': {
         target: 'http://127.0.0.1:8000', // 转发给后端

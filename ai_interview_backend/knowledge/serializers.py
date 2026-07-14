@@ -1,6 +1,38 @@
 from rest_framework import serializers
 
-from .models import KnowledgeDocument, KnowledgeChunk, KnowledgeImportBatch, KnowledgeImportFile
+from .models import (
+    KnowledgeChunk,
+    KnowledgeChunkDraft,
+    KnowledgeDocument,
+    KnowledgeDocumentRevision,
+    KnowledgeImportBatch,
+    KnowledgeImportFile,
+)
+
+
+class KnowledgeChunkDraftSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = KnowledgeChunkDraft
+        fields = [
+            'id', 'revision', 'parent', 'order', 'block_type', 'heading_path',
+            'page_start', 'page_end', 'content', 'table_data', 'metadata',
+            'token_count', 'content_hash', 'is_excluded', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'revision', 'token_count', 'content_hash', 'created_at', 'updated_at']
+
+
+class KnowledgeDocumentRevisionSerializer(serializers.ModelSerializer):
+    chunk_count = serializers.IntegerField(source='chunk_drafts.count', read_only=True)
+
+    class Meta:
+        model = KnowledgeDocumentRevision
+        fields = [
+            'id', 'document', 'version_number', 'status', 'source_content',
+            'parser_snapshot', 'created_by', 'approved_by', 'rejection_reason',
+            'submitted_at', 'approved_at', 'published_at', 'chunk_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
 
 
 class KnowledgeChunkSerializer(serializers.ModelSerializer):
@@ -52,6 +84,8 @@ class KnowledgeDocumentSerializer(serializers.ModelSerializer):
             'parser_fallback_reason',
             'parsed_content',
             'ocr_enabled',
+            'draft_revision',
+            'published_revision',
             'visibility',
             'job_positions',
             'ability_tags',
@@ -89,6 +123,8 @@ class KnowledgeDocumentSerializer(serializers.ModelSerializer):
             'parser_fallback_reason',
             'parsed_content',
             'ocr_enabled',
+            'draft_revision',
+            'published_revision',
             'approval_status',
             'chunk_count',
             'last_indexed_at',
@@ -137,9 +173,10 @@ class KnowledgeDocumentSerializer(serializers.ModelSerializer):
             return False
         return bool(
             (request.user.is_staff or obj.created_by_id == request.user.id)
-            and obj.approval_status in [
-                KnowledgeDocument.ApprovalStatus.DRAFT,
-                KnowledgeDocument.ApprovalStatus.REJECTED,
+            and obj.draft_revision_id
+            and obj.draft_revision.status in [
+                KnowledgeDocumentRevision.Status.DRAFT,
+                KnowledgeDocumentRevision.Status.REJECTED,
             ]
         )
 
@@ -149,7 +186,8 @@ class KnowledgeDocumentSerializer(serializers.ModelSerializer):
             return False
         return bool(
             self._can_manage(request.user)
-            and obj.approval_status == KnowledgeDocument.ApprovalStatus.PENDING_REVIEW
+            and obj.draft_revision_id
+            and obj.draft_revision.status == KnowledgeDocumentRevision.Status.PENDING_REVIEW
         )
 
     def get_source_file_url(self, obj):

@@ -12,7 +12,10 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from resumes.models import Resume
+from resumes.models import Resume, ResumeImportJob, ResumeVersion
+from resumes.json_resume import json_resume_plain_text
+from careers.models import JobTarget
+from system.models import AISetting
 from .evaluation import (
     build_session_plan,
     can_manage_interview_system,
@@ -420,49 +423,95 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='check-unfinished')
     def check_unfinished(self, request):
         cache_key = get_user_cache_key(request.user)
-        session_id = cache.get(cache_key)
-        if session_id:
+        sessions = list(
+            InterviewSession.objects.filter(user=request.user, status=InterviewSession.Status.RUNNING)
+            .order_by('-last_activity_at', '-updated_at', '-created_at')
+        )
+        if not sessions:
+            cache.delete(cache_key)
+            return Response({"has_unfinished": False}, status=status.HTTP_200_OK)
+
+        session = sessions[0]
+        cache.set(cache_key, str(session.id), timeout=7200)
+        return Response({
+            "has_unfinished": True,
+            "session_id": session.id,
+            "job_position": session.job_position,
+            "conflict": len(sessions) > 1,
+            "sessions": [
+                {
+                    "session_id": item.id,
+                    "job_position": item.job_position,
+                    "last_activity_at": item.last_activity_at or item.updated_at,
+                }
+                for item in sessions
+            ],
+        }, status=status.HTTP_200_OK)
+
+    def _abandon_session(self, request, session_id):
+        cache_key = get_user_cache_key(request.user)
+        with transaction.atomic():
+            request.user.__class__.objects.select_for_update().get(pk=request.user.pk)
             try:
-                session = InterviewSession.objects.get(id=session_id, user=request.user,
-                                                       status=InterviewSession.Status.RUNNING)
-                return Response(
-                    {"has_unfinished": True, "session_id": session.id, "job_position": session.job_position, },
-                    status=status.HTTP_200_OK)
+                session = InterviewSession.objects.select_for_update().get(
+                    id=session_id, user=request.user
+                )
             except InterviewSession.DoesNotExist:
-                cache.delete(cache_key)
-        return Response({"has_unfinished": False}, status=status.HTTP_200_OK)
+                return Response({"error": "面试会话不存在"}, status=status.HTTP_404_NOT_FOUND)
+            if session.status == InterviewSession.Status.CANCELED:
+                return Response({"message": "面试已放弃", "session_id": session.id})
+            if session.status != InterviewSession.Status.RUNNING:
+                return Response(
+                    {"error": "只有进行中的面试可以放弃", "session_id": session.id, "status": session.status},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            now = timezone.now()
+            session.status = InterviewSession.Status.CANCELED
+            session.finished_at = now
+            session.last_activity_at = now
+            session.save(update_fields=['status', 'finished_at', 'last_activity_at', 'updated_at'])
+        if str(cache.get(cache_key) or '') == str(session.id):
+            cache.delete(cache_key)
+        return Response({"message": "面试已放弃", "session_id": session.id}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='abandon')
+    def abandon(self, request, pk=None):
+        return self._abandon_session(request, pk)
 
     @action(detail=False, methods=['post'], url_path='abandon-unfinished')
     def abandon_unfinished(self, request):
-        cache_key = get_user_cache_key(request.user)
-        session_id = cache.get(cache_key)
-        if session_id:
-            try:
-                session = InterviewSession.objects.get(id=session_id, user=request.user)
-                session.status = InterviewSession.Status.CANCELED
-                session.save()
-                cache.delete(cache_key)
-                return Response({"message": "面试已放弃"}, status=status.HTTP_200_OK)
-            except InterviewSession.DoesNotExist:
-                cache.delete(cache_key)
-        return Response({"message": "没有需要放弃的面试"}, status=status.HTTP_404_NOT_FOUND)
+        sessions = list(
+            InterviewSession.objects.filter(user=request.user, status=InterviewSession.Status.RUNNING)
+            .order_by('-last_activity_at', '-updated_at', '-created_at')
+        )
+        requested_id = request.data.get('session_id')
+        if requested_id:
+            return self._abandon_session(request, requested_id)
+        if not sessions:
+            cache.delete(get_user_cache_key(request.user))
+            return Response({"message": "没有需要放弃的面试"}, status=status.HTTP_404_NOT_FOUND)
+        if len(sessions) > 1:
+            return Response({
+                "error": "存在多个进行中的面试，请指定 session_id",
+                "code": "multiple_running_sessions",
+                "sessions": [{"session_id": item.id, "job_position": item.job_position} for item in sessions],
+            }, status=status.HTTP_409_CONFLICT)
+        return self._abandon_session(request, sessions[0].id)
 
     @action(detail=False, methods=['post'], url_path='start')
     def start_interview(self, request):
         force_start = request.query_params.get('force', 'false').lower() == 'true'
         cache_key = get_user_cache_key(request.user)
-        existing_session_id = cache.get(cache_key)
-        if existing_session_id and not force_start:
-            return Response({"error": "您有正在进行的面试..."}, status=status.HTTP_409_CONFLICT)
-        if existing_session_id and force_start:
-            try:
-                old_session = InterviewSession.objects.get(id=existing_session_id, user=request.user)
-                old_session.status = InterviewSession.Status.CANCELED
-                old_session.save()
-            except InterviewSession.DoesNotExist:
-                pass
-            cache.delete(cache_key)
-
+        running_sessions = list(
+            InterviewSession.objects.filter(user=request.user, status=InterviewSession.Status.RUNNING)
+            .order_by('-last_activity_at', '-updated_at', '-created_at')
+        )
+        if running_sessions and not force_start:
+            return Response({
+                "error": "您有正在进行的面试",
+                "code": "unfinished_interview_exists",
+                "sessions": [{"session_id": item.id, "job_position": item.job_position} for item in running_sessions],
+            }, status=status.HTTP_409_CONFLICT)
         serializer = StartInterviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         job_position = serializer.validated_data.get('job_position', '').strip()
@@ -538,57 +587,85 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             jd_text=jd_text
         )
 
-        session = InterviewSession.objects.create(
-            user=request.user, job_position=job_position, resume=resume_instance,
-            resume_version=resume_version, job_target=job_target,
-            resume_snapshot=resume_snapshot, jd_snapshot=jd_text,
-            question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=timezone.now(),
-            target_duration_minutes=target_duration_minutes,
-            experience_mode=experience_mode,
-            interview_mode=interview_mode or template.interview_mode,
-            progress_mode='time_and_coverage' if getattr(agent, 'engine_name', '') == 'composite_v3' else 'question_count',
-            recording_enabled=recording_enabled,
-            template=template,
-            session_plan=session_plan,
-            template_snapshot=template_snapshot,
-            coverage_summary={'coverage': {}, 'coverage_gaps': session_plan.get('coverage_gaps', [])},
-            current_stage=InterviewSession.InterviewStage.OPENING,
-            memory_summary=initial_memory,
-            covered_topics=[],
-            pending_topics=initial_pending_topics,
-            perception_summary={}
-        )
         first_question_text = agent.generate_first_question(
             job_position=job_position,
             user=request.user,
             resume_text=resume_text,
-            difficulty=session.difficulty,
+            difficulty=InterviewSession.Difficulty.MEDIUM,
             jd_text=jd_text
         )
-        InterviewQuestion.objects.create(
-            session=session,
-            question_text=first_question_text,
-            sequence=1,
-            question_plan={
-                'stage': InterviewSession.InterviewStage.OPENING,
-                'target_stage': InterviewSession.InterviewStage.SELF_INTRO,
-                'target_dimension': '',
-                'next_action': 'ASK_NEW',
-                'topic_id': 'self_intro',
-                'parent_topic_id': '',
-                'followup_depth': 0,
-                'answer_state': '',
-                'dialogue_act': 'opening',
-                'stage_entry_reason': 'interview_started',
-                'stage_exit_reason': '',
-            },
-            generation_mode='deterministic_opening',
-            validation_status='validated',
-        )
-        if hasattr(agent, 'remember_generated_question'):
-            session.memory_summary = agent.remember_generated_question(session.memory_summary, first_question_text)
-            session.save(update_fields=['memory_summary', 'updated_at'])
-        cache.set(get_user_cache_key(request.user), str(session.id), timeout=7200)
+        with transaction.atomic():
+            request.user.__class__.objects.select_for_update().get(pk=request.user.pk)
+            locked_running = list(
+                InterviewSession.objects.select_for_update().filter(
+                    user=request.user,
+                    status=InterviewSession.Status.RUNNING,
+                ).order_by('-last_activity_at', '-updated_at', '-created_at')
+            )
+            if locked_running and not force_start:
+                return Response({
+                    "error": "您有正在进行的面试",
+                    "code": "unfinished_interview_exists",
+                    "sessions": [
+                        {"session_id": item.id, "job_position": item.job_position}
+                        for item in locked_running
+                    ],
+                }, status=status.HTTP_409_CONFLICT)
+            if locked_running:
+                now = timezone.now()
+                InterviewSession.objects.filter(id__in=[item.id for item in locked_running]).update(
+                    status=InterviewSession.Status.CANCELED,
+                    finished_at=now,
+                    last_activity_at=now,
+                )
+
+            now = timezone.now()
+            session = InterviewSession.objects.create(
+                user=request.user, job_position=job_position, resume=resume_instance,
+                resume_version=resume_version, job_target=job_target,
+                resume_snapshot=resume_snapshot, jd_snapshot=jd_text,
+                question_count=question_count, status=InterviewSession.Status.RUNNING, started_at=now,
+                last_activity_at=now,
+                target_duration_minutes=target_duration_minutes,
+                experience_mode=experience_mode,
+                interview_mode=interview_mode or template.interview_mode,
+                progress_mode='time_and_coverage' if getattr(agent, 'engine_name', '') == 'composite_v3' else 'question_count',
+                recording_enabled=recording_enabled,
+                template=template,
+                session_plan=session_plan,
+                template_snapshot=template_snapshot,
+                coverage_summary={'coverage': {}, 'coverage_gaps': session_plan.get('coverage_gaps', [])},
+                current_stage=InterviewSession.InterviewStage.OPENING,
+                memory_summary=initial_memory,
+                covered_topics=[],
+                pending_topics=initial_pending_topics,
+                perception_summary={}
+            )
+            InterviewQuestion.objects.create(
+                session=session,
+                question_text=first_question_text,
+                sequence=1,
+                question_plan={
+                    'stage': InterviewSession.InterviewStage.OPENING,
+                    'target_stage': InterviewSession.InterviewStage.SELF_INTRO,
+                    'target_dimension': '',
+                    'next_action': 'ASK_NEW',
+                    'topic_id': 'self_intro',
+                    'parent_topic_id': '',
+                    'followup_depth': 0,
+                    'answer_state': '',
+                    'dialogue_act': 'opening',
+                    'stage_entry_reason': 'interview_started',
+                    'stage_exit_reason': '',
+                },
+                generation_mode='deterministic_opening',
+                validation_status='validated',
+            )
+            if hasattr(agent, 'remember_generated_question'):
+                session.memory_summary = agent.remember_generated_question(session.memory_summary, first_question_text)
+                session.save(update_fields=['memory_summary', 'updated_at'])
+        cache.delete(cache_key)
+        cache.set(cache_key, str(session.id), timeout=7200)
         session_data = self.get_serializer(instance=session).data
         return Response(session_data, status=status.HTTP_201_CREATED)
 
@@ -789,6 +866,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                         for frame in analysis_data
                     ]
                 current_question.save(update_fields=['answer_text', 'answered_at', 'analysis_data', 'audio_url'])
+                session.last_activity_at = timezone.now()
+                session.save(update_fields=['last_activity_at', 'updated_at'])
                 answered_count = session.questions.filter(answered_at__isnull=False).count()
         except InterviewQuestion.DoesNotExist:
             return Response({"error": "问题不存在"}, status=status.HTTP_404_NOT_FOUND)
@@ -1370,18 +1449,69 @@ class ResumeAnalysisView(APIView):
 
     def post(self, request, *args, **kwargs):
         resume_id = request.data.get('resume_id')
-        jd_text = request.data.get('jd_text')
+        resume_version_id = request.data.get('resume_version_id')
+        job_target_id = request.data.get('job_target_id')
+        jd_text = str(request.data.get('jd_text') or '').strip()
 
-        if not resume_id or not jd_text:
-            return Response({'error': '必须提供 resume_id 和 jd_text 字段'}, status=status.HTTP_400_BAD_REQUEST)
+        if not resume_id and not resume_version_id:
+            return Response({
+                'error': '必须提供 resume_version_id 或 resume_id',
+                'code': 'resume_required',
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            resume_instance = Resume.objects.get(id=resume_id, user=request.user)
+        resume_version = None
+        resume_instance = None
+        if resume_version_id:
+            try:
+                resume_version = ResumeVersion.objects.select_related('resume').get(
+                    id=resume_version_id, resume__user=request.user
+                )
+                resume_instance = resume_version.resume
+            except ResumeVersion.DoesNotExist:
+                return Response({'error': '简历版本不存在', 'code': 'resume_version_not_found'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            try:
+                resume_instance = Resume.objects.get(id=resume_id, user=request.user)
+            except Resume.DoesNotExist:
+                return Response({'error': '简历不存在', 'code': 'resume_not_found'}, status=status.HTTP_404_NOT_FOUND)
+            import_job = resume_instance.import_jobs.order_by('-created_at').first()
+            if import_job and import_job.status in {
+                ResumeImportJob.Status.PENDING,
+                ResumeImportJob.Status.PROCESSING,
+                ResumeImportJob.Status.REVIEW_REQUIRED,
+            }:
+                return Response({
+                    'error': '简历导入尚未完成，请完成解析确认后再分析',
+                    'code': 'resume_import_not_ready',
+                    'import_job_id': import_job.id,
+                    'import_status': import_job.status,
+                }, status=status.HTTP_409_CONFLICT)
+            resume_version = resume_instance.current_version
+
+        job_target = None
+        if job_target_id:
+            try:
+                job_target = JobTarget.objects.get(id=job_target_id, user=request.user)
+            except JobTarget.DoesNotExist:
+                return Response({'error': '目标岗位不存在', 'code': 'job_target_not_found'}, status=status.HTTP_404_NOT_FOUND)
+            jd_text = str(job_target.jd_text or '').strip()
+        if not jd_text:
+            return Response({
+                'error': '请提供真实岗位 JD 或选择包含 JD 的目标岗位',
+                'code': 'jd_required',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if resume_version:
+            resume_snapshot = resume_version.resume_json or {}
+            resume_text = json_resume_plain_text(resume_snapshot)
+        else:
+            resume_snapshot = {}
             resume_text = format_resume_to_text(resume_instance)
-            if not resume_text.strip():
-                return Response({'error': '无法从该简历中提取有效文本内容'}, status=status.HTTP_400_BAD_REQUEST)
-        except Resume.DoesNotExist:
-            return Response({'error': '简历不存在'}, status=status.HTTP_404_NOT_FOUND)
+        if not resume_text.strip():
+            return Response({
+                'error': '简历没有可分析的已确认内容',
+                'code': 'resume_content_empty',
+            }, status=status.HTTP_409_CONFLICT)
 
         # 1. 调用AI服务
         analysis_report_data = analyze_resume_against_jd(
@@ -1393,19 +1523,34 @@ class ResumeAnalysisView(APIView):
         if "error" in analysis_report_data:
             return Response(analysis_report_data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 2. 【核心修改】将报告存入数据库
         try:
+            ai_setting = AISetting.objects.select_related('chat_model').filter(user=request.user).first()
+            model_snapshot = {
+                'chat_model_id': ai_setting.chat_model_id if ai_setting else None,
+                'chat_model_slug': ai_setting.chat_model.model_slug if ai_setting and ai_setting.chat_model else '',
+            }
             new_report = ResumeAnalysisReport.objects.create(
                 user=request.user,
                 resume=resume_instance,
+                resume_version=resume_version,
+                job_target=job_target,
+                resume_snapshot=resume_snapshot,
                 jd_text=jd_text,
+                model_config_snapshot=model_snapshot,
+                evidence_sources=[{
+                    'type': 'resume_version' if resume_version else 'legacy_resume',
+                    'resume_id': resume_instance.id,
+                    'resume_version_id': resume_version.id if resume_version else None,
+                }, {
+                    'type': 'job_target' if job_target else 'provided_jd',
+                    'job_target_id': job_target.id if job_target else None,
+                }],
                 report_data=analysis_report_data,
                 overall_score=analysis_report_data.get('overall_score', 0)
             )
         except Exception as e:
             return Response({'error': f'保存分析报告失败: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 3. 序列化并返回新创建的报告对象
         serializer = ResumeAnalysisReportSerializer(new_report)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
