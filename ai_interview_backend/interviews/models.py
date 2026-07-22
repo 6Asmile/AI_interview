@@ -313,6 +313,9 @@ class InterviewQuestion(models.Model):
         verbose_name = '面试问题'
         verbose_name_plural = verbose_name
         ordering = ['session', 'sequence']
+        constraints = [
+            models.UniqueConstraint(fields=['session', 'sequence'], name='uniq_interview_question_sequence'),
+        ]
 
     def __str__(self):
         return f'问题 {self.sequence}: {self.question_text[:30]}...'
@@ -433,6 +436,161 @@ class InterviewAgentRun(models.Model):
 
     def __str__(self):
         return f'{self.session_id} {self.event} {self.status}'
+
+
+class InterviewAgentExecution(models.Model):
+    """Business-level pointer to a LangGraph run.
+
+    Checkpoints and node writes live in the dedicated ``ifaceoff_agent``
+    database. Django stores only the identifiers and lifecycle metadata that
+    the product needs for authorization, recovery and audit navigation.
+    """
+
+    class Status(models.TextChoices):
+        ACCEPTED = 'accepted', '已接受'
+        ANSWER_PERSISTED = 'answer_persisted', '回答已持久化'
+        EVALUATING = 'evaluating', '评估中'
+        EVALUATED = 'evaluated', '评估完成'
+        GENERATING = 'generating', '生成下一题'
+        FAILED_RETRYABLE = 'failed_retryable', '可重试失败'
+        FAILED_TERMINAL = 'failed_terminal', '终止失败'
+        PENDING = 'pending', '待执行'
+        RUNNING = 'running', '执行中'
+        WAITING = 'waiting', '等待生成或恢复'
+        COMPLETED = 'completed', '已完成'
+        DEGRADED = 'degraded', '降级完成'
+        FAILED = 'failed', '执行失败'
+        CANCELED = 'canceled', '已取消'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        InterviewSession,
+        on_delete=models.CASCADE,
+        related_name='agent_executions',
+        verbose_name='面试会话',
+    )
+    trigger_question = models.ForeignKey(
+        InterviewQuestion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent_executions',
+        verbose_name='触发问题',
+    )
+    legacy_run = models.OneToOneField(
+        InterviewAgentRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='execution',
+        verbose_name='兼容运行记录',
+    )
+    thread_id = models.UUIDField(db_index=True, verbose_name='LangGraph Thread ID')
+    run_id = models.UUIDField(unique=True, verbose_name='LangGraph Run ID')
+    event = models.CharField(max_length=50, db_index=True, verbose_name='业务事件')
+    idempotency_key = models.CharField(max_length=128, verbose_name='幂等键')
+    request_hash = models.CharField(max_length=64, db_index=True, verbose_name='请求哈希')
+    checkpoint_namespace = models.CharField(max_length=180, blank=True, verbose_name='Checkpoint命名空间')
+    engine_version = models.CharField(max_length=40, default='composite_v4', db_index=True)
+    state_schema_version = models.PositiveSmallIntegerField(default=4)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    version = models.PositiveIntegerField(default=0, verbose_name='状态版本')
+    retry_count = models.PositiveSmallIntegerField(default=0, verbose_name='重试次数')
+    last_durable_sequence = models.PositiveIntegerField(default=0, verbose_name='最后持久化事件序号')
+    state_metadata = models.JSONField(default=dict, blank=True, verbose_name='持久化状态摘要')
+    result_question = models.ForeignKey(
+        InterviewQuestion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='result_agent_executions',
+        verbose_name='生成结果问题',
+    )
+    fallback_reason = models.CharField(max_length=200, blank=True)
+    error_code = models.CharField(max_length=100, blank=True)
+    last_event_id = models.CharField(max_length=160, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = '面试Agent执行映射'
+        verbose_name_plural = verbose_name
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session', 'event', 'idempotency_key'],
+                name='uniq_agent_execution_idempotency',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['session', 'status', 'updated_at']),
+            models.Index(fields=['thread_id', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.session_id} {self.event} {self.status}'
+
+
+class InterviewAgentDispatch(models.Model):
+    """Transactional outbox entry for an Agent execution."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待投递'
+        PUBLISHED = 'published', '已投递'
+        FAILED = 'failed', '投递失败'
+        CANCELED = 'canceled', '已取消'
+
+    execution = models.OneToOneField(
+        InterviewAgentExecution,
+        on_delete=models.CASCADE,
+        related_name='dispatch',
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    celery_task_id = models.CharField(max_length=80, blank=True)
+    error_code = models.CharField(max_length=120, blank=True)
+    error_message = models.TextField(blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [models.Index(fields=['status', 'next_attempt_at', 'created_at'])]
+
+
+class InterviewReferenceAnswer(models.Model):
+    """Durable AI reference answer; Redis is only an acceleration layer."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '生成中'
+        COMPLETED = 'completed', '已完成'
+        FAILED = 'failed', '失败'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    question = models.ForeignKey(InterviewQuestion, on_delete=models.CASCADE, related_name='reference_answers')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='interview_reference_answers')
+    prompt_version = models.CharField(max_length=80)
+    model_alias = models.CharField(max_length=120)
+    answer = models.TextField(blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    error_code = models.CharField(max_length=120, blank=True)
+    source_hash = models.CharField(max_length=64, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['question', 'user', 'prompt_version', 'model_alias'],
+                name='uniq_interview_reference_answer_snapshot',
+            )
+        ]
+        indexes = [models.Index(fields=['user', 'status', 'updated_at'])]
 
 
 class InterviewAgentNodeRun(models.Model):
@@ -620,10 +778,13 @@ class InterviewAgentMemoryEvent(models.Model):
     )
     event_type = models.CharField(max_length=30, choices=EventType.choices, db_index=True)
     memory_key = models.CharField(max_length=120, db_index=True, verbose_name='记忆键')
+    dedup_key = models.CharField(max_length=64, null=True, blank=True, verbose_name='记忆去重键')
     value_summary = models.JSONField(default=dict, blank=True, verbose_name='记忆摘要')
     importance = models.PositiveSmallIntegerField(default=1, db_index=True, verbose_name='重要性')
     source_node = models.CharField(max_length=80, blank=True, db_index=True, verbose_name='来源节点')
     expires_at = models.DateTimeField(null=True, blank=True, verbose_name='过期时间')
+    recall_count = models.PositiveIntegerField(default=0, verbose_name='召回次数')
+    last_recalled_at = models.DateTimeField(null=True, blank=True, verbose_name='最后召回时间')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -633,6 +794,13 @@ class InterviewAgentMemoryEvent(models.Model):
         indexes = [
             models.Index(fields=['session', 'event_type', 'importance']),
             models.Index(fields=['session', 'memory_key', 'created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session', 'dedup_key'],
+                condition=models.Q(dedup_key__isnull=False),
+                name='uniq_interview_memory_event_dedup',
+            ),
         ]
 
     def __str__(self):

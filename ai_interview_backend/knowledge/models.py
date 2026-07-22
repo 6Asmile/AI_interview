@@ -113,6 +113,10 @@ class KnowledgeDocument(models.Model):
         related_name='approved_knowledge_documents',
         verbose_name='审批人'
     )
+    staff_approved_by = models.ForeignKey(
+        'staff_admin.StaffAccount', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='approved_knowledge_documents', verbose_name='员工审批人'
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -155,6 +159,10 @@ class KnowledgeDocumentRevision(models.Model):
     )
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='approved_knowledge_revisions'
+    )
+    staff_approved_by = models.ForeignKey(
+        'staff_admin.StaffAccount', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='approved_knowledge_revisions'
     )
     rejection_reason = models.TextField(blank=True)

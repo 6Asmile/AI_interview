@@ -4,9 +4,18 @@ from django.utils import timezone
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from rest_framework import serializers
+from rest_framework import permissions, serializers, status, views
+from rest_framework.response import Response
 
 from .models import AuthSession, LoginAudit, User
+from .cookie_auth import (
+    cookie_refresh_value,
+    enforce_csrf,
+    ensure_csrf_token,
+    set_refresh_cookie,
+)
+from .serializers import UserProfileSerializer
+from core.throttles import LoginRateThrottle
 
 
 def _client_ip(request):
@@ -23,6 +32,29 @@ def _device_name(user_agent: str) -> str:
     if 'macintosh' in value or 'mac os' in value:
         return 'macOS'
     return '浏览器会话'
+
+
+def record_auth_session(user, refresh, request, event='password_login'):
+    user_agent = request.META.get('HTTP_USER_AGENT', '')[:500] if request else ''
+    AuthSession.objects.update_or_create(
+        refresh_jti=str(refresh['jti']),
+        defaults={
+            'user': user,
+            'ip_address': _client_ip(request) if request else None,
+            'user_agent': user_agent,
+            'device_name': _device_name(user_agent),
+            'expires_at': datetime.fromtimestamp(int(refresh['exp']), tz=dt_timezone.utc),
+            'revoked_at': None,
+        },
+    )
+    LoginAudit.objects.create(
+        user=user,
+        email=user.email,
+        event=event,
+        success=True,
+        ip_address=_client_ip(request) if request else None,
+        user_agent=user_agent,
+    )
 
 
 class AuditedTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -56,31 +88,26 @@ class AuditedTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
             raise
         refresh = RefreshToken(data['refresh'])
-        user_agent = request.META.get('HTTP_USER_AGENT', '')[:500] if request else ''
-        AuthSession.objects.update_or_create(
-            refresh_jti=str(refresh['jti']),
-            defaults={
-                'user': self.user,
-                'ip_address': _client_ip(request) if request else None,
-                'user_agent': user_agent,
-                'device_name': _device_name(user_agent),
-                'expires_at': datetime.fromtimestamp(int(refresh['exp']), tz=dt_timezone.utc),
-                'revoked_at': None,
-            },
-        )
-        LoginAudit.objects.create(
-            user=self.user,
-            email=self.user.email,
-            event='password_login',
-            success=True,
-            ip_address=_client_ip(request) if request else None,
-            user_agent=user_agent,
-        )
+        record_auth_session(self.user, refresh, request)
         return data
 
 
 class AuditedTokenObtainPairView(TokenObtainPairView):
     serializer_class = AuditedTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        cookie_mode = request.headers.get('X-Auth-Mode', '').lower() == 'cookie'
+        if cookie_mode:
+            enforce_csrf(request)
+        response = super().post(request, *args, **kwargs)
+        refresh_value = response.data.get('refresh') if isinstance(response.data, dict) else None
+        if response.status_code == status.HTTP_200_OK and refresh_value:
+            set_refresh_cookie(response, refresh_value)
+            if cookie_mode:
+                response.data.pop('refresh', None)
+                response.data['auth_mode'] = 'cookie_refresh'
+        return response
 
 
 class AuditedTokenRefreshSerializer(TokenRefreshSerializer):
@@ -101,3 +128,58 @@ class AuditedTokenRefreshSerializer(TokenRefreshSerializer):
 
 class AuditedTokenRefreshView(TokenRefreshView):
     serializer_class = AuditedTokenRefreshSerializer
+
+    def post(self, request, *args, **kwargs):
+        cookie_value = cookie_refresh_value(request)
+        cookie_mode = bool(cookie_value) and not request.data.get('refresh')
+        if cookie_mode:
+            enforce_csrf(request)
+            payload = {'refresh': cookie_value}
+            serializer = self.get_serializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            response = Response(serializer.validated_data, status=status.HTTP_200_OK)
+        else:
+            response = super().post(request, *args, **kwargs)
+        new_refresh = response.data.get('refresh') if isinstance(response.data, dict) else None
+        if new_refresh:
+            set_refresh_cookie(response, new_refresh)
+            if cookie_mode or request.headers.get('X-Auth-Mode', '').lower() == 'cookie':
+                response.data.pop('refresh', None)
+                response.data['auth_mode'] = 'cookie_refresh'
+        return response
+
+
+class CsrfTokenView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response({'csrf_token': ensure_csrf_token(request)})
+
+
+class BrowserSessionView(views.APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        refresh_value = cookie_refresh_value(request)
+        if not refresh_value:
+            return Response({'code': 'session_not_found', 'message': '浏览器会话不存在。'}, status=status.HTTP_401_UNAUTHORIZED)
+        enforce_csrf(request)
+        serializer = AuditedTokenRefreshSerializer(data={'refresh': refresh_value}, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        access = str(data['access'])
+        access_token = RefreshToken(data.get('refresh') or refresh_value).access_token
+        user_id = access_token.get('user_id')
+        user = User.objects.filter(pk=user_id, status=User.Status.NORMAL).first()
+        if not user:
+            return Response({'code': 'session_user_unavailable', 'message': '账号不可用。'}, status=status.HTTP_401_UNAUTHORIZED)
+        response = Response({
+            'access': access,
+            'user': UserProfileSerializer(user, context={'request': request}).data,
+            'auth_mode': 'cookie_refresh',
+        })
+        if data.get('refresh'):
+            set_refresh_cookie(response, str(data['refresh']))
+        return response

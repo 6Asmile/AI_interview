@@ -4,7 +4,8 @@ function collectRuntimeFailures(page: Page) {
   const failures: string[] = [];
   page.on('pageerror', error => failures.push(`pageerror: ${error.message}`));
   page.on('response', response => {
-    if (/\/api\/(v1|v2)\//.test(response.url()) && response.status() >= 400) {
+    const expectedAnonymousSessionProbe = response.status() === 401 && /\/auth\/session\/$/.test(response.url());
+    if (!expectedAnonymousSessionProbe && /\/api\/(v1|v2)\//.test(response.url()) && response.status() >= 400) {
       failures.push(`${response.status()} ${response.request().method()} ${response.url()}`);
     }
   });
@@ -27,6 +28,8 @@ test('public pages and authenticated critical flows render without runtime failu
   await page.getByPlaceholder('请输入密码').fill(password!);
   await page.getByRole('button', { name: '登录', exact: true }).last().click();
   await page.waitForURL(/\/dashboard(?:$|\/)/);
+  const persistedTokens = await page.evaluate(() => Object.keys(localStorage).filter(key => /access|refresh|token/i.test(key)));
+  expect(persistedTokens).toEqual([]);
 
   await page.goto('/dashboard/career');
   await expect(page.getByRole('heading', { name: '求职工作台' })).toBeVisible();
@@ -49,6 +52,13 @@ test('public pages and authenticated critical flows render without runtime failu
   await page.goto('/dashboard/ai-diagnosis');
   await expect(page.getByRole('heading', { name: /简历.*诊断/ })).toBeVisible();
 
+  await page.goto('/dashboard/tasks');
+  await expect(page.getByRole('heading', { name: '任务中心' })).toBeVisible();
+
+  await page.goto('/dashboard/settings');
+  await expect(page.getByRole('heading', { name: 'AI 模型设置' })).toBeVisible();
+  await expect(page.getByText('????')).toHaveCount(0);
+
   await page.goto('/dashboard/chat');
   await expect(page.getByRole('heading', { name: '我的私信' })).toBeVisible();
   const conversations = page.locator('.conversation-item');
@@ -70,9 +80,26 @@ test('public pages and authenticated critical flows render without runtime failu
   expect(failures, failures.join('\n')).toEqual([]);
 });
 
-test('admin login remains an independent Django session entry', async ({ page }) => {
+test('admin login uses the independent staff application', async ({ page }) => {
   await page.goto('/login');
   await page.getByRole('button', { name: '管理端登录' }).click();
-  await page.waitForURL(/127\.0\.0\.1:8000\/admin\/login/);
-  await expect(page.locator('form')).toBeVisible();
+  await page.waitForURL(/(?:127\.0\.0\.1|localhost):5174\/login/);
+  await expect(page.getByRole('heading', { name: '员工登录' })).toBeVisible();
+  await expect(page.getByText('候选人账号无法登录此管理端。')).toBeVisible();
+});
+
+test('mobile navigation remains usable and complex editors are gated', async ({ page }) => {
+  const email = process.env.IFACEOFF_E2E_EMAIL;
+  const password = process.env.IFACEOFF_E2E_PASSWORD;
+  test.skip(!email || !password, 'Set IFACEOFF_E2E_EMAIL and IFACEOFF_E2E_PASSWORD.');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/login');
+  await page.getByPlaceholder('请输入邮箱').fill(email!);
+  await page.getByPlaceholder('请输入密码').fill(password!);
+  await page.getByRole('button', { name: '登录', exact: true }).last().click();
+  await page.waitForURL(/\/dashboard(?:$|\/)/);
+  await page.getByRole('button', { name: '打开导航菜单' }).click();
+  await expect(page.getByRole('navigation', { name: '移动端主导航' })).toBeVisible();
+  await page.goto('/dashboard/knowledge');
+  await expect(page.getByRole('heading', { name: '请使用桌面端继续' })).toBeVisible();
 });

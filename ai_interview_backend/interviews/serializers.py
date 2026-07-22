@@ -8,6 +8,7 @@ from .models import (
     EvaluationDataset,
     EvaluationRun,
     EvaluationRunMetric,
+    InterviewAgentExecution,
     InterviewAgentMemoryEvent,
     InterviewAgentNodeRun,
     InterviewAgentRun,
@@ -229,6 +230,7 @@ class InterviewAgentNodeRunSerializer(serializers.ModelSerializer):
 
 class InterviewAgentRunSerializer(serializers.ModelSerializer):
     node_runs = serializers.SerializerMethodField()
+    execution = serializers.SerializerMethodField()
 
     class Meta:
         model = InterviewAgentRun
@@ -236,7 +238,7 @@ class InterviewAgentRunSerializer(serializers.ModelSerializer):
             'id', 'session', 'trigger_question', 'event', 'request_hash', 'engine_name',
             'status', 'state_schema_version', 'current_node', 'attempt_count',
             'fallback_reason', 'error_message', 'model_config_snapshot', 'prompt_version',
-            'started_at', 'completed_at', 'created_at', 'updated_at', 'node_runs',
+            'started_at', 'completed_at', 'created_at', 'updated_at', 'node_runs', 'execution',
         ]
         read_only_fields = fields
 
@@ -250,6 +252,27 @@ class InterviewAgentRunSerializer(serializers.ModelSerializer):
         ):
             return []
         return InterviewAgentNodeRunSerializer(obj.node_runs.order_by('created_at', 'id'), many=True).data
+
+    def get_execution(self, obj):
+        try:
+            execution = obj.execution
+        except InterviewAgentExecution.DoesNotExist:
+            return None
+        return InterviewAgentExecutionSerializer(execution).data
+
+
+class InterviewAgentExecutionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InterviewAgentExecution
+        fields = [
+            'id', 'session', 'trigger_question', 'thread_id', 'run_id', 'event',
+            'request_hash', 'checkpoint_namespace', 'engine_version',
+            'state_schema_version', 'status', 'fallback_reason', 'error_code',
+            'version', 'retry_count', 'last_durable_sequence', 'state_metadata',
+            'result_question', 'last_event_id', 'started_at', 'completed_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
 
 
 class InterviewAgentToolCallSerializer(serializers.ModelSerializer):

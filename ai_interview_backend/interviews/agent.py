@@ -1,13 +1,15 @@
 import logging
 import json
 import hashlib
+import math
 import re
+from difflib import SequenceMatcher
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 from knowledge.services import search_knowledge_context
@@ -173,6 +175,50 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
                 signatures.append(signature)
         return signatures
 
+    def _is_semantic_duplicate_question(self, question_text: str, previous_questions) -> bool:
+        def normalize(value: str) -> str:
+            normalized = re.sub(r'[^\w\u4e00-\u9fff]', '', (value or '').lower())
+            normalized = normalized.replace('怎么', '如何')
+            for filler in (
+                '请你', '请', '你们', '你的', '你', '在项目中', '项目中', '一下',
+                '谈谈', '说说', '说明', '介绍', '是否', '是', '的', '之间', '以及', '和', '与', '及',
+            ):
+                normalized = normalized.replace(filler, '')
+            return normalized
+
+        def intent(value: str) -> str:
+            for name, markers in (
+                ('why', ('为什么', '原因', '为何')),
+                ('how', ('如何', '怎么', '怎样')),
+                ('compare', ('区别', '比较', '差异')),
+                ('tradeoff', ('取舍', '权衡', '优缺点')),
+                ('result', ('结果', '指标', '效果')),
+            ):
+                if any(marker in value for marker in markers):
+                    return name
+            return 'general'
+
+        raw_candidate = question_text or ''
+        candidate = normalize(raw_candidate)
+        if len(candidate) < 8:
+            return False
+        candidate_bigrams = {candidate[index:index + 2] for index in range(len(candidate) - 1)}
+        for previous in previous_questions or []:
+            normalized = normalize(previous)
+            if len(normalized) < 8:
+                continue
+            ratio = SequenceMatcher(None, candidate, normalized).ratio()
+            previous_bigrams = {normalized[index:index + 2] for index in range(len(normalized) - 1)}
+            union = candidate_bigrams | previous_bigrams
+            jaccard = len(candidate_bigrams & previous_bigrams) / max(len(union), 1)
+            containment = len(candidate_bigrams & previous_bigrams) / max(
+                min(len(candidate_bigrams), len(previous_bigrams)), 1,
+            )
+            same_intent = intent(raw_candidate) == intent(previous or '')
+            if ratio >= 0.88 or (same_intent and (jaccard >= 0.68 or containment >= 0.86)):
+                return True
+        return False
+
     def _plain_answer_text(self, answer: str) -> str:
         return re.sub(r'\s+', '', re.sub(r'<[^>]+>', '', answer or ''))
 
@@ -271,8 +317,15 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
         now = timezone.now()
         candidates = InterviewAgentMemoryEvent.objects.filter(session=session).filter(
             Q(expires_at__isnull=True) | Q(expires_at__gt=now)
-        ).order_by('-importance', '-created_at')[: max(limit * 3, limit)]
-        events = [event for event in candidates if self._is_recallable_memory_event(event)][:limit]
+        ).order_by('-importance', '-created_at')[: max(limit * 6, limit)]
+        events = [event for event in candidates if self._is_recallable_memory_event(event)]
+        events.sort(key=lambda event: self._memory_recall_score(event, now), reverse=True)
+        events = events[:limit]
+        if events:
+            InterviewAgentMemoryEvent.objects.filter(id__in=[event.id for event in events]).update(
+                recall_count=F('recall_count') + 1,
+                last_recalled_at=now,
+            )
         return [
             {
                 'id': event.id,
@@ -280,6 +333,7 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
                 'memory_key': event.memory_key,
                 'value_summary': event.value_summary,
                 'importance': event.importance,
+                'recall_score': round(self._memory_recall_score(event, now), 4),
                 'source_node': event.source_node,
                 'question_id': event.question_id,
                 'created_at': event.created_at.isoformat(),
@@ -287,6 +341,19 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             }
             for event in events
         ]
+
+    def _memory_recall_score(self, event: InterviewAgentMemoryEvent, now=None) -> float:
+        now = now or timezone.now()
+        age_minutes = max(0.0, (now - event.created_at).total_seconds() / 60)
+        half_life = {
+            InterviewAgentMemoryEvent.EventType.ENVIRONMENT: 5,
+            InterviewAgentMemoryEvent.EventType.OBSERVATION: 20,
+            InterviewAgentMemoryEvent.EventType.PLAN: 45,
+            InterviewAgentMemoryEvent.EventType.QUESTION: 24 * 60,
+            InterviewAgentMemoryEvent.EventType.COVERAGE: 7 * 24 * 60,
+        }.get(event.event_type, 60)
+        recency = math.pow(0.5, age_minutes / max(half_life, 1))
+        return float(event.importance) * 0.8 + recency * 1.2
 
     def _is_recallable_memory_event(self, event: InterviewAgentMemoryEvent) -> bool:
         value_summary = event.value_summary if isinstance(event.value_summary, dict) else {}
@@ -301,11 +368,15 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
     def _memory_event_expires_at(self, event_type: str, memory_key: str, value_summary: dict, importance: int):
         value_summary = value_summary or {}
         if event_type == InterviewAgentMemoryEvent.EventType.ENVIRONMENT:
-            hours = 2 if importance >= 4 else 0.5
-            return timezone.now() + timedelta(hours=hours)
+            minutes = 15 if importance >= 4 else 5
+            return timezone.now() + timedelta(minutes=minutes)
         if event_type == InterviewAgentMemoryEvent.EventType.OBSERVATION and memory_key == 'knowledge.hybrid_search':
             has_sources = bool(value_summary.get('source_count') or value_summary.get('final_count'))
-            return None if has_sources else timezone.now() + timedelta(minutes=30)
+            return timezone.now() + timedelta(hours=2) if has_sources else timezone.now() + timedelta(minutes=10)
+        if event_type == InterviewAgentMemoryEvent.EventType.OBSERVATION:
+            return timezone.now() + timedelta(minutes=30)
+        if event_type == InterviewAgentMemoryEvent.EventType.PLAN:
+            return timezone.now() + timedelta(hours=2)
         return None
 
     def build_initial_memory(self, job_position: str, resume_text: str = '', jd_text: str = '') -> tuple[dict, list[str]]:
@@ -329,6 +400,7 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             'rag_context_count': 0,
             'asked_question_signatures': [],
             'used_knowledge_chunks': [],
+            'used_knowledge_groups': [],
             'stage_plan': {},
             'coverage_gaps': [],
         }
@@ -355,9 +427,14 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
     def retrieve_knowledge(self, *, session, history: list, resume_text: str = '', jd_text: str = '', last_evaluation: dict | None = None) -> list[dict]:
         memory = session.memory_summary or {}
         used_chunk_ids = list(memory.get('used_knowledge_chunks') or [])
+        used_group_ids = set(memory.get('used_knowledge_groups') or [])
         for question in session.questions.exclude(rag_context__isnull=True):
             rag_context = question.rag_context if isinstance(question.rag_context, list) else []
             used_chunk_ids.extend(item.get('chunk_id') for item in rag_context if isinstance(item, dict))
+            used_group_ids.update(
+                item.get('semantic_group_id') for item in rag_context
+                if isinstance(item, dict) and item.get('semantic_group_id')
+            )
 
         try:
             result = search_knowledge_context(
@@ -375,7 +452,18 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             if isinstance(result, dict):
                 self.last_retrieval_trace = result.get('retrieval_trace') or {}
                 self.last_retrieval_explanation = result.get('retrieval_explanation') or {}
-                return result.get('contexts') or []
+                contexts = []
+                turn_groups = set()
+                for item in result.get('contexts') or []:
+                    group_id = item.get('semantic_group_id')
+                    if group_id and (group_id in used_group_ids or group_id in turn_groups):
+                        continue
+                    contexts.append(item)
+                    if group_id:
+                        turn_groups.add(group_id)
+                    if len(contexts) >= 4:
+                        break
+                return contexts
             self.last_retrieval_trace = {}
             self.last_retrieval_explanation = {}
             return result
@@ -474,6 +562,10 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             list(memory.get('used_knowledge_chunks') or []) +
             [item.get('chunk_id') for item in rag_context or [] if item.get('chunk_id')]
         ))
+        used_groups = list(dict.fromkeys(
+            list(memory.get('used_knowledge_groups') or []) +
+            [item.get('semantic_group_id') for item in rag_context or [] if item.get('semantic_group_id')]
+        ))
         signatures = list(dict.fromkeys(
             list(memory.get('asked_question_signatures') or []) +
             self._history_question_signatures(history)
@@ -513,6 +605,7 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             'stage_plan': plan,
             'coverage_gaps': coverage_gaps,
             'used_knowledge_chunks': used_chunks[-30:],
+            'used_knowledge_groups': used_groups[-30:],
             'asked_question_signatures': signatures[-30:],
             'rag_context_count': len(rag_context or []),
             'last_rag_sources': plan['rag_sources'],
@@ -577,9 +670,18 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
         source_node: str = '',
     ) -> None:
         normalized_importance = max(1, min(int(importance or 1), 5))
+        canonical = json.dumps({
+            'event_type': event_type,
+            'memory_key': memory_key,
+            'value_summary': _json_safe(value_summary or {}),
+        }, ensure_ascii=False, sort_keys=True, separators=(',', ':'), default=str)
+        dedup_key = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        if any(event.get('dedup_key') == dedup_key for event in state.memory_events):
+            return
         state.memory_events.append({
             'event_type': event_type,
             'memory_key': memory_key,
+            'dedup_key': dedup_key,
             'value_summary': value_summary or {},
             'importance': normalized_importance,
             'source_node': source_node,
@@ -937,7 +1039,11 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             existing_signatures,
             self._question_signature,
         )
-        if 'duplicate_question' in state.validation_errors:
+        previous_questions = state.session.questions.values_list('question_text', flat=True)
+        if self._is_semantic_duplicate_question(full_question_text, previous_questions):
+            state.validation_errors.append('semantic_duplicate_question')
+        state.validation_errors = list(dict.fromkeys(state.validation_errors))
+        if 'duplicate_question' in state.validation_errors or 'semantic_duplicate_question' in state.validation_errors:
             fallback_target = (state.session.memory_summary or {}).get('stage_plan', {}).get('target')
             full_question_text = f"{fallback_target or '围绕上一题回答中最关键的能力缺口'}，请补充一个更具体的真实案例，并说明你的个人贡献和结果验证。"
             state.fallback_reason = 'duplicate_question_signature'
@@ -1067,6 +1173,7 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
                 trace=trace,
                 event_type=event.get('event_type') or InterviewAgentMemoryEvent.EventType.OBSERVATION,
                 memory_key=event.get('memory_key') or '',
+                dedup_key=event.get('dedup_key') or None,
                 value_summary=_json_safe(event.get('value_summary') or {}),
                 importance=event.get('importance') or 1,
                 source_node=event.get('source_node') or '',
@@ -1075,7 +1182,7 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             for event in (state.memory_events or [])
         ]
         if memory_records:
-            InterviewAgentMemoryEvent.objects.bulk_create(memory_records)
+            InterviewAgentMemoryEvent.objects.bulk_create(memory_records, ignore_conflicts=True)
 
     def generate_next_question_stream(self, **kwargs):
         yield from generate_next_question_stream(**kwargs)
@@ -1389,6 +1496,9 @@ class CompositeInterviewAgentEngine(LangGraphInterviewAgentEngine):
 
 def get_interview_agent_engine() -> InterviewAgentEngine:
     engine_name = getattr(settings, 'INTERVIEW_AGENT_ENGINE', 'default')
+    if engine_name == 'composite_v4':
+        from .agent_v4 import CompositeV4InterviewAgentEngine
+        return CompositeV4InterviewAgentEngine()
     if engine_name == 'composite_v3':
         from .agent_v3 import CompositeV3InterviewAgentEngine
         return CompositeV3InterviewAgentEngine()

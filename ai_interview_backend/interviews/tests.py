@@ -323,6 +323,100 @@ class InterviewAgentEngineTests(TestCase):
         self.assertEqual(events[0]['id'], high.id)
         self.assertNotIn('expired', [event['memory_key'] for event in events])
 
+    def test_memory_recall_uses_type_decay_and_tracks_recall_metadata(self):
+        user = User.objects.create_user(username='memory-decay', email='memory-decay@example.com', password='pass')
+        session = InterviewSession.objects.create(
+            user=user,
+            job_position='后端开发',
+            status=InterviewSession.Status.RUNNING,
+            started_at=timezone.now(),
+        )
+        old_coverage = InterviewAgentMemoryEvent.objects.create(
+            session=session,
+            event_type=InterviewAgentMemoryEvent.EventType.COVERAGE,
+            memory_key='coverage:technical_depth',
+            value_summary={'dimension': 'technical_depth', 'verified': True},
+            importance=4,
+            source_node='update_coverage',
+        )
+        recent_environment = InterviewAgentMemoryEvent.objects.create(
+            session=session,
+            event_type=InterviewAgentMemoryEvent.EventType.ENVIRONMENT,
+            memory_key='environment_context',
+            value_summary={'risk_flags': ['low_asr_confidence']},
+            importance=4,
+            source_node='summarize_environment_context',
+        )
+        InterviewAgentMemoryEvent.objects.filter(id=old_coverage.id).update(
+            created_at=timezone.now() - timedelta(days=1),
+        )
+        InterviewAgentMemoryEvent.objects.filter(id=recent_environment.id).update(
+            created_at=timezone.now() - timedelta(minutes=20),
+        )
+
+        events = DefaultInterviewAgentEngine().load_relevant_memory_events(session=session, limit=2)
+
+        self.assertEqual(events[0]['id'], old_coverage.id)
+        old_coverage.refresh_from_db()
+        recent_environment.refresh_from_db()
+        self.assertEqual(old_coverage.recall_count, 1)
+        self.assertEqual(recent_environment.recall_count, 1)
+        self.assertIsNotNone(old_coverage.last_recalled_at)
+
+    def test_memory_event_is_deduplicated_within_one_agent_turn(self):
+        engine = DefaultInterviewAgentEngine()
+        state = InterviewAgentState(session=None, user=None)
+        event = {
+            'event_type': InterviewAgentMemoryEvent.EventType.PLAN,
+            'memory_key': 'question_plan',
+            'value_summary': {'target': '缓存一致性'},
+            'importance': 5,
+            'source_node': 'plan_next_question',
+        }
+
+        engine._record_memory_event(state, **event)
+        engine._record_memory_event(state, **event)
+
+        self.assertEqual(len(state.memory_events), 1)
+        self.assertTrue(state.memory_events[0]['dedup_key'])
+
+    def test_semantic_question_dedup_catches_paraphrases(self):
+        engine = DefaultInterviewAgentEngine()
+
+        self.assertTrue(engine._is_semantic_duplicate_question(
+            '你们如何保证 Redis 缓存和数据库之间的数据一致性？',
+            ['在你的项目中，Redis 缓存与数据库的数据一致性是如何保证的？'],
+        ))
+        self.assertFalse(engine._is_semantic_duplicate_question(
+            '请说明线上服务的限流和熔断策略。',
+            ['在你的项目中，Redis 缓存与数据库的数据一致性是如何保证的？'],
+        ))
+
+    @patch('interviews.agent.search_knowledge_context')
+    def test_retrieve_knowledge_deduplicates_semantic_groups(self, search_mock):
+        user = User.objects.create_user(username='rag-group-user', email='rag-group@example.com', password='pass')
+        session = InterviewSession.objects.create(
+            user=user,
+            job_position='后端开发',
+            status=InterviewSession.Status.RUNNING,
+            started_at=timezone.now(),
+            memory_summary={'used_knowledge_chunks': [], 'used_knowledge_groups': ['group-used']},
+        )
+        search_mock.return_value = {
+            'contexts': [
+                {'chunk_id': 'chunk-used', 'semantic_group_id': 'group-used'},
+                {'chunk_id': 'chunk-a', 'semantic_group_id': 'group-new'},
+                {'chunk_id': 'chunk-b', 'semantic_group_id': 'group-new'},
+                {'chunk_id': 'chunk-c', 'semantic_group_id': 'group-other'},
+            ],
+            'retrieval_trace': {},
+            'retrieval_explanation': {},
+        }
+
+        contexts = DefaultInterviewAgentEngine().retrieve_knowledge(session=session, history=[])
+
+        self.assertEqual([item['chunk_id'] for item in contexts], ['chunk-a', 'chunk-c'])
+
     def test_memory_event_retention_policy_sets_expiry_for_transient_signals(self):
         engine = DefaultInterviewAgentEngine()
         state = InterviewAgentState(session=None, user=None)

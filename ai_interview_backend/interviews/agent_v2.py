@@ -25,6 +25,7 @@ from .evaluation import (
     validate_generated_question,
 )
 from .models import (
+    InterviewAgentExecution,
     InterviewAgentMemoryEvent,
     InterviewAgentNodeRun,
     InterviewAgentRun,
@@ -100,13 +101,40 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             idempotent=idempotent,
         ))
 
-    def _compile_prepare_graph(self):
+    def _graph_state_schema(self):
+        return dict
+
+    def _append_memory_event(self, state: dict, *, event_type: str, memory_key: str, value_summary: dict, importance: int, source_node: str) -> list[dict]:
+        event = {
+            'event_type': event_type,
+            'memory_key': memory_key,
+            'value_summary': _json_safe(value_summary or {}),
+            'importance': max(1, min(int(importance or 1), 5)),
+            'source_node': source_node,
+        }
+        event['dedup_key'] = self._hash_payload({
+            'event_type': event_type,
+            'memory_key': memory_key,
+            'value_summary': event['value_summary'],
+        })
+        event['expires_at'] = self._memory_event_expires_at(
+            event_type,
+            memory_key,
+            event['value_summary'],
+            event['importance'],
+        )
+        events = list(state.get('memory_events') or [])
+        if not any(item.get('dedup_key') == event['dedup_key'] for item in events):
+            events.append(event)
+        return events
+
+    def _compile_prepare_graph(self, checkpointer=None):
         try:
             from langgraph.graph import END, StateGraph
         except Exception as exc:
             logger.warning('Composite V2 prepare graph unavailable: %s', exc)
             return None
-        graph = StateGraph(dict)
+        graph = StateGraph(self._graph_state_schema())
         for name, func in (
             ('load_context', self._node_load_context),
             ('normalize_input', self._node_normalize_input),
@@ -137,15 +165,15 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         graph.add_edge('retrieve', 'assemble_context')
         graph.add_edge('skip_rag', 'assemble_context')
         graph.add_edge('assemble_context', END)
-        return graph.compile()
+        return graph.compile(checkpointer=checkpointer)
 
-    def _compile_finalize_graph(self):
+    def _compile_finalize_graph(self, checkpointer=None):
         try:
             from langgraph.graph import END, StateGraph
         except Exception as exc:
             logger.warning('Composite V2 finalize graph unavailable: %s', exc)
             return None
-        graph = StateGraph(dict)
+        graph = StateGraph(self._graph_state_schema())
         for name, func in (
             ('ingest_generation', self._node_ingest_generation),
             ('validate', self._node_validate),
@@ -166,15 +194,15 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         graph.add_edge('safe_fallback', 'persist')
         graph.add_edge('persist', 'reflect')
         graph.add_edge('reflect', END)
-        return graph.compile()
+        return graph.compile(checkpointer=checkpointer)
 
-    def _compile_report_graph(self):
+    def _compile_report_graph(self, checkpointer=None):
         try:
             from langgraph.graph import END, StateGraph
         except Exception as exc:
             logger.warning('Composite V2 report graph unavailable: %s', exc)
             return None
-        graph = StateGraph(dict)
+        graph = StateGraph(self._graph_state_schema())
         for name, func in (
             ('report_collect', self._node_report_collect),
             ('report_generate', self._node_report_generate),
@@ -185,7 +213,10 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         graph.add_edge('report_collect', 'report_generate')
         graph.add_edge('report_generate', 'report_validate')
         graph.add_edge('report_validate', END)
-        return graph.compile()
+        return graph.compile(checkpointer=checkpointer)
+
+    def _invoke_graph(self, phase: str, graph, state: dict) -> dict:
+        return graph.invoke({'state': state}).get('state', state)
 
     def _wrap_node(self, name: str, func: Callable[[dict], dict]):
         def wrapped(payload: dict):
@@ -299,7 +330,7 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             'retrieval_intent', 'rag_context', 'retrieval_trace', 'generation_context',
             'context_budget', 'generated_text', 'generation_attempt', 'validation_errors',
             'fallback_reason', 'generated_question_id', 'node_order', 'node_outputs',
-            'report_data', 'report_validation_errors',
+            'report_data', 'report_validation_errors', 'memory_events',
         )
         snapshot = {key: state.get(key) for key in allowed if key in state}
         if 'generated_text' in snapshot:
@@ -460,7 +491,20 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             state.get('current_question_plan') or {},
             confidence_threshold=self.confidence_threshold,
         )
-        return {'coverage_summary': summary, 'answer_evaluation': evaluation}
+        memory_events = self._append_memory_event(
+            state,
+            event_type=InterviewAgentMemoryEvent.EventType.COVERAGE,
+            memory_key=f"coverage:{(state.get('current_question_plan') or {}).get('target_dimension') or question.id}",
+            value_summary={
+                'target_dimension': (state.get('current_question_plan') or {}).get('target_dimension') or '',
+                'coverage_gaps': summary.get('coverage_gaps') or [],
+                'applied': bool(summary.get('last_coverage_applied')),
+                'confidence': evaluation.get('confidence'),
+            },
+            importance=5 if summary.get('last_coverage_applied') else 3,
+            source_node='update_coverage',
+        )
+        return {'coverage_summary': summary, 'answer_evaluation': evaluation, 'memory_events': memory_events}
 
     def _node_update_memory_v2(self, state: dict) -> dict:
         session = InterviewSession.objects.get(id=state['session_id'])
@@ -481,7 +525,10 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             jd_text=state.get('jd_text') or '',
         )
         preserved = session.memory_summary or {}
-        for key in ('asked_question_signatures', 'used_knowledge_chunks', 'tool_observations', 'last_tool_observation'):
+        for key in (
+            'asked_question_signatures', 'used_knowledge_chunks', 'used_knowledge_groups',
+            'tool_observations', 'last_tool_observation',
+        ):
             if preserved.get(key) and not refreshed.get(key):
                 refreshed[key] = preserved[key]
         refreshed['adaptive_difficulty'] = self.decide_difficulty(
@@ -527,7 +574,21 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         plan['retrieval_intent'] = retrieval_intent
         session.memory_summary = {**(session.memory_summary or {}), 'stage_plan': plan}
         session.save(update_fields=['memory_summary', 'updated_at'])
-        return {'question_plan': plan, 'retrieval_intent': retrieval_intent}
+        memory_events = self._append_memory_event(
+            state,
+            event_type=InterviewAgentMemoryEvent.EventType.PLAN,
+            memory_key='question_plan',
+            value_summary={
+                'target_stage': plan.get('target_stage'),
+                'target_dimension': plan.get('target_dimension'),
+                'target_gap': plan.get('target_gap'),
+                'next_action': plan.get('next_action'),
+                'retrieval_intent': retrieval_intent,
+            },
+            importance=4,
+            source_node='strategy_plan',
+        )
+        return {'question_plan': plan, 'retrieval_intent': retrieval_intent, 'memory_events': memory_events}
 
     def _node_retrieve_v2(self, state: dict) -> dict:
         session = InterviewSession.objects.select_related('user').get(id=state['session_id'])
@@ -556,12 +617,26 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         contexts = output.get('contexts') or []
         plan = {**plan, 'use_rag': bool(contexts), 'rag_source_ids': [item.get('chunk_id') for item in contexts[:3] if item.get('chunk_id')]}
         fallback = '' if contexts else (result.error or 'no_approved_rag_context')
+        memory_events = self._append_memory_event(
+            state,
+            event_type=InterviewAgentMemoryEvent.EventType.OBSERVATION,
+            memory_key='knowledge.hybrid_search',
+            value_summary={
+                'source_count': len(contexts),
+                'chunk_ids': [item.get('chunk_id') for item in contexts if item.get('chunk_id')],
+                'semantic_group_ids': [item.get('semantic_group_id') for item in contexts if item.get('semantic_group_id')],
+                'fallback_reason': fallback,
+            },
+            importance=4 if contexts else 2,
+            source_node='retrieve',
+        )
         return {
             'rag_context': contexts,
             'retrieval_trace': output.get('retrieval_trace') or {},
             'question_plan': plan,
             'tool_calls': state.get('tool_calls', []),
             'fallback_reason': fallback,
+            'memory_events': memory_events,
             '_node_status': InterviewAgentNodeRun.Status.SUCCEEDED if contexts else InterviewAgentNodeRun.Status.DEGRADED,
         }
 
@@ -612,6 +687,9 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         plan = state.get('question_plan') or {}
         if plan.get('target_stage') and plan.get('stage') and plan['target_stage'] != plan['stage']:
             errors.append('stage_mismatch')
+        previous_questions = session.questions.values_list('question_text', flat=True)
+        if self._is_semantic_duplicate_question(text, previous_questions):
+            errors.append('semantic_duplicate_question')
         return list(dict.fromkeys(errors))
 
     def _node_validate(self, state: dict) -> dict:
@@ -679,6 +757,19 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             'validation_status': 'validated',
         }
         with transaction.atomic():
+            expected_execution_version = state.get('execution_version')
+            execution = InterviewAgentExecution.objects.select_for_update().filter(
+                run_id=state['run_id'],
+            ).first()
+            if execution and expected_execution_version is not None:
+                if (
+                    execution.version != int(expected_execution_version)
+                    or execution.status not in (
+                        InterviewAgentExecution.Status.EVALUATED,
+                        InterviewAgentExecution.Status.GENERATING,
+                    )
+                ):
+                    raise RuntimeError('execution_fenced_before_question_persist')
             question, _ = InterviewQuestion.objects.get_or_create(
                 session=session,
                 sequence=int(state.get('answered_count') or 0) + 1,
@@ -687,7 +778,25 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             memory = self.remember_generated_question(session.memory_summary or {}, question.question_text)
             session.memory_summary = memory
             session.save(update_fields=['memory_summary', 'updated_at'])
-        return {'generated_question_id': question.id, 'generated_text': question.question_text}
+        memory_events = self._append_memory_event(
+            state,
+            event_type=InterviewAgentMemoryEvent.EventType.QUESTION,
+            memory_key=f'question:{question.sequence}',
+            value_summary={
+                'question_id': question.id,
+                'sequence': question.sequence,
+                'question_text': question.question_text,
+                'target_dimension': plan.get('target_dimension'),
+                'rag_source_ids': plan.get('rag_source_ids') or [],
+            },
+            importance=4,
+            source_node='persist',
+        )
+        return {
+            'generated_question_id': question.id,
+            'generated_text': question.question_text,
+            'memory_events': memory_events,
+        }
 
     def _node_reflect(self, state: dict) -> dict:
         run = InterviewAgentRun.objects.get(id=state['run_id'])
@@ -824,6 +933,7 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             'jd_text': jd_text or '',
             'media_context': _json_safe(media_context or {}),
             'tool_calls': [],
+            'memory_events': [],
             'node_order': [],
             'node_outputs': {},
             'generation_attempt': 0,
@@ -832,7 +942,7 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
 
     def _invoke_prepare(self, state: dict) -> dict:
         if self._prepare_graph:
-            return self._prepare_graph.invoke({'state': state}).get('state', state)
+            return self._invoke_graph('prepare', self._prepare_graph, state)
         for name, func in (
             ('load_context', self._node_load_context), ('normalize_input', self._node_normalize_input),
             ('rule_evaluate', self._node_rule_evaluate),
@@ -915,6 +1025,7 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             node_order=state.get('node_order') or [],
             node_outputs=state.get('node_outputs') or {},
             tool_calls=state.get('tool_calls') or [],
+            memory_events=state.get('memory_events') or [],
             retrieved_memory_events=state.get('retrieved_memory_events') or [],
             context_budget=state.get('context_budget') or {},
             compressed_context_summary=state.get('generation_context') or {},
@@ -948,7 +1059,7 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         run = InterviewAgentRun.objects.get(id=getattr(state, 'agent_run_id'))
         dto = {**dto, **(run.state_snapshot or {}), 'generated_text': full_question_text, 'generation_attempt': 0}
         if self._finalize_graph:
-            dto = self._finalize_graph.invoke({'state': dto}).get('state', dto)
+            dto = self._invoke_graph('finalize', self._finalize_graph, dto)
         else:
             dto = self._run_node('ingest_generation', dto, self._node_ingest_generation)
             while True:
@@ -1006,7 +1117,7 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             'node_outputs': {},
         }
         if self._report_graph:
-            state = self._report_graph.invoke({'state': state}).get('state', state)
+            state = self._invoke_graph('report', self._report_graph, state)
         else:
             for name, func in (
                 ('report_collect', self._node_report_collect),

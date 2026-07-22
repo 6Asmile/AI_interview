@@ -50,15 +50,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
 import { useAuthStore } from '@/store/modules/auth';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { Loading } from '@element-plus/icons-vue';
+import { startGitHubOAuthApi } from '@/api/modules/auth';
 
 const authStore = useAuthStore();
-const route = useRoute();
 const router = useRouter();
 
 const loading = ref(false);
@@ -71,22 +71,6 @@ const mfaRequired = ref(false);
 const loginRules = reactive<FormRules>({
   email: [{ required: true, message: '请输入邮箱', trigger: 'blur' }, { type: 'email', message: '请输入有效的邮箱地址', trigger: ['blur', 'change'] }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-});
-
-onMounted(async () => {
-  const code = route.query.code as string;
-  if (code) {
-    isAuthenticating.value = true;
-    try {
-      await authStore.loginWithGitHub({ code });
-      ElMessage.success('GitHub 授权登录成功！');
-    } catch (error) {
-      console.error('GitHub 登录流程失败', error);
-      ElMessage.error('GitHub 授权失败，请重试。');
-      await router.replace({ query: {} });
-      isAuthenticating.value = false;
-    }
-  }
 });
 
 // 【核心修正】只定义一次
@@ -110,22 +94,19 @@ const handleLogin = async () => {
   });
 };
 
-const handleGitHubLogin = () => {
-  const clientID = import.meta.env.VITE_GITHUB_CLIENT_ID;
-  if (!clientID) {
-    ElMessage.error('GitHub 登录未配置，请联系管理员。');
-    return;
+const handleGitHubLogin = async () => {
+  isAuthenticating.value = true;
+  try {
+    const result = await startGitHubOAuthApi('login', '/dashboard');
+    window.location.assign(result.authorize_url);
+  } catch (error: any) {
+    isAuthenticating.value = false;
+    ElMessage.error(error?.response?.data?.message || 'GitHub 登录暂不可用，请稍后重试。');
   }
-  const redirectUri = `${window.location.origin}/oauth/callback`; // 跟随当前前端端口
-  localStorage.setItem('oauth_flow', 'login'); // 设置登录标记
-  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=user:email`;
-  window.location.href = githubAuthUrl;
 };
 
 const openAdminLogin = () => {
-  const apiBase = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-  const backendBase = apiBase.replace(/\/api\/v1\/?$/, '');
-  window.location.href = `${backendBase}/admin/login/?next=/admin/`;
+  window.location.href = import.meta.env.VITE_ADMIN_APP_URL || 'http://127.0.0.1:5174/login';
 };
 </script>
 

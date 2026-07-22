@@ -829,6 +829,7 @@ def _context_from_chunk(chunk: KnowledgeChunk, score: float) -> dict:
     return {
         'document_id': str(document.id),
         'chunk_id': str(chunk.id),
+        'semantic_group_id': chunk.semantic_group_id,
         'title': document.title,
         'source_type': document.source_type,
         'job_positions': document.job_positions,
@@ -992,7 +993,7 @@ def explain_retrieval_trace(trace: dict | None, contexts: list[dict] | None = No
         {
             'name': 'policy_guard',
             'status': 'ok',
-            'summary': f"MySQL 二次校验过滤 {trace.get('filtered_count', 0)} 个候选",
+            'summary': f"PostgreSQL 二次校验过滤 {trace.get('filtered_count', 0)} 个候选",
             'detail': filter_counts,
         },
         {

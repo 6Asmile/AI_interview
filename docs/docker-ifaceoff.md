@@ -12,7 +12,7 @@ notepad .env.docker
 至少建议修改：
 
 - `SECRET_KEY`
-- `DB_PASSWORD`
+- `IFACEOFF_DB_PASSWORD`、`AGENT_DB_PASSWORD`
 - `FRONTEND_PORT`
 - `BACKEND_PORT`
 - `BAILIAN_API_KEY`、`BAILIAN_OPENAI_BASE_URL`、`BAILIAN_DASHSCOPE_BASE_URL`，如果要使用阿里云百炼模型网关
@@ -53,7 +53,8 @@ notepad .env.docker
 - `Ifaceoff-backend`: Django/DRF/Channels ASGI 服务
 - `Ifaceoff-celery-worker`: 知识库解析、索引、报告、视频等异步任务
 - `Ifaceoff-celery-beat`: 定时任务
-- `Ifaceoff-mysql`: MySQL 8
+- `Ifaceoff-agent-service`: LangGraph 内部控制面和可恢复事件流
+- `Ifaceoff-postgres`: PostgreSQL 16，按数据库和角色隔离业务、Agent 与模型网关
 - `Ifaceoff-redis`: Redis 缓存、Channels、Celery result backend
 - `Ifaceoff-rabbitmq`: Celery broker
 - `Ifaceoff-qdrant`: 向量库

@@ -3,7 +3,7 @@ from celery import shared_task
 from django.utils import timezone
 from .models import Post, DailyPostStats
 from .recommendations import calculate_recommendations
-from django.core.cache import cache
+from core.cache_policy import set_policy_value
 
 @shared_task
 def record_daily_stats():
@@ -35,7 +35,7 @@ def generate_recommendations_for_post(post_id: int):
         # 缓存键的格式：recommendations:post_id
         cache_key = f"recommendations:{post_id}"
         # 缓存有效期设置为 1 天 (86400秒)，之后会自动过期或被下次更新覆盖
-        cache.set(cache_key, recommended_ids, timeout=86400)
+        set_policy_value(cache_key, recommended_ids, 'article_recommendations')
 
         return f"Successfully generated recommendations for Post ID {post_id}"
     except Post.DoesNotExist:

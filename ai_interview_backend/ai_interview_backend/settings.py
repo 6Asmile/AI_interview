@@ -13,7 +13,10 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 #接口文档地址：http://127.0.0.1:8000/api/v1/schema/swagger-ui/
 import os
 from pathlib import Path
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv # 添加这一行
+
+from .database import postgres_database_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,6 +33,16 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
+
+PUBLIC_BACKEND_URL = os.getenv('PUBLIC_BACKEND_URL', 'http://127.0.0.1:8000').rstrip('/')
+PUBLIC_FRONTEND_URL = os.getenv('PUBLIC_FRONTEND_URL', 'http://127.0.0.1:5173').rstrip('/')
+PUBLIC_ADMIN_URL = os.getenv('PUBLIC_ADMIN_URL', 'http://127.0.0.1:5174').rstrip('/')
+GITHUB_CLIENT_ID = os.getenv('GITHUB_CLIENT_ID', '')
+GITHUB_CLIENT_SECRET = os.getenv('GITHUB_CLIENT_SECRET', '')
+GITHUB_OAUTH_CALLBACK_URL = os.getenv(
+    'GITHUB_OAUTH_CALLBACK_URL',
+    f'{PUBLIC_BACKEND_URL}/api/v1/auth/oauth/github/callback/',
+)
 
 
 # Application definition
@@ -73,7 +86,8 @@ INSTALLED_APPS = [
     'notifications',
    'chat',
    'video_uploads',
-   'knowledge',
+    'knowledge',
+   'staff_admin',
 ]
 
 # 3. 将应用的入口指向 Channels 的 ASGI application
@@ -81,6 +95,7 @@ ASGI_APPLICATION = 'ai_interview_backend.asgi.application'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'core.middleware.RequestIdMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -115,21 +130,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'ai_interview_backend.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/5.0/ref/settings/#databases
-
+# PostgreSQL is the only relational runtime database.
+default_database_url = (
+    f"postgresql://{os.getenv('POSTGRES_USER', 'ifaceoff_app')}:"
+    f"{os.getenv('POSTGRES_PASSWORD', 'ifaceoff-app-change-me')}@"
+    f"{os.getenv('POSTGRES_HOST', '127.0.0.1')}:"
+    f"{os.getenv('POSTGRES_PORT', '5433')}/"
+    f"{os.getenv('POSTGRES_DB', 'ifaceoff_app')}"
+)
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
-        'OPTIONS': {
-            'charset': 'utf8mb4',
-        },
-    }
+    'default': postgres_database_config(
+        os.getenv('IFACEOFF_DATABASE_URL', default_database_url),
+        conn_max_age=int(os.getenv('POSTGRES_CONN_MAX_AGE', '0')),
+        pool_enabled=os.getenv('POSTGRES_POOL_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on'),
+        disable_server_side_cursors=os.getenv('POSTGRES_DISABLE_SERVER_SIDE_CURSORS', 'true').lower()
+        in ('1', 'true', 'yes', 'on'),
+    )
 }
 
 
@@ -192,6 +208,20 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/min',
+        'user': '300/min',
+        'login': '5/min',
+        'verification': '5/min',
+        'chat': '60/min',
+        'upload': '10/min',
+        'ai_action': '20/hour',
+    },
+    'EXCEPTION_HANDLER': 'core.exceptions.api_exception_handler',
     #添加这一行来全局启用分页
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardResultsSetPagination',
 # 【核心新增】告诉 DRF 使用 spectacular 来生成 API schema
@@ -242,6 +272,14 @@ SIMPLE_JWT = {
 #
 # 允许所有来源（开发时方便，生产环境请使用下面的白名单）
 CORS_ALLOW_ALL_ORIGINS = False  # 生产环境绝不能允许所有
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    'idempotency-key',
+    'x-auth-mode',
+    'x-request-id',
+)
+CORS_EXPOSE_HEADERS = ('X-Request-Id', 'X-Agent-Run-Id')
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if origin.strip()]
 if DEBUG:
     CORS_ALLOWED_ORIGINS += [
@@ -255,6 +293,26 @@ if DEBUG:
     ]
 # 确保 CSRF 信任我们的前端来源
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+CSRF_COOKIE_NAME = 'csrftoken'
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SECURE = os.getenv('AUTH_COOKIE_SECURE', str(not DEBUG)).lower() in ('true', '1', 't')
+CSRF_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE
+SESSION_COOKIE_SAMESITE = CSRF_COOKIE_SAMESITE
+AUTH_REFRESH_COOKIE_NAME = os.getenv('AUTH_REFRESH_COOKIE_NAME', 'ifaceoff_refresh')
+AUTH_REFRESH_COOKIE_PATH = '/api/v1/auth/'
+AUTH_REFRESH_COOKIE_MAX_AGE = int(os.getenv('AUTH_REFRESH_COOKIE_MAX_AGE', 7 * 24 * 3600))
+AUTH_COOKIE_SECURE = CSRF_COOKIE_SECURE
+AUTH_COOKIE_SAMESITE = CSRF_COOKIE_SAMESITE
+AUTH_COOKIE_DOMAIN = os.getenv('AUTH_COOKIE_DOMAIN', '') or None
+KNOWLEDGE_IMPORT_MAX_FILES = int(os.getenv('KNOWLEDGE_IMPORT_MAX_FILES', '20'))
+KNOWLEDGE_IMPORT_MAX_FILE_BYTES = int(os.getenv('KNOWLEDGE_IMPORT_MAX_FILE_BYTES', str(50 * 1024 * 1024)))
+KNOWLEDGE_IMPORT_MAX_BATCH_BYTES = int(os.getenv('KNOWLEDGE_IMPORT_MAX_BATCH_BYTES', str(200 * 1024 * 1024)))
+WS_TICKET_TTL_SECONDS = int(os.getenv('WS_TICKET_TTL_SECONDS', '45'))
+WS_ALLOW_LEGACY_QUERY_JWT = os.getenv('WS_ALLOW_LEGACY_QUERY_JWT', 'False').lower() in ('true', '1', 't')
+STAFF_SESSION_COOKIE_NAME = os.getenv('STAFF_SESSION_COOKIE_NAME', 'ifaceoff_staff_session')
+STAFF_SESSION_HOURS = int(os.getenv('STAFF_SESSION_HOURS', '8'))
+STAFF_COOKIE_DOMAIN = os.getenv('STAFF_COOKIE_DOMAIN', '') or None
 # 或者使用更安全的白名单模式
 # CORS_ALLOWED_ORIGINS = [
 #     "http://localhost:5173",
@@ -282,17 +340,31 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # ---------------- CACHES CONFIGURATION ----------------
 REDIS_HOST = os.getenv('REDIS_HOST', '127.0.0.1')
 REDIS_PORT = os.getenv('REDIS_PORT', '6379')
+REDIS_CACHE_URL = os.getenv('REDIS_CACHE_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/1')
+REDIS_REALTIME_URL = os.getenv('REDIS_REALTIME_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/3')
 
 
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1", # 使用 Redis 的 1 号数据库
+        "LOCATION": REDIS_CACHE_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "IGNORE_EXCEPTIONS": True,
         },
-        "TIMEOUT": 3600 # 默认缓存超时时间 (1小时)
-    }
+        "TIMEOUT": 3600,
+        "KEY_PREFIX": "ifaceoff-cache",
+    },
+    "realtime": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_REALTIME_URL,
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "IGNORE_EXCEPTIONS": False,
+        },
+        "TIMEOUT": 300,
+        "KEY_PREFIX": "ifaceoff-realtime",
+    },
 }
 
 # --- EMAIL SETTINGS ---
@@ -344,7 +416,10 @@ RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 
 CELERY_BROKER_URL = f'amqp://guest:guest@{RABBITMQ_HOST}:5672//'
 # 指定结果后端(Result Backend)的地址，用于存储任务执行结果
-CELERY_RESULT_BACKEND = f"redis://{REDIS_HOST}:{REDIS_PORT}/2"
+# Celery results are an operational acceleration layer. Durable task state lives
+# in PostgreSQL, so production may safely place these keys in the evictable
+# cache Redis without coupling workers to the realtime Redis fault domain.
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', REDIS_CACHE_URL)
 # 接受的内容类型
 CELERY_ACCEPT_CONTENT = ['json']
 # 任务序列化方式
@@ -353,6 +428,20 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 # Celery 使用的时区
 CELERY_TIMEZONE = 'UTC' # 与 Django 的 TIME_ZONE 保持一致
+CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIPLIER', '1'))
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_INSPECT_TIMEOUT_SECONDS = float(os.getenv('CELERY_INSPECT_TIMEOUT_SECONDS', '2'))
+CELERY_TASK_ROUTES = {
+    'interviews.tasks.run_interview_execution': {'queue': 'agent'},
+    'interviews.tasks.run_composite_v4_turn': {'queue': 'agent'},
+    'knowledge.tasks.*': {'queue': 'documents'},
+    'resumes.tasks.*': {'queue': 'documents'},
+    'video_uploads.tasks.*': {'queue': 'media'},
+    'notifications.tasks.*': {'queue': 'notifications'},
+    'chat.tasks.*': {'queue': 'notifications'},
+}
 
 # --- CELERY BEAT SETTINGS (定时任务调度器) ---
 from celery.schedules import crontab
@@ -373,6 +462,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chat.tasks.publish_pending_chat_outbox',
         'schedule': 60,
     },
+    'publish-notification-outbox-every-minute': {
+        'task': 'notifications.tasks.publish_notification_outbox',
+        'schedule': 60,
+    },
     'mark-stale-resume-imports': {
         'task': 'resumes.tasks.mark_stale_resume_import_jobs',
         'schedule': 300,
@@ -380,6 +473,16 @@ CELERY_BEAT_SCHEDULE = {
     'mark-stale-knowledge-jobs': {
         'task': 'knowledge.tasks.mark_stale_knowledge_jobs',
         'schedule': 300,
+    },
+    'publish-agent-dispatch-outbox': {
+        'task': 'interviews.tasks.publish_pending_agent_dispatches',
+        'schedule': 2,
+        'options': {'queue': 'notifications'},
+    },
+    'recover-stale-agent-executions': {
+        'task': 'interviews.tasks.recover_stale_agent_executions',
+        'schedule': 60,
+        'options': {'queue': 'notifications'},
     },
 }
 #celery -A ai_interview_backend worker -l info -P gevent
@@ -392,13 +495,16 @@ CHANNEL_LAYERS = {
         "CONFIG": {
             # 【核心修改】使用 redis://host:port/db 的格式
             # 注意：这里假设您的 REDIS_HOST 和 REDIS_PORT 变量已经定义好了
-            "hosts": [f"redis://{REDIS_HOST}:{REDIS_PORT}/3"],
+            "hosts": [REDIS_REALTIME_URL],
         },
     },
 }
 
 # --- INTERVIEW AGENT / RAG SETTINGS ---
-INTERVIEW_AGENT_ENGINE = os.getenv('INTERVIEW_AGENT_ENGINE', 'default')
+INTERVIEW_AGENT_ENGINE = os.getenv('INTERVIEW_AGENT_ENGINE', 'composite_v4')
+AGENT_DATABASE_URL = os.getenv('AGENT_DATABASE_URL', '')
+LITELLM_DATABASE_URL = os.getenv('LITELLM_DATABASE_URL', '')
+LANGFUSE_DATABASE_URL = os.getenv('LANGFUSE_DATABASE_URL', '')
 AGENT_V3_DEFAULT_TARGET_DURATION_MINUTES = int(os.getenv('AGENT_V3_DEFAULT_TARGET_DURATION_MINUTES', '30'))
 AGENT_V3_DEFAULT_MIN_DURATION_MINUTES = int(os.getenv('AGENT_V3_DEFAULT_MIN_DURATION_MINUTES', '20'))
 AGENT_V3_DEFAULT_HARD_MAX_DURATION_MINUTES = int(os.getenv('AGENT_V3_DEFAULT_HARD_MAX_DURATION_MINUTES', '45'))
@@ -408,10 +514,16 @@ AGENT_CONTEXT_TOKEN_BUDGET = int(os.getenv('AGENT_CONTEXT_TOKEN_BUDGET', '6000')
 AGENT_ENABLE_SLASH_COMMANDS = os.getenv('AGENT_ENABLE_SLASH_COMMANDS', 'true').lower() in ('1', 'true', 'yes', 'on')
 AGENT_ENABLE_MCP_ADAPTER = os.getenv('AGENT_ENABLE_MCP_ADAPTER', 'false').lower() in ('1', 'true', 'yes', 'on')
 AGENT_PROMPT_VERSION = os.getenv('AGENT_PROMPT_VERSION', 'interview-agent-v1')
-AGENT_STATE_SCHEMA_VERSION = int(os.getenv('AGENT_STATE_SCHEMA_VERSION', '2'))
+AGENT_STATE_SCHEMA_VERSION = int(os.getenv('AGENT_STATE_SCHEMA_VERSION', '4'))
+AGENT_MEMORY_EVENT_RETENTION_DAYS = int(os.getenv('AGENT_MEMORY_EVENT_RETENTION_DAYS', '30'))
+AGENT_CHECKPOINT_RETENTION_DAYS = int(os.getenv('AGENT_CHECKPOINT_RETENTION_DAYS', '30'))
 AGENT_MAX_GENERATION_RETRIES = int(os.getenv('AGENT_MAX_GENERATION_RETRIES', '2'))
 AGENT_EVALUATION_CONFIDENCE_THRESHOLD = float(os.getenv('AGENT_EVALUATION_CONFIDENCE_THRESHOLD', '0.6'))
 AGENT_NODE_TIMEOUT_SECONDS = int(os.getenv('AGENT_NODE_TIMEOUT_SECONDS', '30'))
+AGENT_EVENT_STREAM_MAXLEN = int(os.getenv('AGENT_EVENT_STREAM_MAXLEN', '2000'))
+INTERVIEW_LOCK_TIMEOUT_MS = int(os.getenv('INTERVIEW_LOCK_TIMEOUT_MS', '1500'))
+AGENT_EXECUTION_STALE_SECONDS = int(os.getenv('AGENT_EXECUTION_STALE_SECONDS', '360'))
+AGENT_EVENT_STREAM_TTL_SECONDS = int(os.getenv('AGENT_EVENT_STREAM_TTL_SECONDS', '86400'))
 MODEL_GATEWAY_TIMEOUT_SECONDS = int(os.getenv('MODEL_GATEWAY_TIMEOUT_SECONDS', '30'))
 MODEL_CREDENTIAL_ENCRYPTION_KEY = os.getenv('MODEL_CREDENTIAL_ENCRYPTION_KEY', '')
 LITELLM_PROXY_URL = os.getenv('LITELLM_PROXY_URL', 'http://127.0.0.1:4000/v1')

@@ -45,7 +45,7 @@
     
     <div v-else class="editor-main">
       <aside class="editor-sidebar"><ConfigPanel /></aside>
-      <main class="editor-canvas-wrapper"><ResumeCanvas /></main>
+      <section class="editor-canvas-wrapper" aria-label="简历画布"><ResumeCanvas /></section>
     </div>
 
     <el-dialog v-model="jdDialogVisible" title="AI 简历分析" width="50%" class="jd-dialog">

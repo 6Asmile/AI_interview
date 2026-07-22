@@ -127,11 +127,15 @@ const healthText = (modelType: AIModelItem['model_type']) => {
 
 <template>
   <div class="settings-container">
+    <header class="settings-heading">
+      <div><h1>AI 模型设置</h1><p>按任务类型选择模型并检查真实连通状态。凭据只返回脱敏提示，不返回完整密钥。</p></div>
+      <el-button type="primary" :loading="isSaving" @click="handleSave">保存设置</el-button>
+    </header>
     <el-card shadow="never" v-loading="isLoading">
       <template #header>
         <div class="card-header">
-          <span>AI 设置</span>
-          <el-button type="primary" :loading="isSaving" @click="handleSave">保存设置</el-button>
+          <strong>任务模型与 BYOK 凭据</strong>
+          <span>Chat · Embedding · Rerank · ASR · TTS</span>
         </div>
       </template>
 
@@ -276,11 +280,15 @@ const healthText = (modelType: AIModelItem['model_type']) => {
 .settings-container {
   padding: 24px;
 }
+.settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid #dfe4ec; }
+.settings-heading h1 { margin: 0; color: #1f2937; font-size: 28px; letter-spacing: 0; }
+.settings-heading p { margin: 7px 0 0; color: #667085; }
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
+.card-header span { color: #667085; font-size: 12px; }
 .form-item-description {
   font-size: 0.85rem;
   color: #909399;

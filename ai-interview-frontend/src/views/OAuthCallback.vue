@@ -1,63 +1,113 @@
 <template>
-  <div class="callback-container">
-    <el-icon class="is-loading" :size="50"><Loading /></el-icon>
-    <p>正在通过第三方平台授权，请稍候...</p>
-  </div>
+  <main class="callback-page">
+    <section class="callback-panel">
+      <template v-if="linkRequired">
+        <h1>确认绑定已有账号</h1>
+        <p>GitHub 验证邮箱 {{ emailHint }} 已存在。请输入原账号密码，确认由你本人完成绑定。</p>
+        <el-form label-position="top" @submit.prevent="confirmLink">
+          <el-form-item label="原账号密码">
+            <el-input v-model="password" type="password" show-password autocomplete="current-password" />
+          </el-form-item>
+          <el-button type="primary" :loading="loading" :disabled="!password" @click="confirmLink">确认并登录</el-button>
+          <el-button @click="router.replace('/login')">取消</el-button>
+        </el-form>
+      </template>
+      <template v-else>
+        <el-icon v-if="loading" class="is-loading" :size="44"><Loading /></el-icon>
+        <el-icon v-else class="error-icon" :size="44"><WarningFilled /></el-icon>
+        <h1>{{ loading ? '正在完成 GitHub 授权' : 'GitHub 授权未完成' }}</h1>
+        <p>{{ message }}</p>
+        <el-button v-if="!loading" type="primary" @click="router.replace('/login')">返回登录</el-button>
+      </template>
+    </section>
+  </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
+import { Loading, WarningFilled } from '@element-plus/icons-vue';
+import { browserSessionApi, confirmGitHubLinkApi, ensureCsrfApi } from '@/api/modules/auth';
 import { useAuthStore } from '@/store/modules/auth';
-import { connectGitHubApi } from '@/api/modules/user';
-import { Loading } from '@element-plus/icons-vue';
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const loading = ref(true);
+const linkRequired = ref(false);
+const password = ref('');
+const emailHint = ref(String(route.query.email_hint || ''));
+const message = ref('正在安全地建立候选人会话，请稍候。');
+const linkToken = String(route.query.link_token || '');
+
+const errorMessages: Record<string, string> = {
+  oauth_cancelled: '你取消了 GitHub 授权。',
+  oauth_state_missing: '授权状态缺失，请重新发起登录。',
+  oauth_state_invalid: '授权状态已过期或已经使用，请重新发起登录。',
+  github_provider_unavailable: '暂时无法连接 GitHub，请稍后重试。',
+  github_token_exchange_failed: 'GitHub 授权码交换失败，请重新授权。',
+  github_verified_email_required: 'GitHub 没有提供已验证邮箱，请先在 GitHub 中验证邮箱。',
+  github_identity_in_use: '该 GitHub 身份已经绑定其他账号。',
+  candidate_disabled: '该候选人账号已被停用。',
+};
+
+const completeLogin = async () => {
+  await ensureCsrfApi();
+  const session = await browserSessionApi();
+  authStore.setSession(session.access, session.user);
+  authStore.initialized = true;
+  const next = String(route.query.next || (session.user.onboarding_completed_at ? '/dashboard' : '/onboarding'));
+  await router.replace(next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard');
+};
+
+const confirmLink = async () => {
+  loading.value = true;
+  try {
+    await ensureCsrfApi();
+    const result = await confirmGitHubLinkApi(linkToken, password.value);
+    await authStore.handleLoginSuccess(result.access);
+    ElMessage.success('GitHub 已安全绑定到原账号。');
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || '账号绑定确认失败。');
+  } finally {
+    loading.value = false;
+  }
+};
 
 onMounted(async () => {
-  const code = route.query.code as string;
-  const flow = localStorage.getItem('oauth_flow'); // 获取流程类型
-
-  if (code) {
-    // 清理标记，防止重复执行
-    localStorage.removeItem('oauth_flow'); 
-    
-    if (flow === 'login') {
-      // --- 处理登录流程 ---
-      try {
-        await authStore.loginWithGitHub({ code });
-        ElMessage.success('GitHub 授权登录成功！');
-        // 跳转已在 action 中处理
-      } catch (error) {
-        ElMessage.error('GitHub 登录流程失败，请重试。');
-        await router.push('/login');
-      }
-    } else if (flow === 'connect') {
-      // --- 处理绑定流程 ---
-      try {
-        await connectGitHubApi(code);
-        ElMessage.success('GitHub 账户绑定成功！');
-      } catch (error) {
-        ElMessage.error("绑定失败，该 GitHub 账户可能已被其他用户使用。");
-      } finally {
-        // 无论成功失败，都跳回个人中心
-        await router.push('/dashboard/profile');
-      }
-    } else {
-      ElMessage.error('未知的授权流程。');
-      await router.push('/login');
+  const status = String(route.query.status || '');
+  if (status === 'link_required' && linkToken) {
+    linkRequired.value = true;
+    loading.value = false;
+    return;
+  }
+  if (status === 'success') {
+    if (route.query.flow === 'connect') {
+      ElMessage.success('GitHub 账号绑定成功。');
+      await router.replace(String(route.query.next || '/dashboard/profile'));
+      return;
+    }
+    try {
+      await completeLogin();
+      ElMessage.success('GitHub 登录成功。');
+      return;
+    } catch {
+      message.value = '授权已完成，但会话建立失败，请返回登录页重试。';
     }
   } else {
-    const error = route.query.error_description as string;
-    ElMessage.warning(error || '您取消了授权。');
-    await router.push('/login');
+    const code = String(route.query.code || 'oauth_state_invalid');
+    message.value = errorMessages[code] || 'GitHub 授权失败，请重新发起登录。';
   }
+  loading.value = false;
 });
 </script>
 
 <style scoped>
-.callback-container { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; gap: 20px; color: #606266; }
+.callback-page { min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #f4f7fb; }
+.callback-panel { width: min(480px, 100%); padding: 32px; border: 1px solid #dce4ef; border-radius: 8px; background: #fff; text-align: center; }
+.callback-panel h1 { margin: 16px 0 8px; font-size: 24px; }
+.callback-panel p { margin: 0 0 24px; color: #667085; line-height: 1.7; }
+.callback-panel .el-form { text-align: left; }
+.error-icon { color: #d97706; }
 </style>

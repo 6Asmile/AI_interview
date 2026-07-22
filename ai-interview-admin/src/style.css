@@ -1,0 +1,21 @@
+:root { font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif; color: #1f2937; background: #f4f6f8; font-synthesis: none; }
+* { box-sizing: border-box; }
+html, body, #app { min-width: 1024px; min-height: 100%; margin: 0; }
+button, input { font: inherit; }
+a { color: inherit; }
+.page { padding: 24px 28px; }
+.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid #dfe3e8; }
+.page-header h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
+.page-header p { margin: 7px 0 0; color: #667085; }
+.toolbar { display: flex; gap: 10px; margin: 18px 0; }
+.data-surface { border: 1px solid #dfe3e8; border-radius: 6px; background: #fff; overflow: hidden; }
+.empty-note { padding: 48px; color: #667085; text-align: center; }
+.metric-band { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 22px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fff; }
+.metric { padding: 20px; border-right: 1px solid #e5e7eb; }
+.metric:last-child { border-right: 0; }
+.metric span, .metric small { display: block; color: #667085; }
+.metric strong { display: block; margin: 7px 0; font-size: 28px; }
+.danger-text { color: #b42318; }
+.muted { color: #667085; }
+.reason-dialog .el-form-item { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

@@ -1,0 +1,109 @@
+name: ifaceoff-observability
+
+# Optional development-only Langfuse v3 stack. Start after ifaceoff-infra.
+services:
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    profiles: [observability]
+    restart: unless-stopped
+    environment: &langfuse-env
+      NEXTAUTH_URL: ${LANGFUSE_URL:-http://127.0.0.1:3000}
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER:-langfuse}:${LANGFUSE_DB_PASSWORD:-langfuse-change-me}@postgres:5432/${LANGFUSE_DB_NAME:-langfuse}
+      SALT: ${LANGFUSE_SALT:?set LANGFUSE_SALT in .env.observability}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set a 64-character hex LANGFUSE_ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-clickhouse-change-me}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: ""
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-langfuse-minio-change-me}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-langfuse-minio-change-me}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_MINIO_PUBLIC_URL:-http://127.0.0.1:9090}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [ifaceoff_infra_network]
+
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set LANGFUSE_NEXTAUTH_SECRET in .env.observability}
+    ports:
+      - "${LANGFUSE_PORT:-3000}:3000"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [ifaceoff_infra_network]
+
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:25.8
+    profiles: [observability]
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-clickhouse-change-me}
+    volumes:
+      - ifaceoff_langfuse_clickhouse_data:/var/lib/clickhouse
+      - ifaceoff_langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [ifaceoff_infra_network]
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    profiles: [observability]
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-langfuse-minio-change-me}
+    ports:
+      - "${LANGFUSE_MINIO_PORT:-9090}:9000"
+      - "127.0.0.1:${LANGFUSE_MINIO_CONSOLE_PORT:-9091}:9001"
+    volumes:
+      - ifaceoff_langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    networks: [ifaceoff_infra_network]
+
+volumes:
+  ifaceoff_langfuse_clickhouse_data:
+    name: Ifaceoff-langfuse-clickhouse-data
+  ifaceoff_langfuse_clickhouse_logs:
+    name: Ifaceoff-langfuse-clickhouse-logs
+  ifaceoff_langfuse_minio_data:
+    name: Ifaceoff-langfuse-minio-data
+
+networks:
+  ifaceoff_infra_network:
+    name: Ifaceoff-infra-network
+    external: true

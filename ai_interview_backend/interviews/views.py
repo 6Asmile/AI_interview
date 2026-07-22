@@ -11,11 +11,14 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from core.idempotency import run_idempotent
+from core.throttles import AIActionRateThrottle
 from rest_framework.views import APIView
 from resumes.models import Resume, ResumeImportJob, ResumeVersion
 from resumes.json_resume import json_resume_plain_text
 from careers.models import JobTarget
 from system.models import AISetting
+from users.models import User
 from .evaluation import (
     build_session_plan,
     can_manage_interview_system,
@@ -30,6 +33,7 @@ from .evaluation import (
 from .models import (
     EvaluationDataset,
     EvaluationRun,
+    InterviewAgentExecution,
     InterviewAgentMemoryEvent,
     InterviewAgentRun,
     InterviewAgentToolCall,
@@ -38,10 +42,12 @@ from .models import (
     InterviewMediaArtifact,
     InterviewQuestion,
     InterviewQuestionGenerationJob,
+    InterviewReferenceAnswer,
     InterviewRubric,
     InterviewSession,
     InterviewTemplate,
 )
+from .execution import create_answer_execution, durable_execution_snapshot, short_lock_timeout
 from .serializers import (
     InterviewSessionSerializer,
     StartInterviewSerializer,
@@ -50,6 +56,7 @@ from .serializers import (
     EvaluationDatasetSerializer,
     EvaluationRunSerializer,
     InterviewAgentMemoryEventSerializer,
+    InterviewAgentExecutionSerializer,
     InterviewAgentRunSerializer,
     InterviewAgentToolCallSerializer,
     InterviewAgentTraceSerializer,
@@ -67,6 +74,7 @@ from .ai_services import (
     generate_reference_answer_for_question,
 )
 from .agent import get_interview_agent_engine
+from .agent_v4.events import publish_agent_event, read_agent_events
 from .speech_services import synthesize_question_tts
 from urllib.parse import quote
 from reports.models import ResumeAnalysisReport
@@ -365,6 +373,126 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         serializer = InterviewAgentRunSerializer(runs, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['get'], url_path='agent-executions')
+    def agent_executions(self, request, pk=None):
+        session = self.get_object()
+        executions = session.agent_executions.select_related(
+            'trigger_question', 'legacy_run'
+        ).order_by('-created_at')
+        return Response(
+            InterviewAgentExecutionSerializer(executions, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'agent-executions/(?P<run_id>[0-9a-f-]+)/events',
+    )
+    def agent_execution_events(self, request, pk=None, run_id=None):
+        session = self.get_object()
+        execution = session.agent_executions.filter(run_id=run_id).first()
+        if not execution:
+            return Response({'error': 'Agent执行不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        after = request.headers.get('Last-Event-ID') or request.query_params.get('after') or '0-0'
+        follow = str(request.query_params.get('follow', '')).lower() in ('1', 'true', 'yes')
+
+        def event_generator():
+            cursor = after
+            empty_reads = 0
+            emitted_durable_snapshot = False
+            while True:
+                try:
+                    events = list(read_agent_events(
+                        run_id=execution.run_id,
+                        after=cursor,
+                        block_ms=5000 if follow else 0,
+                        count=100,
+                    ))
+                except Exception:
+                    events = []
+                if not events:
+                    empty_reads += 1
+                    if not emitted_durable_snapshot:
+                        from .agent_v4.events import durable_snapshot_event
+                        execution.refresh_from_db()
+                        snapshot = durable_snapshot_event(execution)
+                        emitted_durable_snapshot = True
+                        cursor = snapshot.event_id
+                        yield snapshot.to_sse()
+                    if not follow or empty_reads >= 3:
+                        break
+                    yield ': heartbeat\n\n'
+                    continue
+                empty_reads = 0
+                for event in events:
+                    cursor = event.event_id
+                    yield event.to_sse()
+                execution.refresh_from_db(fields=['status'])
+                if execution.status in (
+                    InterviewAgentExecution.Status.COMPLETED,
+                    InterviewAgentExecution.Status.DEGRADED,
+                    InterviewAgentExecution.Status.FAILED,
+                    InterviewAgentExecution.Status.FAILED_RETRYABLE,
+                    InterviewAgentExecution.Status.FAILED_TERMINAL,
+                    InterviewAgentExecution.Status.CANCELED,
+                ):
+                    break
+
+        response = StreamingHttpResponse(event_generator(), content_type='text/event-stream; charset=utf-8')
+        response['Cache-Control'] = 'no-cache, no-transform'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+
+    @action(detail=True, methods=['get'], url_path='resume-state')
+    def resume_state(self, request, pk=None):
+        session = self.get_object()
+        execution = session.agent_executions.select_related(
+            'trigger_question', 'result_question'
+        ).order_by('-created_at').first()
+        current_question = session.questions.filter(answered_at__isnull=True).order_by('sequence').first()
+        if not current_question and execution and execution.result_question_id:
+            current_question = execution.result_question
+        latest_answered = session.questions.filter(answered_at__isnull=False).order_by('-sequence').first()
+
+        if session.status != InterviewSession.Status.RUNNING:
+            resume_action = 'finish'
+        elif execution and execution.status in (
+            InterviewAgentExecution.Status.ACCEPTED,
+            InterviewAgentExecution.Status.ANSWER_PERSISTED,
+            InterviewAgentExecution.Status.EVALUATING,
+            InterviewAgentExecution.Status.EVALUATED,
+            InterviewAgentExecution.Status.GENERATING,
+            InterviewAgentExecution.Status.PENDING,
+            InterviewAgentExecution.Status.RUNNING,
+            InterviewAgentExecution.Status.WAITING,
+        ):
+            resume_action = 'wait'
+        elif execution and execution.status in (
+            InterviewAgentExecution.Status.FAILED_RETRYABLE,
+            InterviewAgentExecution.Status.FAILED,
+        ):
+            resume_action = 'retry_generation'
+        elif execution and execution.status == InterviewAgentExecution.Status.FAILED_TERMINAL:
+            resume_action = 'finish'
+        else:
+            resume_action = 'continue'
+
+        return Response({
+            'session_id': str(session.id),
+            'session_status': session.status,
+            'resume_action': resume_action,
+            'current_question': self._serialize_question(current_question) if current_question else None,
+            'latest_evaluation': (
+                latest_answered.ai_feedback
+                if latest_answered and isinstance(latest_answered.ai_feedback, dict)
+                else None
+            ),
+            'execution': durable_execution_snapshot(execution) if execution else None,
+            'updated_at': session.updated_at,
+        })
+
     @action(detail=True, methods=['get'], url_path=r'agent-runs/(?P<run_id>[0-9a-f-]+)')
     def agent_run_detail(self, request, pk=None, run_id=None):
         session = self.get_object()
@@ -498,8 +626,15 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_409_CONFLICT)
         return self._abandon_session(request, sessions[0].id)
 
-    @action(detail=False, methods=['post'], url_path='start')
+    @action(detail=False, methods=['post'], url_path='start', throttle_classes=[AIActionRateThrottle])
     def start_interview(self, request):
+        return run_idempotent(
+            request,
+            'interview_start',
+            lambda: self._start_interview_impl(request),
+        )
+
+    def _start_interview_impl(self, request):
         force_start = request.query_params.get('force', 'false').lower() == 'true'
         cache_key = get_user_cache_key(request.user)
         running_sessions = list(
@@ -799,6 +934,24 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         analysis_data = serializer.validated_data.get('analysis_data')
         audio_artifact_id = serializer.validated_data.get('audio_artifact_id')
         asr_transcript_meta = serializer.validated_data.get('asr_transcript_meta') or {}
+        async_requested = (
+            'respond-async' in str(request.headers.get('Prefer', '')).lower()
+            or str(request.query_params.get('async', '')).lower() in ('1', 'true', 'yes')
+        )
+        if async_requested:
+            return run_idempotent(
+                request,
+                f'interview_submit_answer:{session.id}',
+                lambda: self._submit_answer_async(
+                    request=request,
+                    session=session,
+                    question_id=question_id,
+                    answer_text=answer_text,
+                    analysis_data=analysis_data,
+                    audio_artifact_id=audio_artifact_id,
+                    asr_transcript_meta=asr_transcript_meta,
+                ),
+            )
         try:
             with transaction.atomic():
                 current_question = session.questions.select_for_update().get(id=question_id)
@@ -940,7 +1093,20 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         def stream_response_generator():
             question_buffer = []
             last_checkpoint_length = 0
+            event_sequence = 0
+            run_id = getattr(turn_state, 'agent_run_id', None)
+            sse_mode = 'text/event-stream' in request.headers.get('Accept', '')
             try:
+                if run_id:
+                    started_event = publish_agent_event(
+                        thread_id=session.id,
+                        run_id=run_id,
+                        event_type='run.started',
+                        sequence=event_sequence,
+                        payload={'event': 'submit_answer_stream'},
+                    )
+                    if sse_mode:
+                        yield started_event.to_sse()
                 stream = agent.generate_question_chunks(turn_state)
                 for chunk in stream:
                     question_buffer.append(chunk)
@@ -949,7 +1115,17 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                         generation_job.partial_text = partial_text
                         generation_job.save(update_fields=['partial_text', 'updated_at'])
                         last_checkpoint_length = len(partial_text)
-                    yield chunk
+                    event_sequence += 1
+                    delta_event = None
+                    if run_id:
+                        delta_event = publish_agent_event(
+                            thread_id=session.id,
+                            run_id=run_id,
+                            event_type='question.delta',
+                            sequence=event_sequence,
+                            payload={'delta': chunk},
+                        )
+                    yield delta_event.to_sse() if sse_mode and delta_event else chunk
                 full_question_text = "".join(question_buffer).strip()
                 next_question = agent.finalize_generated_question(turn_state, full_question_text)
                 generation_job.generated_question = next_question
@@ -965,11 +1141,25 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                     'completed_at',
                     'updated_at',
                 ])
-                yield '\n__FINAL_QUESTION__:' + json.dumps(
-                    self._serialize_question(next_question),
-                    ensure_ascii=False,
-                    default=str,
-                )
+                serialized_question = self._serialize_question(next_question)
+                event_sequence += 1
+                completed_event = None
+                if run_id:
+                    completed_event = publish_agent_event(
+                        thread_id=session.id,
+                        run_id=run_id,
+                        event_type='question.completed',
+                        sequence=event_sequence,
+                        payload={'question': serialized_question},
+                    )
+                if sse_mode and completed_event:
+                    yield completed_event.to_sse()
+                else:
+                    yield '\n__FINAL_QUESTION__:' + json.dumps(
+                        serialized_question,
+                        ensure_ascii=False,
+                        default=str,
+                    )
             except GeneratorExit:
                 generation_job.partial_text = "".join(question_buffer)
                 generation_job.status = InterviewQuestionGenerationJob.Status.FAILED
@@ -984,6 +1174,15 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 ])
                 raise
             except Exception as exc:
+                if run_id:
+                    event_sequence += 1
+                    publish_agent_event(
+                        thread_id=session.id,
+                        run_id=run_id,
+                        event_type='run.failed',
+                        sequence=event_sequence,
+                        payload={'error_code': type(exc).__name__},
+                    )
                 generation_job.partial_text = "".join(question_buffer)
                 generation_job.status = InterviewQuestionGenerationJob.Status.FAILED
                 generation_job.error_message = str(exc)[:1000]
@@ -997,12 +1196,173 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 ])
                 raise
 
-        response = StreamingHttpResponse(stream_response_generator(), content_type='text/plain; charset=utf-8')
+        sse_mode = 'text/event-stream' in request.headers.get('Accept', '')
+        response = StreamingHttpResponse(
+            stream_response_generator(),
+            content_type='text/event-stream; charset=utf-8' if sse_mode else 'text/plain; charset=utf-8',
+        )
+        if sse_mode:
+            response['Cache-Control'] = 'no-cache, no-transform'
+            response['X-Accel-Buffering'] = 'no'
         response['X-Feedback'] = quote(public_feedback)
         response['X-Feedback-Json'] = quote(json.dumps(public_evaluation, ensure_ascii=False))
         response['X-Generation-Job-Id'] = str(generation_job.id)
         response['Access-Control-Expose-Headers'] = 'X-Feedback, X-Feedback-Json, X-Generation-Job-Id'
         return self._set_agent_run_header(response, getattr(turn_state, 'agent_run_id', None))
+
+    def _submit_answer_async(
+        self,
+        *,
+        request,
+        session,
+        question_id,
+        answer_text,
+        analysis_data,
+        audio_artifact_id,
+        asr_transcript_meta,
+    ):
+        idempotency_key = str(request.headers.get('Idempotency-Key') or '').strip()
+        if not idempotency_key:
+            return Response({
+                'code': 'idempotency_key_required',
+                'message': '异步回答提交必须提供 Idempotency-Key。',
+                'retryable': False,
+            }, status=status.HTTP_400_BAD_REQUEST)
+        if len(idempotency_key) > 128:
+            return Response({
+                'code': 'idempotency_key_too_long',
+                'message': 'Idempotency-Key 不能超过 128 个字符。',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic(), short_lock_timeout():
+                User.objects.select_for_update().get(id=request.user.id)
+                locked_session = InterviewSession.objects.select_for_update().get(
+                    id=session.id,
+                    user=request.user,
+                )
+                if locked_session.status != InterviewSession.Status.RUNNING:
+                    return Response({'code': 'interview_not_running', 'message': '面试已结束或已取消。'}, status=409)
+                question = InterviewQuestion.objects.select_for_update().get(
+                    id=question_id,
+                    session=locked_session,
+                )
+                if question.answered_at:
+                    if question.answer_text != answer_text:
+                        return Response({
+                            'code': 'answer_conflict',
+                            'message': '该问题已提交过不同回答。',
+                            'retryable': False,
+                        }, status=409)
+                    execution = locked_session.agent_executions.filter(
+                        trigger_question=question,
+                    ).order_by('-created_at').first()
+                    if execution:
+                        response = Response({
+                            'run_id': str(execution.run_id),
+                            'status': execution.status,
+                            'events_url': f'/api/v1/interviews/{locked_session.id}/agent-executions/{execution.run_id}/events/',
+                            'resume_url': f'/api/v1/interviews/{locked_session.id}/resume-state/',
+                            'already_answered': True,
+                        }, status=status.HTTP_202_ACCEPTED)
+                        response['X-Agent-Run-Id'] = str(execution.run_id)
+                        response['X-Idempotent-Replay'] = 'true'
+                        return response
+                    return Response({
+                        'code': 'answer_persisted_without_execution',
+                        'message': '回答已保存但生成任务缺失，请重试恢复。',
+                        'retryable': True,
+                    }, status=409)
+
+                question.answer_text = answer_text
+                question.answered_at = timezone.now()
+                media_context = {
+                    'audio_artifact_id': str(audio_artifact_id) if audio_artifact_id else '',
+                    'asr_transcript_meta': asr_transcript_meta,
+                }
+                if audio_artifact_id:
+                    audio_artifact = InterviewMediaArtifact.objects.select_for_update().get(
+                        id=audio_artifact_id,
+                        session=locked_session,
+                        user=request.user,
+                        artifact_type=InterviewMediaArtifact.ArtifactType.ANSWER_AUDIO,
+                    )
+                    if audio_artifact.question_id and audio_artifact.question_id != question.id:
+                        return Response({'code': 'audio_question_conflict', 'message': '语音记录不属于当前问题。'}, status=409)
+                    audio_artifact.question = question
+                    audio_artifact.metadata = {
+                        **(audio_artifact.metadata or {}),
+                        'submitted_with_answer': True,
+                        'asr_transcript_meta': asr_transcript_meta,
+                    }
+                    audio_artifact.save(update_fields=['question', 'metadata', 'updated_at'])
+                    question.audio_url = audio_artifact.source_file.url if audio_artifact.source_file else ''
+                if analysis_data and isinstance(analysis_data, list):
+                    question.analysis_data = [
+                        {'timestamp': frame.get('timestamp'), 'emotions': frame.get('emotions')}
+                        for frame in analysis_data
+                    ]
+                question.save(update_fields=['answer_text', 'answered_at', 'analysis_data', 'audio_url'])
+                locked_session.last_activity_at = timezone.now()
+                locked_session.save(update_fields=['last_activity_at', 'updated_at'])
+                answered_count = locked_session.questions.filter(answered_at__isnull=False).count()
+                execution, generation_job, _ = create_answer_execution(
+                    session=locked_session,
+                    question=question,
+                    answer_text=answer_text,
+                    client_idempotency_key=idempotency_key,
+                    answered_count=answered_count,
+                    media_context=media_context,
+                )
+
+                def enqueue_dispatch():
+                    try:
+                        from .tasks import publish_pending_agent_dispatches
+                        publish_pending_agent_dispatches.apply_async(queue='notifications')
+                    except Exception:
+                        pass
+
+                transaction.on_commit(enqueue_dispatch)
+        except InterviewQuestion.DoesNotExist:
+            return Response({'code': 'question_not_found', 'message': '问题不存在。'}, status=404)
+        except InterviewMediaArtifact.DoesNotExist:
+            return Response({'code': 'audio_not_found', 'message': '语音记录不存在或无权使用。'}, status=404)
+        except Exception as exc:
+            if type(exc).__name__ in ('OperationalError', 'LockNotAvailable'):
+                return Response({
+                    'code': 'operation_busy',
+                    'message': '当前面试正在处理另一个操作，请稍后重试。',
+                    'retryable': True,
+                    'retry_after_ms': 750,
+                }, status=409)
+            raise
+
+        response = Response({
+            'run_id': str(execution.run_id),
+            'status': execution.status,
+            'events_url': f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/',
+            'resume_url': f'/api/v1/interviews/{session.id}/resume-state/',
+            'generation_job': InterviewQuestionGenerationJobSerializer(generation_job).data,
+        }, status=status.HTTP_202_ACCEPTED)
+        response['X-Agent-Run-Id'] = str(execution.run_id)
+        response['Access-Control-Expose-Headers'] = 'X-Agent-Run-Id'
+        return response
+
+    def _complete_recovered_execution(self, session, answered_question, result_question=None):
+        with transaction.atomic():
+            execution = session.agent_executions.select_for_update().filter(
+                trigger_question=answered_question,
+            ).order_by('-created_at').first()
+            if not execution:
+                return
+            execution.status = InterviewAgentExecution.Status.COMPLETED
+            execution.result_question = result_question
+            execution.completed_at = timezone.now()
+            execution.error_code = ''
+            execution.version += 1
+            execution.save(update_fields=[
+                'status', 'result_question', 'completed_at', 'error_code', 'version', 'updated_at',
+            ])
 
     @action(detail=True, methods=['post'], url_path='regenerate-next-question')
     def regenerate_next_question(self, request, pk=None):
@@ -1050,6 +1410,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 generation_job.status = InterviewQuestionGenerationJob.Status.COMPLETED
                 generation_job.completed_at = generation_job.completed_at or timezone.now()
                 generation_job.save(update_fields=['generated_question', 'final_text', 'status', 'completed_at', 'updated_at'])
+            self._complete_recovered_execution(session, answered_question, existing_next_question)
             return Response({
                 "next_question": self._serialize_question(existing_next_question),
                 "already_exists": True,
@@ -1066,6 +1427,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             engine_name=getattr(settings, 'INTERVIEW_AGENT_ENGINE', 'default'),
         )
         if generation_job.status == InterviewQuestionGenerationJob.Status.COMPLETED and generation_job.generated_question:
+            self._complete_recovered_execution(session, answered_question, generation_job.generated_question)
             return Response({
                 "next_question": self._serialize_question(generation_job.generated_question),
                 "already_exists": True,
@@ -1139,6 +1501,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             "feedback_detail": last_evaluation if session.experience_mode == InterviewSession.ExperienceMode.COACHING else None,
             "generation_job": InterviewQuestionGenerationJobSerializer(generation_job).data,
         }, status=status.HTTP_200_OK)
+        self._complete_recovered_execution(session, answered_question, next_question)
         return self._set_agent_run_header(response, getattr(turn_state, 'agent_run_id', None))
 
     @action(detail=True, methods=['post'], url_path='finish')
@@ -1202,7 +1565,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             resume_text=resume_text,
             memory_summary=report_memory
         )
-        if getattr(report_agent, 'engine_name', '') == 'composite_v2':
+        if getattr(report_agent, 'engine_name', '').startswith('composite_v'):
             report_kwargs['session'] = session
         report_data = report_agent.generate_report(**report_kwargs)
 
@@ -1276,11 +1639,43 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         except InterviewQuestion.DoesNotExist:
             return Response({"error": "问题不存在或您没有权限访问"}, status=status.HTTP_404_NOT_FOUND)
 
-        # 尝试从缓存获取
-        cache_key = f"ref_answer_{question_pk}"
-        cached_answer = cache.get(cache_key)
-        if cached_answer:
-            return Response({"answer": cached_answer}, status=status.HTTP_200_OK)
+        prompt_version = getattr(settings, 'AGENT_PROMPT_VERSION', 'interview-agent-v1')
+        ai_setting = AISetting.objects.filter(user=request.user).select_related('chat_model', 'ai_model').first()
+        selected_model = (ai_setting.chat_model if ai_setting else None) or (ai_setting.ai_model if ai_setting else None)
+        model_alias = selected_model.name if selected_model else 'interview.reference.default'
+        source_hash = hashlib.sha256(
+            f'{question.id}:{question.question_text}:{question.session.job_position}'.encode('utf-8')
+        ).hexdigest()
+        cache_key = f'ref_answer:{request.user.id}:{question_pk}:{prompt_version}:{model_alias}'
+        snapshot, created = InterviewReferenceAnswer.objects.get_or_create(
+            question=question,
+            user=request.user,
+            prompt_version=prompt_version,
+            model_alias=model_alias,
+            defaults={'source_hash': source_hash},
+        )
+        if snapshot.status == InterviewReferenceAnswer.Status.COMPLETED and snapshot.answer:
+            from core.cache_policy import set_policy_value
+            set_policy_value(cache_key, snapshot.answer, 'reference_answer')
+            response = Response({'answer': snapshot.answer, 'snapshot_id': str(snapshot.id)})
+            response['X-Cache-State'] = 'postgresql'
+            return response
+        if not created and snapshot.status == InterviewReferenceAnswer.Status.PENDING:
+            age = (timezone.now() - snapshot.updated_at).total_seconds()
+            if age < 120:
+                return Response({
+                    'code': 'reference_answer_processing',
+                    'message': '参考答案正在生成。',
+                    'retryable': True,
+                    'retry_after_ms': 1000,
+                    'operation_id': str(snapshot.id),
+                }, status=status.HTTP_202_ACCEPTED)
+        InterviewReferenceAnswer.objects.filter(id=snapshot.id).update(
+            status=InterviewReferenceAnswer.Status.PENDING,
+            error_code='',
+            source_hash=source_hash,
+            updated_at=timezone.now(),
+        )
 
         # 获取简历文本
         resume_text = None
@@ -1288,17 +1683,47 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             resume_text = format_resume_to_text(question.session.resume)
 
         # 调用新的 AI 服务
-        reference_answer = generate_reference_answer_for_question(
-            job_position=question.session.job_position,
-            question=question.question_text,
-            user=request.user,
-            resume_text=resume_text
+        try:
+            reference_answer = generate_reference_answer_for_question(
+                job_position=question.session.job_position,
+                question=question.question_text,
+                user=request.user,
+                resume_text=resume_text
+            )
+        except Exception as exc:
+            InterviewReferenceAnswer.objects.filter(id=snapshot.id).update(
+                status=InterviewReferenceAnswer.Status.FAILED,
+                error_code=type(exc).__name__[:120],
+                updated_at=timezone.now(),
+            )
+            return Response({
+                'code': 'reference_answer_unavailable',
+                'message': '参考答案生成失败，请稍后重试。',
+                'retryable': True,
+                'operation_id': str(snapshot.id),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        if not reference_answer:
+            InterviewReferenceAnswer.objects.filter(id=snapshot.id).update(
+                status=InterviewReferenceAnswer.Status.FAILED,
+                error_code='empty_model_response',
+                updated_at=timezone.now(),
+            )
+            return Response({
+                'code': 'reference_answer_unavailable',
+                'message': '参考答案生成失败，请稍后重试。',
+                'retryable': True,
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        InterviewReferenceAnswer.objects.filter(id=snapshot.id).update(
+            answer=reference_answer,
+            status=InterviewReferenceAnswer.Status.COMPLETED,
+            completed_at=timezone.now(),
+            updated_at=timezone.now(),
         )
+        from core.cache_policy import set_policy_value
+        set_policy_value(cache_key, reference_answer, 'reference_answer')
 
-        # 存入缓存，有效期 1 小时
-        cache.set(cache_key, reference_answer, timeout=3600)
-
-        return Response({"answer": reference_answer}, status=status.HTTP_200_OK)
+        return Response({'answer': reference_answer, 'snapshot_id': str(snapshot.id)}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get'], url_path='recording')
     def get_recording(self, request, pk=None):

@@ -16,6 +16,7 @@ from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, Ou
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from .models import AuthSession, NotificationPreference, PrivacyRequest, User
+from .cookie_auth import clear_refresh_cookie, cookie_refresh_value, enforce_csrf
 from .serializers import (
     AuthSessionSerializer,
     NotificationPreferenceSerializer,
@@ -24,6 +25,8 @@ from .serializers import (
     UserProfileSerializer,
     UserRegisterSerializer,
 )
+from core.throttles import UploadRateThrottle, VerificationRateThrottle
+from core.uploads import validate_uploaded_file
 
 # --- 验证码发送 ---
 class EmailSerializer(serializers.Serializer):
@@ -31,6 +34,7 @@ class EmailSerializer(serializers.Serializer):
 
 class SendCodeView(views.APIView):
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [VerificationRateThrottle]
     def post(self, request):
         serializer = EmailSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -69,12 +73,16 @@ class OnboardingCompleteView(views.APIView):
 class AvatarUploadView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = [UploadRateThrottle]
     def post(self, request, *args, **kwargs):
         file_obj = request.FILES.get('avatar')
         if not file_obj:
             return Response({'error': '没有提供头像文件'}, status=status.HTTP_400_BAD_REQUEST)
-        if file_obj.size > 2 * 1024 * 1024:
-            return Response({'error': '头像文件不能超过 2MB'}, status=status.HTTP_400_BAD_REQUEST)
+        validate_uploaded_file(
+            file_obj,
+            allowed_extensions={'.png', '.jpg', '.jpeg', '.webp'},
+            max_bytes=2 * 1024 * 1024,
+        )
         user = request.user
         user.avatar = file_obj
         user.save()
@@ -147,25 +155,41 @@ class AuthSessionRevokeView(views.APIView):
 
 
 class LogoutView(views.APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
-    def post(self, request):
-        refresh_value = str(request.data.get('refresh') or '')
-        all_sessions = bool(request.data.get('all_sessions'))
+    def post(self, request, all_sessions=False):
+        refresh_from_cookie = cookie_refresh_value(request)
+        if refresh_from_cookie:
+            enforce_csrf(request)
+        refresh_value = str(request.data.get('refresh') or refresh_from_cookie or '')
+        token = None
+        if refresh_value:
+            try:
+                token = RefreshToken(refresh_value)
+            except TokenError:
+                response = Response({'detail': 'refresh token 无效。'}, status=status.HTTP_400_BAD_REQUEST)
+                clear_refresh_cookie(response)
+                return response
+        user = request.user if getattr(request.user, 'is_authenticated', False) else None
+        if not user and token:
+            user = User.objects.filter(pk=token.get('user_id')).first()
+        if not user:
+            return Response({'detail': '浏览器会话不存在。'}, status=status.HTTP_401_UNAUTHORIZED)
+        all_sessions = bool(request.data.get('all_sessions')) or bool(all_sessions)
         if all_sessions:
-            for token in OutstandingToken.objects.filter(user=request.user):
-                BlacklistedToken.objects.get_or_create(token=token)
-            AuthSession.objects.filter(user=request.user, revoked_at__isnull=True).update(revoked_at=timezone.now())
-            return Response({'detail': '所有设备已退出。'})
+            for outstanding in OutstandingToken.objects.filter(user=user):
+                BlacklistedToken.objects.get_or_create(token=outstanding)
+            AuthSession.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+            response = Response({'detail': '所有设备已退出。'})
+            clear_refresh_cookie(response)
+            return response
         if not refresh_value:
             return Response({'detail': '请提供 refresh token。'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            token = RefreshToken(refresh_value)
-            token.blacklist()
-            AuthSession.objects.filter(user=request.user, refresh_jti=str(token['jti']), revoked_at__isnull=True).update(revoked_at=timezone.now())
-        except TokenError:
-            return Response({'detail': 'refresh token 无效。'}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({'detail': '已退出。'})
+        token.blacklist()
+        AuthSession.objects.filter(user=user, refresh_jti=str(token['jti']), revoked_at__isnull=True).update(revoked_at=timezone.now())
+        response = Response({'detail': '已退出。'})
+        clear_refresh_cookie(response)
+        return response
 
 
 def _export_user_data(user):

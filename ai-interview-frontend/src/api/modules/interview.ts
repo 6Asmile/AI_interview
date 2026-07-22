@@ -1,6 +1,7 @@
 // src/api/modules/interview.ts
 import { useAuthStore } from '@/store/modules/auth';
-import request from '@/api/request';
+import request, { refreshAccessToken } from '@/api/request';
+import { getAccessToken } from '@/auth/token';
 import { getInterviewReportApi as getReportApi } from './report';
 
 // --- 类型定义 ---
@@ -70,6 +71,28 @@ export interface InterviewSessionItem { id: string; user: UserInfo; job_position
 export interface StartInterviewData { job_position: string; resume_id?: number; jd_text?: string; question_count?: number; target_duration_minutes?: number; interview_mode?: 'relaxed' | 'strict' | 'fundamentals' | 'project_deep_dive' | 'project_with_fundamentals' | 'system_design' | 'behavioral' | 'structured'; experience_mode?: 'realistic' | 'coaching'; recording_enabled?: boolean; difficulty?: 'easy' | 'medium' | 'hard'; template_id?: number | null; }
 export interface SubmitAnswerData { question_id: number; answer_text: string; analysis_data?: AnalysisFrame[]; video_data?: string; video_upload_id?: string; audio_artifact_id?: string; asr_transcript_meta?: Record<string, any>; }
 export interface SubmitAnswerResponse { feedback: string; feedback_detail?: AnswerFeedback; next_question?: InterviewQuestionItem; interview_finished?: boolean; }
+export interface InterviewExecutionSnapshot {
+  execution_id: string;
+  run_id: string;
+  thread_id: string;
+  status: string;
+  version: number;
+  retry_count: number;
+  last_durable_sequence: number;
+  error_code?: string;
+  fallback_reason?: string;
+  result_question?: InterviewQuestionItem | null;
+  generation_job?: Partial<InterviewQuestionGenerationJobItem> | null;
+}
+export interface InterviewResumeState {
+  session_id: string;
+  session_status: string;
+  resume_action: 'continue' | 'wait' | 'retry_generation' | 'finish';
+  current_question?: InterviewQuestionItem | null;
+  latest_evaluation?: AnswerFeedback | null;
+  execution?: InterviewExecutionSnapshot | null;
+  updated_at: string;
+}
 export interface UnfinishedCheckResponse { has_unfinished: boolean; session_id?: string; job_position?: string; }
 
 export class SubmitAnswerStreamError extends Error {
@@ -232,7 +255,13 @@ export const abandonUnfinishedInterviewApi = (sessionId?: string): Promise<{ mes
   data: sessionId ? { session_id: sessionId } : {},
 });
 export const startInterviewApi = (data: StartInterviewData, force: boolean = false): Promise<InterviewSessionItem> => {
-  return request({ url: `/interviews/start/?force=${force}`, method: 'post', data });
+  return request({
+    url: `/interviews/start/?force=${force}`,
+    method: 'post',
+    data,
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+    timeout: 90000,
+  });
 };
 export const getInterviewReportApi = getReportApi;
 
@@ -307,6 +336,11 @@ export const getInterviewQuestionGenerationJobsApi = (sessionId: string): Promis
   });
 };
 
+export const getInterviewResumeStateApi = (sessionId: string): Promise<InterviewResumeState> => request({
+  url: `/interviews/${sessionId}/resume-state/`,
+  method: 'get',
+});
+
 // --- 流式 API ---
 export const submitAnswerStreamApi = async (
   sessionId: string,
@@ -315,15 +349,24 @@ export const submitAnswerStreamApi = async (
   onGenerationJob?: (job: Partial<InterviewQuestionGenerationJobItem>) => void
 ): Promise<{ feedback: string; feedbackDetail?: AnswerFeedback; isFinished: boolean; generationJobId?: string; nextQuestion?: InterviewQuestionItem; }> => {
   const authStore = useAuthStore();
-  
-  const baseUrl = import.meta.env.VITE_API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+  const idempotencyKey = crypto.randomUUID();
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/api\/v1\/?$/, '');
   const finalUrl = `${baseUrl}/api/v1/interviews/${sessionId}/submit-answer-stream/`;
-  
-  const response = await fetch(finalUrl, {
+  const send = (access: string | null) => fetch(finalUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authStore.token}` },
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      'Prefer': 'respond-async',
+      ...(access ? { Authorization: `Bearer ${access}` } : {}),
+      'Idempotency-Key': idempotencyKey,
+    },
     body: JSON.stringify(data),
   });
+  let response = await send(getAccessToken() || authStore.token);
+  if (response.status === 401) {
+    response = await send(await refreshAccessToken());
+  }
 
   if (!response.ok) {
     let errorMessage = '服务器响应错误';
@@ -331,7 +374,7 @@ export const submitAnswerStreamApi = async (
     if (response.headers.get('Content-Type')?.includes('application/json')) {
       try {
         const errorResult = await response.json();
-        errorMessage = errorResult.error || errorResult.detail || errorMessage;
+        errorMessage = errorResult.message || errorResult.error || errorResult.detail || errorMessage;
         generationJob = errorResult.generation_job;
       } catch {
         // Keep the generic message when the server returns malformed JSON.
@@ -343,6 +386,15 @@ export const submitAnswerStreamApi = async (
   if (response.headers.get('Content-Type')?.includes('application/json')) {
     const result = await response.json();
     const generationJobId = result.generation_job?.id ? String(result.generation_job.id) : undefined;
+    if (result.run_id && result.generation_job) {
+      onGenerationJob?.(result.generation_job);
+      return {
+        feedback: result.feedback || '',
+        feedbackDetail: result.feedback_detail,
+        isFinished: false,
+        generationJobId,
+      };
+    }
     if (result.interview_finished) {
       return { feedback: result.feedback || '', feedbackDetail: result.feedback_detail, isFinished: true, generationJobId };
     }

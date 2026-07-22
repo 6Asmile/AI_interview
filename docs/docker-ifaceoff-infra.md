@@ -1,7 +1,7 @@
 # Ifaceoff local infrastructure
 
 This stack starts only the services required by a locally running backend:
-MySQL, Redis, RabbitMQ, Qdrant, LiteLLM with PostgreSQL, Meilisearch, and
+PostgreSQL, Redis, RabbitMQ, Qdrant, LiteLLM, Meilisearch, and
 ClamAV. It does not build or run Django, Celery, or Vue.
 
 ## Start and stop
@@ -18,11 +18,8 @@ ClamAV. It does not build or run Django, Celery, or Vue.
 ## Local backend connection values
 
 ```dotenv
-DB_HOST=127.0.0.1
-DB_PORT=3307
-DB_NAME=ai_interview_db
-DB_USER=root
-DB_PASSWORD=root
+IFACEOFF_DATABASE_URL=postgresql://ifaceoff_app:ifaceoff-app-change-me@127.0.0.1:5433/ifaceoff_app
+AGENT_DATABASE_URL=postgresql://ifaceoff_agent:ifaceoff-agent-change-me@127.0.0.1:5433/ifaceoff_agent
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 RABBITMQ_HOST=127.0.0.1
@@ -37,12 +34,11 @@ Service ports:
 
 | Service | Address |
 | --- | --- |
-| MySQL | `127.0.0.1:3307` |
+| PostgreSQL（4 个隔离数据库） | `127.0.0.1:5433` |
 | Redis | `127.0.0.1:6379` |
 | RabbitMQ | `127.0.0.1:5672` (`15672` for management) |
 | Qdrant | `127.0.0.1:6333` |
 | LiteLLM | `127.0.0.1:4000` |
-| LiteLLM PostgreSQL | `127.0.0.1:5433` |
 | Meilisearch | `127.0.0.1:7700` |
 | ClamAV | `127.0.0.1:3310` |
 

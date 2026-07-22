@@ -9,6 +9,10 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.conf import settings
+from core.throttles import UploadRateThrottle
+from core.uploads import validate_uploaded_file
+from .importers import SUPPORTED_EXTENSIONS
 
 from .models import (
     KnowledgeChunkDraft,
@@ -521,6 +525,7 @@ class KnowledgeImportBatchViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
     http_method_names = ['get', 'post', 'head', 'options']
+    throttle_classes = [UploadRateThrottle]
 
     def get_queryset(self):
         queryset = KnowledgeImportBatch.objects.select_related('uploaded_by').prefetch_related('documents')
@@ -545,6 +550,19 @@ class KnowledgeImportBatchViewSet(viewsets.ModelViewSet):
         files = request.FILES.getlist('files') or request.FILES.getlist('files[]')
         if not files:
             return Response({'files': ['请上传至少一个知识库文件。']}, status=status.HTTP_400_BAD_REQUEST)
+        max_files = int(getattr(settings, 'KNOWLEDGE_IMPORT_MAX_FILES', 20))
+        max_file_bytes = int(getattr(settings, 'KNOWLEDGE_IMPORT_MAX_FILE_BYTES', 50 * 1024 * 1024))
+        max_batch_bytes = int(getattr(settings, 'KNOWLEDGE_IMPORT_MAX_BATCH_BYTES', 200 * 1024 * 1024))
+        if len(files) > max_files:
+            return Response({'files': [f'单批最多上传 {max_files} 个文件。']}, status=status.HTTP_400_BAD_REQUEST)
+        if sum(item.size for item in files) > max_batch_bytes:
+            return Response({'files': [f'单批文件总大小不能超过 {max_batch_bytes // 1024 // 1024}MB。']}, status=status.HTTP_400_BAD_REQUEST)
+        validation_errors = {}
+        for index, uploaded_file in enumerate(files):
+            try:
+                validate_uploaded_file(uploaded_file, allowed_extensions=SUPPORTED_EXTENSIONS, max_bytes=max_file_bytes)
+            except Exception as exc:
+                validation_errors[index] = str(getattr(exc, 'detail', exc))[:2000]
 
         options = self._build_options(request)
         batch = KnowledgeImportBatch.objects.create(
@@ -554,13 +572,19 @@ class KnowledgeImportBatchViewSet(viewsets.ModelViewSet):
             options=options,
             total_files=len(files),
         )
-        for uploaded_file in files:
+        for index, uploaded_file in enumerate(files):
             import_file = KnowledgeImportFile.objects.create(
                 batch=batch,
                 source_file=uploaded_file,
                 original_name=uploaded_file.name,
                 status=KnowledgeImportFile.Status.PENDING,
             )
+            if index in validation_errors:
+                import_file.status = KnowledgeImportFile.Status.FAILED
+                import_file.error_message = validation_errors[index]
+                import_file.save(update_fields=['status', 'error_message', 'updated_at'])
+                import_file.source_file.delete(save=False)
+                continue
             try:
                 process_knowledge_import_file.delay(str(import_file.id))
             except Exception as exc:

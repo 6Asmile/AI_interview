@@ -47,7 +47,7 @@
         </div>
       </aside>
 
-      <main class="center-panel glass-card p-6 flex flex-col">
+      <section class="center-panel glass-card p-6 flex flex-col" aria-label="面试对话区">
         <div class="question-display-area flex-grow flex flex-col gap-4">
           <div class="ai-presenter flex items-start gap-4">
             <el-avatar :src="aiAvatar" :size="48" class="flex-shrink-0 shadow-lg" />
@@ -156,7 +156,7 @@
             <span v-else class="text-sm text-gray-500">点击麦克风开始语音回答</span>
           </div>
         </div>
-      </main>
+      </section>
 
       <aside class="right-panel flex flex-col gap-6">
         <div class="controls glass-card p-4 flex flex-col items-center gap-4">
@@ -256,7 +256,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, shallowRef, defineAsyncComponent } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useAuthStore } from '@/store/modules/auth';
 import { useFaceApi, emotionMap } from '@/composables/useFaceApi';
 import { useTTS } from '@/composables/useTTS';
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition';
@@ -264,11 +263,11 @@ import { ElMessage, ElMessageBox, ElButton, ElProgress, ElIcon, ElAvatar, ElTool
 import { VideoPlay, VideoPause, RefreshRight, Microphone, SwitchButton, VideoCamera } from '@element-plus/icons-vue';
 import { getInterviewSessionApi, submitAnswerStreamApi, finishInterviewApi, regenerateNextQuestionApi, generateQuestionTTSApi, getInterviewQuestionGenerationJobsApi, SubmitAnswerStreamError, type InterviewSessionItem, type InterviewQuestionItem, type AnalysisFrame, type AnswerFeedback, type InterviewQuestionGenerationJobItem } from '@/api/modules/interview';
 import { VideoUploader } from '@/api/modules/videoUpload';
+import { createWebSocketTicketApi, resolveWebSocketBase } from '@/api/modules/realtime';
 import aiAvatar from '@/assets/images/image.png';
 
 const route = useRoute();
 const router = useRouter();
-const authStore = useAuthStore();
 const RichTextEditor = defineAsyncComponent(() => import('@/components/common/RichTextEditor.vue'));
 type SubmissionState = 'idle' | 'evaluating' | 'streaming_next' | 'finishing' | 'error';
 type AnswerInputMode = 'text' | 'voice';
@@ -694,17 +693,6 @@ const toggleSpeech = async () => {
   }
 };
 
-const getSpeechWsUrl = () => {
-  const configuredWsBase = (import.meta.env.VITE_WS_URL || '').replace(/\/$/, '');
-  const apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
-  const wsBase = configuredWsBase || (
-    apiBase && /^https?:\/\//.test(apiBase)
-      ? apiBase.replace(/^http/, 'ws')
-      : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
-  );
-  return `${wsBase}/ws/interviews/${sessionInfo.value?.id}/speech/?token=${authStore.token}`;
-};
-
 const appendTranscriptToAnswer = (transcript: string) => {
   if (!transcript.trim()) return;
   if (userAnswer.value.endsWith('</p>')) {
@@ -728,7 +716,8 @@ const startVoiceAnswer = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     answerAudioStream.value = stream;
-    const socket = new WebSocket(getSpeechWsUrl());
+    const ticket = await createWebSocketTicketApi('interview_speech', sessionInfo.value.id);
+    const socket = new WebSocket(`${resolveWebSocketBase()}/ws/interviews/${sessionInfo.value.id}/speech/?ticket=${encodeURIComponent(ticket.ticket)}`);
     speechSocket.value = socket;
     socket.onopen = () => {
       backendAsrStatus.value = 'listening';

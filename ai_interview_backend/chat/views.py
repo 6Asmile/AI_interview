@@ -28,6 +28,8 @@ from .serializers import (
     UserBlockSerializer,
 )
 from .security import scan_attachment
+from core.throttles import ChatRateThrottle, UploadRateThrottle
+from core.uploads import validate_uploaded_file
 
 
 def _blocked(user1, user2):
@@ -36,6 +38,7 @@ def _blocked(user1, user2):
 
 class StartConversationView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ChatRateThrottle]
 
     def post(self, request, user_id, *args, **kwargs):
         target_user = get_object_or_404(User, id=user_id)
@@ -138,18 +141,15 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 class AttachmentUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [parsers.MultiPartParser]
+    throttle_classes = [UploadRateThrottle]
     allowed_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf', '.docx', '.xlsx', '.txt', '.md', '.mp3', '.wav', '.webm', '.mp4'}
 
     def post(self, request):
         uploaded = request.FILES.get('file')
         if not uploaded:
             raise ValidationError({'file': '请选择文件。'})
-        extension = os.path.splitext(uploaded.name)[1].lower()
-        if extension not in self.allowed_extensions:
-            raise ValidationError({'file': '该文件类型不允许发送。'})
         max_bytes = 20 * 1024 * 1024
-        if uploaded.size > max_bytes:
-            raise ValidationError({'file': '附件不能超过 20MB。'})
+        validate_uploaded_file(uploaded, allowed_extensions=self.allowed_extensions, max_bytes=max_bytes)
         digest = hashlib.sha256()
         content = bytearray()
         for chunk in uploaded.chunks():

@@ -39,11 +39,13 @@
       </section>
 
       <section class="workspace-section full-width">
-        <header><div><h2>准备质量</h2><p>这些指标来自你的真实资料，不使用示例数据</p></div></header>
+        <header><div><h2>准备清单</h2><p>只根据你已确认的真实资料计算，不用简历数量代替准备质量</p></div><strong class="readiness-value">{{ readinessPercentage }}%</strong></header>
         <div class="quality-list">
-          <div><span>已确认职业事实</span><el-progress :percentage="factProgress" :stroke-width="10" /></div>
-          <div><span>标准化简历版本</span><el-progress :percentage="resumeProgress" :stroke-width="10" /></div>
-          <div><span>待完成补强任务</span><strong>{{ dashboard?.open_learning_tasks || 0 }}</strong></div>
+          <button v-for="item in preparationActions" :key="item.label" class="preparation-action" @click="router.push(item.route)">
+            <span :class="['action-state', { ready: item.ready }]">{{ item.ready ? '已完成' : '待完成' }}</span>
+            <strong>{{ item.label }}</strong>
+            <small>{{ item.detail }}</small>
+          </button>
         </div>
       </section>
     </div>
@@ -71,11 +73,25 @@ const metrics = computed(() => [
   { label: '简历', value: dashboard.value?.resume_count || 0, note: '个人简历库' },
   { label: '补强任务', value: dashboard.value?.open_learning_tasks || 0, note: '来自面试复盘' },
 ]);
-const factProgress = computed(() => Math.min(100, (dashboard.value?.confirmed_facts || 0) * 10));
-const resumeProgress = computed(() => {
+const hasStandardResume = computed(() => {
   const total = dashboard.value?.resume_count || 0;
-  return total ? Math.round(((total - (dashboard.value?.resumes_without_versions || 0)) / total) * 100) : 0;
+  return total > 0 && (dashboard.value?.resumes_without_versions || 0) < total;
 });
+const preparationActions = computed(() => [
+  {
+    label: '确认职业事实', ready: (dashboard.value?.confirmed_facts || 0) > 0,
+    detail: `${dashboard.value?.confirmed_facts || 0} 条已人工确认`, route: '/dashboard/career',
+  },
+  {
+    label: '创建目标岗位', ready: (dashboard.value?.active_job_targets || 0) > 0,
+    detail: `${dashboard.value?.active_job_targets || 0} 个准备中的真实岗位`, route: '/dashboard/career',
+  },
+  {
+    label: '确认标准简历版本', ready: hasStandardResume.value,
+    detail: hasStandardResume.value ? '已有可审计版本' : '仍需导入并确认结构', route: '/dashboard/resumes',
+  },
+]);
+const readinessPercentage = computed(() => Math.round(preparationActions.value.filter(item => item.ready).length / preparationActions.value.length * 100));
 onMounted(async () => { loading.value = true; try { dashboard.value = await getCareerDashboardApi(); } finally { loading.value = false; } });
 </script>
 
@@ -104,9 +120,14 @@ onMounted(async () => { loading.value = true; try { dashboard.value = await getC
 .action-list button { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border: 0; border-bottom: 1px solid #edf0f4; background: transparent; text-align: left; cursor: pointer; }
 .action-list span strong, .action-list span small { display: block; }
 .action-list span small, .action-list time { margin-top: 4px; color: #667085; font-size: 12px; }
-.quality-list { display: grid; grid-template-columns: 1fr 1fr 180px; gap: 24px; align-items: end; }
-.quality-list span { display: block; margin-bottom: 10px; color: #475467; }
-.quality-list strong { color: #101828; font-size: 28px; }
+.quality-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.preparation-action { display: grid; gap: 7px; padding: 16px; border: 1px solid #e1e6ee; border-radius: 6px; background: #fafbfc; text-align: left; cursor: pointer; }
+.preparation-action:hover { border-color: #93b4ee; background: #f6f9ff; }
+.preparation-action strong { color: #101828; font-size: 15px; }
+.preparation-action small { color: #667085; }
+.action-state { width: fit-content; padding: 2px 7px; color: #92400e; background: #fef3c7; font-size: 12px; }
+.action-state.ready { color: #166534; background: #dcfce7; }
+.readiness-value { color: #1d4ed8; font-size: 24px; }
 @media (max-width: 900px) { .metrics-band { grid-template-columns: repeat(2, 1fr); } .dashboard-grid { grid-template-columns: 1fr; } .full-width { grid-column: auto; } .quality-list { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .dashboard-page { padding: 14px; } .dashboard-header { align-items: flex-start; flex-direction: column; } .pipeline-summary { grid-template-columns: repeat(2, 1fr); } }
 </style>

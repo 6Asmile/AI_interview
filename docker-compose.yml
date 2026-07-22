@@ -12,10 +12,13 @@ services:
     environment:
       IFACEOFF_RUN_MIGRATIONS: "1"
       IFACEOFF_COLLECTSTATIC: "1"
-      DB_HOST: db
-      DB_PORT: 3306
+      IFACEOFF_SETUP_AGENT_CHECKPOINT: "1"
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_REALTIME_URL: redis://redis:6379/3
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
     volumes:
@@ -24,7 +27,7 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -41,19 +44,58 @@ services:
     networks:
       - ifaceoff_network
 
-  celery-worker:
+  agent-service:
     image: ifaceoff/backend:latest
-    container_name: Ifaceoff-celery-worker
-    command: celery -A ai_interview_backend worker -l info -P solo
+    container_name: Ifaceoff-agent-service
+    command: uvicorn agent_service.app:app --host 0.0.0.0 --port 8010
     env_file:
       - ./.env.docker
     environment:
       IFACEOFF_RUN_MIGRATIONS: "0"
       IFACEOFF_COLLECTSTATIC: "0"
-      DB_HOST: db
-      DB_PORT: 3306
+      IFACEOFF_SETUP_AGENT_CHECKPOINT: "0"
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_REALTIME_URL: redis://redis:6379/3
+      RABBITMQ_HOST: rabbitmq
+    ports:
+      - "${AGENT_SERVICE_PORT:-8010}:8010"
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:8010/health', timeout=5)\nPY"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - ifaceoff_network
+
+  celery-worker:
+    image: ifaceoff/backend:latest
+    container_name: Ifaceoff-celery-worker
+    command: celery -A ai_interview_backend worker -l info -P solo -Q celery,agent,documents,media,notifications
+    env_file:
+      - ./.env.docker
+    environment:
+      IFACEOFF_RUN_MIGRATIONS: "0"
+      IFACEOFF_COLLECTSTATIC: "0"
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_REALTIME_URL: redis://redis:6379/3
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
     volumes:
@@ -73,10 +115,12 @@ services:
     environment:
       IFACEOFF_RUN_MIGRATIONS: "0"
       IFACEOFF_COLLECTSTATIC: "0"
-      DB_HOST: db
-      DB_PORT: 3306
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_REALTIME_URL: redis://redis:6379/3
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
     depends_on:
@@ -109,33 +153,45 @@ services:
     networks:
       - ifaceoff_network
 
-  db:
-    image: mysql:8.0
-    container_name: Ifaceoff-mysql
+  postgres:
+    image: postgres:16-alpine
+    container_name: Ifaceoff-postgres
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-ifaceoff_root}
-      MYSQL_DATABASE: ${DB_NAME:-ifaceoff}
-    command:
-      - --default-authentication-plugin=mysql_native_password
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-ifaceoff_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-ifaceoff-admin-change-me}
+      POSTGRES_DB: postgres
+      IFACEOFF_DB_NAME: ${IFACEOFF_DB_NAME:-ifaceoff_app}
+      IFACEOFF_DB_USER: ${IFACEOFF_DB_USER:-ifaceoff_app}
+      IFACEOFF_DB_PASSWORD: ${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}
+      AGENT_DB_NAME: ${AGENT_DB_NAME:-ifaceoff_agent}
+      AGENT_DB_USER: ${AGENT_DB_USER:-ifaceoff_agent}
+      AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}
+      LITELLM_DB_NAME: ${LITELLM_DB_NAME:-litellm}
+      LITELLM_DB_USER: ${LITELLM_DB_USER:-litellm}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm-change-me}
+      LANGFUSE_DB_NAME: ${LANGFUSE_DB_NAME:-langfuse}
+      LANGFUSE_DB_USER: ${LANGFUSE_DB_USER:-langfuse}
+      LANGFUSE_DB_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse-change-me}
+      TZ: UTC
+      PGTZ: UTC
     ports:
-      - "${MYSQL_PORT:-3307}:3306"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-multiple-databases.sh:/docker-entrypoint-initdb.d/10-ifaceoff-databases.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 15
-      start_period: 30s
+      start_period: 15s
     networks:
       - ifaceoff_network
 
   redis:
     image: redis:7-alpine
     container_name: Ifaceoff-redis
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
       - "${REDIS_PORT_PUBLIC:-6379}:6379"
     volumes:
@@ -175,7 +231,7 @@ services:
       - ifaceoff_network
 
 volumes:
-  mysql_data:
+  postgres_data:
   redis_data:
   static_volume:
   media_volume:

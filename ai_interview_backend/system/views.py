@@ -4,7 +4,7 @@ import uuid
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import caches
 from django.db import connection
 from django.db.models import Q
 from rest_framework import generics, permissions, viewsets
@@ -68,7 +68,26 @@ class SystemReadinessView(APIView):
                 cursor.fetchone()
             return {}
 
-        def check_cache():
+        def check_postgres_url(database_url, *, require_checkpoint=False):
+            import psycopg
+
+            if not database_url:
+                raise RuntimeError('database_url_not_configured')
+            with psycopg.connect(database_url, connect_timeout=2) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('SELECT 1')
+                    cursor.fetchone()
+                    if require_checkpoint:
+                        cursor.execute(
+                            "SELECT EXISTS (SELECT 1 FROM pg_tables "
+                            "WHERE schemaname = 'public' AND tablename = 'checkpoints')"
+                        )
+                        if not cursor.fetchone()[0]:
+                            raise RuntimeError('checkpoint_schema_missing')
+            return {'checkpoint_schema': True} if require_checkpoint else {}
+
+        def check_cache(alias):
+            cache = caches[alias]
             key = f'readiness:{uuid.uuid4()}'
             cache.set(key, 'ok', timeout=10)
             if cache.get(key) != 'ok':
@@ -83,7 +102,8 @@ class SystemReadinessView(APIView):
 
         def check_worker():
             from ai_interview_backend.celery_app import app
-            replies = app.control.inspect(timeout=1).ping() or {}
+            timeout = float(getattr(settings, 'CELERY_INSPECT_TIMEOUT_SECONDS', 2))
+            replies = app.control.inspect(timeout=timeout).ping() or {}
             if not replies:
                 raise RuntimeError('no_worker_heartbeat')
             return {'workers': len(replies)}
@@ -94,7 +114,14 @@ class SystemReadinessView(APIView):
             return {'status_code': response.status_code}
 
         run('database', check_database, critical=True)
-        run('redis', check_cache, critical=True)
+        agent_db_critical = getattr(settings, 'INTERVIEW_AGENT_ENGINE', '') == 'composite_v4'
+        run(
+            'agent_database',
+            lambda: check_postgres_url(settings.AGENT_DATABASE_URL, require_checkpoint=True),
+            critical=agent_db_critical,
+        )
+        run('redis_cache', lambda: check_cache('default'), critical=False)
+        run('redis_realtime', lambda: check_cache('realtime'), critical=True)
         run('rabbitmq', check_broker, critical=True)
         run('celery_worker', check_worker, critical=True)
 
@@ -116,6 +143,17 @@ class SystemReadinessView(APIView):
         litellm_url = str(getattr(settings, 'LITELLM_PROXY_URL', '') or '').rstrip('/')
         litellm_health_url = litellm_url.removesuffix('/v1') + '/health/liveliness'
         run('litellm', lambda: check_http(litellm_health_url))
+
+        if getattr(settings, 'LITELLM_DATABASE_URL', ''):
+            run('litellm_database', lambda: check_postgres_url(settings.LITELLM_DATABASE_URL))
+        else:
+            checks['litellm_database'] = {'ok': False, 'critical': False, 'reason': 'not_configured'}
+
+        if getattr(settings, 'LANGFUSE_ENABLED', False):
+            if getattr(settings, 'LANGFUSE_DATABASE_URL', ''):
+                run('langfuse_database', lambda: check_postgres_url(settings.LANGFUSE_DATABASE_URL))
+            else:
+                checks['langfuse_database'] = {'ok': False, 'critical': False, 'reason': 'not_configured'}
 
         critical_ok = all(item['ok'] for item in checks.values() if item.get('critical'))
         return Response({

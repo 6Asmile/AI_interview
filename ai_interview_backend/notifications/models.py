@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+import uuid
 
 
 class Notification(models.Model):
@@ -46,3 +47,29 @@ class Notification(models.Model):
         actor_name = getattr(self.actor, 'username', str(self.actor))
         recipient_name = getattr(self.recipient, 'username', str(self.recipient))
         return f"通知: {actor_name} {self.verb} -> {recipient_name}"
+
+
+class NotificationOutbox(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待投递'
+        PUBLISHED = 'published', '已投递'
+        FAILED = 'failed', '失败'
+
+    event_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_outbox_events')
+    actor_content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, related_name='+')
+    actor_object_id = models.CharField(max_length=255)
+    verb = models.CharField(max_length=50, choices=Notification.VerbChoices.choices)
+    target_content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    target_object_id = models.CharField(max_length=255, null=True, blank=True)
+    action_object_content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    action_object_object_id = models.CharField(max_length=255, null=True, blank=True)
+    notification = models.OneToOneField(Notification, on_delete=models.SET_NULL, null=True, blank=True, related_name='outbox_event')
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['created_at']

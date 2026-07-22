@@ -1,6 +1,7 @@
 # users/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.db.models.functions import Lower
 import uuid
 
 class User(AbstractUser):
@@ -67,6 +68,12 @@ class User(AbstractUser):
     # 创建超级用户时需要填写的字段，移除 username
     REQUIRED_FIELDS = ['username']
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(Lower('email'), name='users_user_email_ci_unique'),
+            models.UniqueConstraint(Lower('username'), name='users_user_username_ci_unique'),
+        ]
+
     def __str__(self):
         return self.email
 
@@ -116,6 +123,49 @@ class LoginAudit(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class OAuthFlow(models.Model):
+    """Short-lived server-side OAuth state for login and account linking."""
+
+    class Flow(models.TextChoices):
+        LOGIN = 'login', '登录或注册'
+        CONNECT = 'connect', '绑定账号'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '等待授权'
+        PROCESSING = 'processing', '处理中'
+        LINK_REQUIRED = 'link_required', '等待账号确认'
+        COMPLETED = 'completed', '已完成'
+        FAILED = 'failed', '失败'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    provider = models.CharField(max_length=32, default='github', db_index=True)
+    flow = models.CharField(max_length=16, choices=Flow.choices, default=Flow.LOGIN)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    state_hash = models.CharField(max_length=64, unique=True)
+    code_verifier = models.CharField(max_length=160)
+    redirect_uri = models.URLField(max_length=500)
+    return_to = models.CharField(max_length=300, default='/dashboard')
+    requested_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='oauth_flows',
+    )
+    provider_uid = models.CharField(max_length=160, blank=True, db_index=True)
+    verified_email = models.EmailField(blank=True)
+    profile_data = models.JSONField(default=dict, blank=True)
+    link_token_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    error_code = models.CharField(max_length=80, blank=True)
+    expires_at = models.DateTimeField(db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['provider', 'status', 'expires_at'])]
 
 
 class PrivacyRequest(models.Model):

@@ -14,7 +14,6 @@ RUN set -eux; \
             curl \
             ffmpeg \
             pkg-config \
-            libmariadb-dev \
             && break; \
         if [ "$attempt" -eq 5 ]; then \
             exit 1; \

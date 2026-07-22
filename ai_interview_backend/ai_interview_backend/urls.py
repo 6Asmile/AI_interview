@@ -17,13 +17,15 @@ admin.site.site_title = "IFaceOff Admin Portal"
 admin.site.index_title = "欢迎来到 IFaceOff 管理后台"
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('internal/django-admin/', admin.site.urls),
+    path('api/admin/v1/', include('staff_admin.urls')),
 
     # 【核心修正】将所有业务 API 都放在 'api/v1/' 命名空间下
     path('api/v1/', include([
         path('auth/', include('users.urls')),
         path('auth/login/', AuditedTokenObtainPairView.as_view(), name='token_obtain_pair'),
         path('auth/token/refresh/', AuditedTokenRefreshView.as_view(), name='token_refresh'),
+        path('', include('core.urls')),
         path('', include('resumes.urls')),
         path('', include('interviews.urls')),
         path('', include('system.urls')),

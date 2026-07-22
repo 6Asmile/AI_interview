@@ -1,74 +1,89 @@
 import { defineStore } from 'pinia';
 import router from '@/router';
+import { clearAccessToken, getAccessToken, setAccessToken } from '@/auth/token';
 import { getUserProfileApi, type UserProfile } from '@/api/modules/user';
-import { loginApi, githubLoginApi, type LoginData, type GitHubLoginData } from '@/api/modules/auth';
+import {
+  browserSessionApi,
+  ensureCsrfApi,
+  githubLoginApi,
+  loginApi,
+  logoutApi,
+  type GitHubLoginData,
+  type LoginData,
+} from '@/api/modules/auth';
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    token: localStorage.getItem('token') || null as string | null,
+    token: getAccessToken() as string | null,
     user: null as UserProfile | null,
+    initialized: false,
+    initializing: null as Promise<void> | null,
   }),
-  
   getters: {
-    isAuthenticated: (state): boolean => !!state.token,
-    avatar: (state): string | null => state.user?.avatar || null,
-    username: (state): string | undefined => state.user?.username,
+    isAuthenticated: state => Boolean(state.token && state.user),
+    avatar: state => state.user?.avatar || null,
+    username: state => state.user?.username,
   },
-  
   actions: {
-    // 【核心修正】将 loginAction 拆分为更小的、职责单一的函数
-    
-    // 内部函数，只负责设置状态和跳转
-    async _handleLoginSuccess(token: string) {
-      this.token = token;
-      localStorage.setItem('token', token);
-      
-      try {
-        const userProfile = await getUserProfileApi();
-        this.user = userProfile;
-        await router.push(userProfile.onboarding_completed_at ? '/dashboard' : '/onboarding');
-      } catch (fetchUserError) {
-        console.error("登录成功但获取用户信息失败", fetchUserError);
-        this.clearAuth();
-        throw fetchUserError; // 将错误继续抛出
-      }
+    setSession(access: string, user?: UserProfile) {
+      setAccessToken(access);
+      this.token = access;
+      if (user) this.user = user;
     },
-    
-    // 暴露给常规登录使用
+    async initializeSession() {
+      if (this.initialized) return;
+      if (this.initializing) return this.initializing;
+      this.initializing = (async () => {
+        try {
+          await ensureCsrfApi();
+          const session = await browserSessionApi();
+          this.setSession(session.access, session.user);
+        } catch {
+          this.clearAuth();
+        } finally {
+          this.initialized = true;
+          this.initializing = null;
+        }
+      })();
+      return this.initializing;
+    },
+    async handleLoginSuccess(access: string) {
+      this.setSession(access);
+      this.user = await getUserProfileApi();
+      this.initialized = true;
+      await router.push(this.user.onboarding_completed_at ? '/dashboard' : '/onboarding');
+    },
     async loginWithCredentials(data: LoginData) {
-        const response = await loginApi(data);
-        await this._handleLoginSuccess(response.access);
+      await ensureCsrfApi();
+      const response = await loginApi(data);
+      await this.handleLoginSuccess(response.access);
     },
-
-    // 暴露给 GitHub 登录使用
     async loginWithGitHub(data: GitHubLoginData) {
-        const response = await githubLoginApi(data);
-        await this._handleLoginSuccess(response.access);
+      await ensureCsrfApi();
+      const response = await githubLoginApi(data);
+      await this.handleLoginSuccess(response.access);
     },
-    
     async fetchUser() {
       if (!this.token) return;
-      try {
-        const userData = await getUserProfileApi();
-        this.user = userData;
-      } catch (error) {
-        console.error("根据 Token 恢复用户信息失败", error);
-        this.clearAuth();
-        if (router.currentRoute.value.meta.requiresAuth) {
-           await router.push('/login');
-        }
-      }
+      this.user = await getUserProfileApi();
     },
-    
     clearAuth() {
+      clearAccessToken();
       this.token = null;
       this.user = null;
-      localStorage.removeItem('token');
     },
-
-    logout() {
+    async logout(allSessions = false) {
+      try { await logoutApi(allSessions); } catch { /* Local cleanup still applies. */ }
       this.clearAuth();
-      router.push('/login');
+      await router.push('/login');
     },
   },
 });
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('ifaceoff:auth-expired', () => {
+    const store = useAuthStore();
+    store.clearAuth();
+    if (router.currentRoute.value.meta.requiresAuth) router.push('/login');
+  });
+}

@@ -86,12 +86,12 @@ class CompositeV3InterviewAgentEngine(CompositeV2InterviewAgentEngine):
         self.state_schema_version = 3
         self._prepare_graph = self._compile_prepare_graph_v3()
 
-    def _compile_prepare_graph_v3(self):
+    def _compile_prepare_graph_v3(self, checkpointer=None):
         try:
             from langgraph.graph import END, StateGraph
         except Exception:
             return None
-        graph = StateGraph(dict)
+        graph = StateGraph(self._graph_state_schema())
         nodes = (
             ('load_context', self._node_load_context),
             ('normalize_input', self._node_normalize_input),
@@ -133,7 +133,7 @@ class CompositeV3InterviewAgentEngine(CompositeV2InterviewAgentEngine):
         graph.add_edge('retrieve', 'assemble_context')
         graph.add_edge('skip_rag', 'assemble_context')
         graph.add_edge('assemble_context', END)
-        return graph.compile()
+        return graph.compile(checkpointer=checkpointer)
 
     @staticmethod
     def _plain_text(value: str) -> str:

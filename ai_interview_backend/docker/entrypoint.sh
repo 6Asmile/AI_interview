@@ -25,13 +25,17 @@ PY
 }
 
 if [ "${IFACEOFF_WAIT_FOR_SERVICES:-1}" = "1" ]; then
-  wait_for_tcp "${DB_HOST:-db}" "${DB_PORT:-3306}" "mysql"
+  wait_for_tcp "${POSTGRES_HOST:-postgres}" "${POSTGRES_PORT:-5432}" "postgresql"
   wait_for_tcp "${REDIS_HOST:-redis}" "${REDIS_PORT:-6379}" "redis"
   wait_for_tcp "${RABBITMQ_HOST:-rabbitmq}" "5672" "rabbitmq"
 fi
 
 if [ "${IFACEOFF_RUN_MIGRATIONS:-0}" = "1" ]; then
   python manage.py migrate --noinput
+fi
+
+if [ "${IFACEOFF_SETUP_AGENT_CHECKPOINT:-0}" = "1" ]; then
+  python manage.py setup_agent_checkpoint
 fi
 
 if [ "${IFACEOFF_COLLECTSTATIC:-0}" = "1" ]; then

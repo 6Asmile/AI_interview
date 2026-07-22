@@ -10,6 +10,8 @@ def trigger_recommendation_generation(sender, instance, created, **kwargs):
     """
     当文章被创建或更新时，异步触发推荐生成任务。
     """
+    if kwargs.get('raw'):
+        return
     # 只为已发布的文章生成推荐
     if instance.status == 'published':
         print(f"Post '{instance.title}' saved, triggering recommendation task.")

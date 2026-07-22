@@ -17,9 +17,18 @@ from .views_auth import (
     MFAVerifyView,
     MFADisableView,
 )
-from .views_oauth import GitHubLogin, GitHubConnect
+from .views_oauth import (
+    GitHubConnect,
+    GitHubLinkConfirmView,
+    GitHubLogin,
+    GitHubOAuthCallbackView,
+    GitHubOAuthStartView,
+)
+from .token_views import BrowserSessionView, CsrfTokenView
 
 urlpatterns = [
+    path('csrf/', CsrfTokenView.as_view(), name='auth-csrf'),
+    path('session/', BrowserSessionView.as_view(), name='browser-session'),
     # --- 常规认证与用户管理 ---
     path('register/', UserRegisterView.as_view(), name='user-register'),
     path('send-code/', SendCodeView.as_view(), name='send-code'),
@@ -31,6 +40,7 @@ urlpatterns = [
     path('sessions/', AuthSessionListView.as_view(), name='auth-sessions'),
     path('sessions/<uuid:session_id>/revoke/', AuthSessionRevokeView.as_view(), name='auth-session-revoke'),
     path('logout/', LogoutView.as_view(), name='logout'),
+    path('logout-all/', LogoutView.as_view(), {'all_sessions': True}, name='logout-all'),
     path('privacy-requests/', PrivacyRequestView.as_view(), name='privacy-requests'),
     path('mfa/status/', MFAStatusView.as_view(), name='mfa-status'),
     path('mfa/setup/', MFASetupView.as_view(), name='mfa-setup'),
@@ -38,6 +48,9 @@ urlpatterns = [
     path('mfa/disable/', MFADisableView.as_view(), name='mfa-disable'),
 
     # --- 第三方 OAuth ---
+    path('oauth/github/start/', GitHubOAuthStartView.as_view(), name='github-oauth-start'),
+    path('oauth/github/callback/', GitHubOAuthCallbackView.as_view(), name='github-oauth-callback'),
+    path('oauth/github/link/confirm/', GitHubLinkConfirmView.as_view(), name='github-link-confirm'),
     path('github/', GitHubLogin.as_view(), name='github_login'),
     path('github/connect/', GitHubConnect.as_view(), name='github_connect'),
     # 【核心修正】使用我们自己的解绑 API

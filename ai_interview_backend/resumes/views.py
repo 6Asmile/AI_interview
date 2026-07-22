@@ -25,6 +25,8 @@ from .serializers import (
 )
 from .tasks import confirm_resume_import, process_resume_import_job
 from .versioning import accept_suggestion, create_resume_version, ensure_resume_version
+from core.throttles import UploadRateThrottle
+from core.uploads import validate_uploaded_file
 
 
 ALLOWED_RESUME_EXTENSIONS = {'.pdf', '.docx', '.txt', '.md', '.json'}
@@ -32,6 +34,11 @@ ALLOWED_RESUME_EXTENSIONS = {'.pdf', '.docx', '.txt', '.md', '.json'}
 
 class ResumeViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_throttles(self):
+        if self.action == 'create' and getattr(self.request, 'FILES', None):
+            return [UploadRateThrottle()]
+        return super().get_throttles()
 
     def get_queryset(self):
         return Resume.objects.filter(user=self.request.user).select_related('current_version').prefetch_related('import_jobs').order_by('-updated_at')
@@ -56,12 +63,8 @@ class ResumeViewSet(viewsets.ModelViewSet):
             return Response(ResumeDetailSerializer(resume, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
         file_obj = request.FILES['file']
-        extension = os.path.splitext(file_obj.name)[1].lower()
-        if extension not in ALLOWED_RESUME_EXTENSIONS:
-            raise ValidationError({'file': f'仅支持 {", ".join(sorted(ALLOWED_RESUME_EXTENSIONS))}。'})
         max_bytes = int(getattr(settings, 'RESUME_UPLOAD_MAX_BYTES', 15 * 1024 * 1024))
-        if file_obj.size > max_bytes:
-            raise ValidationError({'file': f'文件不能超过 {max_bytes // 1024 // 1024}MB。'})
+        validate_uploaded_file(file_obj, allowed_extensions=ALLOWED_RESUME_EXTENSIONS, max_bytes=max_bytes)
         with transaction.atomic():
             resume = Resume.objects.create(
                 user=request.user,

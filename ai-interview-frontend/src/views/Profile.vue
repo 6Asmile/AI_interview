@@ -5,7 +5,7 @@
       <el-tab-pane label="职业画像" name="profile">
         <section class="profile-section">
           <div class="avatar-column">
-            <el-avatar :size="112" :src="profileForm.avatar || defaultAvatar" />
+            <el-avatar :size="112" :src="profileForm.avatar || defaultAvatar" aria-label="当前用户头像" />
             <el-upload :show-file-list="false" :before-upload="beforeAvatarUpload" :http-request="handleAvatarUpload"><el-button :icon="Upload">更换头像</el-button></el-upload>
           </div>
           <el-form :model="profileForm" label-width="100px" class="profile-form">
@@ -88,6 +88,7 @@ import {
 } from '@/api/modules/user';
 import defaultAvatar from '@/assets/images/default_avatar.png';
 import { formatDateTime } from '@/utils/format';
+import { startGitHubOAuthApi } from '@/api/modules/auth';
 
 const authStore = useAuthStore();
 const activeTab = ref('profile'); const loading = ref(true); const savingProfile = ref(false);
@@ -115,7 +116,14 @@ async function verifyMFA() { const result: any = await verifyMFAApi(mfaCode.valu
 async function disableMFA() { await disableMFAApi(disableForm.password, disableForm.code); disableDialog.value = false; Object.assign(disableForm, { password: '', code: '' }); await load(); }
 async function revokeSession(id: string) { await revokeAuthSessionApi(id); sessions.value = sessions.value.filter(item => item.id !== id); }
 async function logoutAll() { await ElMessageBox.confirm('这会让所有设备上的登录失效，是否继续？', '退出所有设备'); await logoutAllSessionsApi(); authStore.logout(); }
-function connectGitHub() { const clientID = import.meta.env.VITE_GITHUB_CLIENT_ID; if (!clientID) return ElMessage.error('GitHub 登录未配置'); localStorage.setItem('oauth_flow', 'connect'); window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientID}&redirect_uri=${encodeURIComponent(`${window.location.origin}/oauth/callback`)}&scope=user:email`; }
+async function connectGitHub() {
+  try {
+    const result = await startGitHubOAuthApi('connect', '/dashboard/profile');
+    window.location.assign(result.authorize_url);
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.message || 'GitHub 绑定暂不可用');
+  }
+}
 async function disconnectGitHub() { if (!githubAccount.value) return; await ElMessageBox.confirm('确认解绑 GitHub？', '账户解绑'); await disconnectSocialApi(githubAccount.value.id); await load(); }
 async function exportData() { const result: any = await createPrivacyRequestApi('export'); const blob = new Blob([JSON.stringify(result.result, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `ifaceoff-data-${new Date().toISOString().slice(0,10)}.json`; link.click(); URL.revokeObjectURL(url); }
 async function requestDeletion() { const { value } = await ElMessageBox.prompt('请说明注销原因，提交后由管理员审核。', '申请注销', { inputType: 'textarea' }); await createPrivacyRequestApi('delete', value); ElMessage.success('注销申请已提交'); }

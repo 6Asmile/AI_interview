@@ -28,7 +28,8 @@ switch ($Action) {
         Compose ps
         Write-Host ""
         Write-Host "Ifaceoff infrastructure is ready:"
-        Write-Host "  MySQL:    127.0.0.1:3307"
+        Write-Host "  PostgreSQL: 127.0.0.1:5433"
+        Write-Host "    DBs: ifaceoff_app, ifaceoff_agent, litellm, langfuse"
         Write-Host "  Redis:    127.0.0.1:6379"
         Write-Host "  RabbitMQ: 127.0.0.1:5672"
         Write-Host "  MQ Admin: http://127.0.0.1:15672"

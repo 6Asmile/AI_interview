@@ -26,4 +26,6 @@ def queue_public_search_rebuild():
 @receiver([post_save, post_delete], sender=KnowledgeDocument)
 @receiver([post_save, post_delete], sender=CommunityTopicLink)
 def public_content_changed(sender, instance, **kwargs):
+    if kwargs.get('raw'):
+        return
     queue_public_search_rebuild()

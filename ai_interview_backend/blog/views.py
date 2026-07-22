@@ -205,14 +205,21 @@ class PostViewSet(viewsets.ModelViewSet):
         post = self.get_object()
         cache_key = f"recommendations:{post.id}"
 
-        # 1. 尝试从缓存中获取
-        recommended_ids = cache.get(cache_key)
-
-        # 2. 如果缓存未命中，则同步计算一次作为后备 (可选，但能提高鲁棒性)
-        if recommended_ids is None:
-            from .recommendations import calculate_recommendations
-            recommended_ids = calculate_recommendations(post)
-            cache.set(cache_key, recommended_ids, timeout=3600)  # 存入缓存1小时
+        from core.cache_policy import CacheRebuildInProgress, get_or_load
+        from .recommendations import calculate_recommendations
+        try:
+            recommended_ids, cache_state = get_or_load(
+                cache_key,
+                lambda: calculate_recommendations(post),
+                'article_recommendations',
+            )
+        except CacheRebuildInProgress:
+            return Response({
+                'code': 'recommendations_processing',
+                'message': '推荐内容正在刷新。',
+                'retryable': True,
+                'retry_after_ms': 500,
+            }, status=status.HTTP_202_ACCEPTED)
 
         if not recommended_ids:
             return Response([], status=status.HTTP_200_OK)
@@ -224,7 +231,9 @@ class PostViewSet(viewsets.ModelViewSet):
 
         # 4. 序列化并返回
         serializer = PostListSerializer(recommended_posts, many=True, context={'request': request})
-        return Response(serializer.data)
+        response = Response(serializer.data)
+        response['X-Cache-State'] = cache_state
+        return response
 
 
 class CommentViewSet(viewsets.ModelViewSet):

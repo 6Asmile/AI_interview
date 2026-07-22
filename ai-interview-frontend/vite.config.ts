@@ -2,9 +2,11 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), Components({ resolvers: [ElementPlusResolver()], dts: false })],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
@@ -12,7 +14,10 @@ export default defineConfig({
   },
   server: {
     // 确保监听所有 IP，这有时能解决一些网络绑定问题
-    host: '0.0.0.0', 
+    host: '0.0.0.0',
+    watch: {
+      ignored: ['**/test-results/**', '**/playwright-report/**'],
+    },
     proxy: {
       '/api/v1': {
         target: 'http://127.0.0.1:8000',

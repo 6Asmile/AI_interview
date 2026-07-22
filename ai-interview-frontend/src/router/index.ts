@@ -24,29 +24,32 @@ const routes: Array<RouteRecordRaw> = [
       { path: '', name: 'Dashboard', component: () => import('@/views/Home.vue') },
       { path: 'career', name: 'CareerWorkspace', component: () => import('@/views/CareerWorkspace.vue') },
       { path: 'community', name: 'CommunityHub', component: () => import('@/views/CommunityHub.vue') },
-      { path: 'interviews', name: 'InterviewSetup', component: () => import('@/views/Dashboard.vue') },
+      { path: 'interviews', name: 'InterviewSetup', component: () => import('@/views/Dashboard.vue'), meta: { desktopOnly: true, desktopFeature: 'AI 模拟面试配置' } },
       
       // --- 【核心修改】将面试房间路由移到此处 ---
       { 
         path: 'interview/:id?', 
         name: 'InterviewRoom', 
         component: () => import('@/views/InterviewRoom.vue'), 
-        props: true 
+        props: true,
+        meta: { desktopOnly: true, desktopFeature: '实时 AI 模拟面试' },
       },
       
       { path: 'resumes', name: 'ResumeManagement', component: () => import('@/views/Resume.vue') },
-      { path: 'knowledge', name: 'KnowledgeBase', component: () => import('@/views/KnowledgeBase.vue') },
-      { path: 'interview-admin', name: 'EnterpriseInterviewAdmin', component: () => import('@/views/EnterpriseInterviewAdmin.vue') },
+      { path: 'knowledge', name: 'KnowledgeBase', component: () => import('@/views/KnowledgeBase.vue'), meta: { desktopOnly: true, desktopFeature: '知识库解析与编辑' } },
+      { path: 'interview-admin', name: 'EnterpriseInterviewAdmin', component: () => import('@/views/LegacyAdminRedirect.vue'), meta: { desktopOnly: true, desktopFeature: '独立运营后台' } },
       { path: 'history', name: 'History', component: () => import('@/views/History.vue') },
       { path: 'report/:id', name: 'ReportDetail', component: () => import('@/views/ReportDetail.vue') },
+      { path: 'tasks', name: 'TaskCenter', component: () => import('@/views/TaskCenter.vue') },
       { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') },
-      { path: 'model-gateway', name: 'ModelGatewayAdmin', component: () => import('@/views/ModelGatewayAdmin.vue'), meta: { roles: ['admin'] } },
+      { path: 'model-gateway', name: 'ModelGatewayAdmin', component: () => import('@/views/LegacyAdminRedirect.vue'), meta: { roles: ['admin'], desktopOnly: true, desktopFeature: '独立运营后台' } },
       { path: 'profile', name: 'Profile', component: () => import('@/views/Profile.vue') },
       {
         path: 'resume/edit/:id',
         name: 'ResumeEditor',
         component: () => import('@/views/ResumeEditor.vue'),
         props: true,
+        meta: { desktopOnly: true, desktopFeature: '简历编辑器' },
       },
       {
         path: 'resume/preview/:id',
@@ -65,12 +68,14 @@ const routes: Array<RouteRecordRaw> = [
     { 
       path: 'ai-diagnosis', 
       name: 'ResumeAIDiagnosis',
-       component: () => import('@/views/ResumeAIDiagnosis.vue') 
+       component: () => import('@/views/ResumeAIDiagnosis.vue'),
+       meta: { desktopOnly: true, desktopFeature: '简历 AI 诊断' },
       },
       { 
         path: 'generate-resume', 
         name: 'ResumeGenerator',
-         component: () => import('@/views/ResumeGenerator.vue') 
+         component: () => import('@/views/ResumeGenerator.vue'),
+         meta: { desktopOnly: true, desktopFeature: '简历生成与编辑' },
         },
          { 
             path: 'blog', 
@@ -135,6 +140,7 @@ let hasCheckedForUnfinishedInterview = false;
 
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
+  await authStore.initializeSession();
   
   if (!to.meta.requiresAuth) {
     if (authStore.isAuthenticated && (to.name === 'Login' || to.name === 'Register')) {

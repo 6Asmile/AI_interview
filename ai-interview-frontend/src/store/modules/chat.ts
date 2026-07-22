@@ -6,6 +6,7 @@ import type { Conversation, Message } from '@/api/modules/chat';
 import { ElMessage } from 'element-plus';
 import { useAuthStore } from './auth';
 import { v4 as uuidv4 } from 'uuid';
+import { createWebSocketTicketApi, resolveWebSocketBase } from '@/api/modules/realtime';
 
 interface ChatState {
   conversations: Conversation[];
@@ -119,7 +120,7 @@ export const useChatStore = defineStore('chat', {
     /**
      * 建立 WebSocket 连接
      */
-    connectWebSocket() {
+    async connectWebSocket() {
       // 1. 清理旧连接
       if (this.socket) {
         this.socket.close();
@@ -128,9 +129,7 @@ export const useChatStore = defineStore('chat', {
 
       const authStore = useAuthStore();
       const currentUser = authStore.user;
-      const token = authStore.token;
-
-      if (!currentUser || !token) return;
+      if (!currentUser) return;
 
       // 2. 找到聊天对象
       const otherUser = this.activeConversation.participants.find(p => p.id !== currentUser.id);
@@ -138,31 +137,21 @@ export const useChatStore = defineStore('chat', {
 
       this.connectionStatus = 'connecting';
 
-      // 3. 构建 WebSocket URL (适配环境变量和生产环境)
-      let wsBaseUrl = '';
-
-      // 策略 A: 如果配置了环境变量 (开发环境)，直接使用配置的地址 (ws://127.0.0.1:8000)
-      if (import.meta.env.VITE_WS_URL) {
-        wsBaseUrl = import.meta.env.VITE_WS_URL;
-      } 
-      // 策略 B: 否则 (生产环境)，根据当前 URL 自动推断 (ws://your-domain.com)
-      else {
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        wsBaseUrl = `${protocol}://${window.location.host}`;
+      let ticket;
+      try {
+        ticket = await createWebSocketTicketApi('chat', otherUser.id);
+      } catch {
+        this.connectionStatus = 'error';
+        return;
       }
-
-      // 拼接完整路径
-      const wsUrl = `${wsBaseUrl}/ws/chat/${otherUser.id}/?token=${token}`;
-
-      console.log('Connecting to WebSocket:', wsUrl);
-
+      if (!this.activeConversation || !this.activeConversation.participants.some(item => item.id === otherUser.id)) return;
+      const wsUrl = `${resolveWebSocketBase()}/ws/chat/${otherUser.id}/?ticket=${encodeURIComponent(ticket.ticket)}`;
       this.socket = new WebSocket(wsUrl);
 
       // 4. 事件监听
       this.socket.onopen = () => {
         this.connectionStatus = 'connected';
         this.socket?.send(JSON.stringify({ type: 'read_messages' }));
-        console.log('Chat WebSocket connected');
       };
 
       this.socket.onmessage = (event) => {
@@ -219,7 +208,6 @@ export const useChatStore = defineStore('chat', {
 
       this.socket.onclose = () => {
         this.connectionStatus = 'disconnected';
-        console.log('Chat WebSocket disconnected.');
       };
       
       this.socket.onerror = (error) => {

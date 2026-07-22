@@ -1,14 +1,15 @@
 param(
     [ValidateSet('up', 'down', 'restart', 'status')]
     [string]$Action = 'up',
-    [ValidateSet('django', 'celery-worker', 'celery-beat', 'vite')]
-    [string[]]$Components = @('django', 'celery-worker', 'celery-beat', 'vite')
+    [ValidateSet('django', 'celery-worker', 'celery-beat', 'vite', 'admin-vite')]
+    [string[]]$Components = @('django', 'celery-worker', 'celery-beat', 'vite', 'admin-vite')
 )
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $Backend = Join-Path $Root 'ai_interview_backend'
 $Frontend = Join-Path $Root 'ai-interview-frontend'
+$AdminFrontend = Join-Path $Root 'ai-interview-admin'
 $LogDir = Join-Path $Root 'logs\dev'
 $PidFile = Join-Path $Root '.ifaceoff-dev-pids.json'
 $Python = if ($env:IFACEOFF_PYTHON) { $env:IFACEOFF_PYTHON } else { (Get-Command python).Source }
@@ -57,7 +58,15 @@ function Write-PidEntries($Entries) {
 }
 
 function Test-Port([int]$Port) {
-    return [bool](Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $connect = $client.ConnectAsync('127.0.0.1', $Port)
+        return $connect.Wait(500) -and $client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
 }
 
 function Start-AppProcess([string]$Name, [string]$WorkingDirectory, [string]$Executable, [string[]]$Arguments) {
@@ -98,6 +107,7 @@ function Show-Status {
     }
     Write-Host ("django-port      {0}" -f $(if (Test-Port 8000) { 'listening' } else { 'stopped' }))
     Write-Host ("vite-port        {0}" -f $(if (Test-Port 5173) { 'listening' } else { 'stopped' }))
+    Write-Host ("admin-vite-port  {0}" -f $(if (Test-Port 5174) { 'listening' } else { 'stopped' }))
 }
 
 if ($Action -eq 'down') { Stop-DevProcesses $Components; Show-Status; exit }
@@ -111,6 +121,20 @@ try {
     Write-Warning 'Application processes will still be started; readiness will report unavailable dependencies.'
 }
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+$needsBackendPreflight = @('django', 'celery-worker', 'celery-beat') | Where-Object { $_ -in $Components }
+if ($needsBackendPreflight) {
+    Push-Location $Backend
+    try {
+        & $Python manage.py migrate --noinput
+        if ($LASTEXITCODE -ne 0) { throw 'Django migrations failed.' }
+        & $Python manage.py bootstrap_staff_admin
+        if ($LASTEXITCODE -ne 0) { throw 'Staff role synchronization failed.' }
+        & $Python manage.py sync_public_site
+        if ($LASTEXITCODE -ne 0) { throw 'Django Site synchronization failed.' }
+    } finally {
+        Pop-Location
+    }
+}
 $entries = @(Read-PidEntries | Where-Object { $_.pid -and (Get-Process -Id $_.pid -ErrorAction SilentlyContinue) })
 $runningNames = @($entries | ForEach-Object { $_.name })
 
@@ -119,7 +143,7 @@ if ('django' -in $Components -and 'django' -notin $runningNames) {
     else { $entries += Start-AppProcess 'django' $Backend $Python @('manage.py', 'runserver', '127.0.0.1:8000') }
 }
 if ('celery-worker' -in $Components -and 'celery-worker' -notin $runningNames) {
-    $entries += Start-AppProcess 'celery-worker' $Backend $Python @('-m', 'celery', '-A', 'ai_interview_backend', 'worker', '-l', 'info', '-P', 'solo')
+    $entries += Start-AppProcess 'celery-worker' $Backend $Python @('-m', 'celery', '-A', 'ai_interview_backend', 'worker', '-l', 'info', '-P', 'solo', '-Q', 'celery,agent,documents,media,notifications')
 }
 if ('celery-beat' -in $Components -and 'celery-beat' -notin $runningNames) {
     $entries += Start-AppProcess 'celery-beat' $Backend $Python @('-m', 'celery', '-A', 'ai_interview_backend', 'beat', '-l', 'info')
@@ -128,10 +152,15 @@ if ('vite' -in $Components -and 'vite' -notin $runningNames) {
     if (Test-Port 5173) { Write-Host 'vite: port 5173 already in use; leaving existing server untouched.' }
     else { $entries += Start-AppProcess 'vite' $Frontend $Npm @('run', 'dev', '--', '--host', '127.0.0.1') }
 }
+if ('admin-vite' -in $Components -and 'admin-vite' -notin $runningNames) {
+    if (Test-Port 5174) { Write-Host 'admin-vite: port 5174 already in use; leaving existing server untouched.' }
+    else { $entries += Start-AppProcess 'admin-vite' $AdminFrontend $Npm @('run', 'dev', '--', '--host', '127.0.0.1') }
+}
 
 Write-PidEntries $entries
 Start-Sleep -Seconds 3
 Show-Status
 Write-Host 'Frontend: http://127.0.0.1:5173'
+Write-Host 'Admin:    http://127.0.0.1:5174'
 Write-Host 'Backend:  http://127.0.0.1:8000'
 Write-Host 'Readiness: http://127.0.0.1:8000/api/v1/system/readiness/'

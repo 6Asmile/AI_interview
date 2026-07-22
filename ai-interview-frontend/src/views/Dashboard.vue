@@ -80,6 +80,7 @@ const interviewModeLabel = computed(() => ({
 // --- 数据获取 ---
 onMounted(() => {
   jobStore.fetchIndustries();
+  fetchResumes();
 });
 
 const fetchResumes = async () => {
