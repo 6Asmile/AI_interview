@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import date
 from typing import Any
 
-
-JSON_RESUME_SCHEMA_VERSION = '1.0.0'
-ARRAY_SECTIONS = ('work', 'volunteer', 'education', 'awards', 'certificates', 'publications', 'skills', 'languages', 'interests', 'references', 'projects')
+from .schema import ARRAY_SECTIONS, JSON_RESUME_SCHEMA_VERSION, normalize_resume
 
 
 def _date(value: date | str | None) -> str:
@@ -16,15 +13,7 @@ def _date(value: date | str | None) -> str:
 
 
 def normalize_json_resume(payload: dict | None) -> dict:
-    data = deepcopy(payload) if isinstance(payload, dict) else {}
-    data['basics'] = data.get('basics') if isinstance(data.get('basics'), dict) else {}
-    for section in ARRAY_SECTIONS:
-        data[section] = data.get(section) if isinstance(data.get(section), list) else []
-    data['meta'] = data.get('meta') if isinstance(data.get('meta'), dict) else {}
-    data['meta']['schemaVersion'] = JSON_RESUME_SCHEMA_VERSION
-    extension = data.get('x-ifaceoff')
-    data['x-ifaceoff'] = extension if isinstance(extension, dict) else {}
-    return data
+    return normalize_resume(payload)
 
 
 def _legacy_modules(content_json: Any) -> list[dict]:
@@ -179,4 +168,3 @@ def json_resume_plain_text(payload: dict) -> str:
                     if isinstance(value, list):
                         parts.extend(str(entry) for entry in value if isinstance(entry, (str, int, float)))
     return '\n'.join(part.strip() for part in parts if part and part.strip())
-

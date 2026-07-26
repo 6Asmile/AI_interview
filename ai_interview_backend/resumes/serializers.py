@@ -1,4 +1,5 @@
 from django.db import transaction
+from copy import deepcopy
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -78,7 +79,7 @@ class ResumeSuggestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResumeSuggestion
         fields = [
-            'id', 'resume', 'base_version', 'patch', 'summary', 'rationale', 'evidence_fact_ids',
+            'id', 'resume', 'base_version', 'patch', 'summary', 'rationale', 'evidence_fact_ids', 'evidence_links',
             'status', 'accepted_version', 'created_by', 'created_at', 'decided_at',
         ]
         read_only_fields = ('status', 'accepted_version', 'created_by', 'created_at', 'decided_at')
@@ -142,43 +143,92 @@ class ResumeDetailSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
-        nested_fields = {
-            'skills': (Skill, validated_data.pop('skills', None)),
-            'educations': (Education, validated_data.pop('educations', None)),
-            'work_experiences': (WorkExperience, validated_data.pop('work_experiences', None)),
-            'project_experiences': (ProjectExperience, validated_data.pop('project_experiences', None)),
+        nested = {
+            'skills': validated_data.pop('skills', None),
+            'educations': validated_data.pop('educations', None),
+            'work_experiences': validated_data.pop('work_experiences', None),
+            'project_experiences': validated_data.pop('project_experiences', None),
         }
-        versioned_change = bool({'content_json', 'full_name', 'phone', 'email', 'job_title', 'city', 'summary'}.intersection(validated_data))
-        versioned_change = versioned_change or any(items is not None for _, items in nested_fields.values())
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-
-        for field_name, (model_class, data_list) in nested_fields.items():
-            if data_list is None:
-                continue
-            current_ids = []
-            for item_data in data_list:
-                item_id = item_data.pop('id', None)
-                if item_id:
-                    updated = model_class.objects.filter(id=item_id, resume=instance).update(**item_data)
-                    if not updated:
-                        raise serializers.ValidationError({field_name: f'关联项 {item_id} 不存在。'})
-                    current_ids.append(item_id)
-                else:
-                    current_ids.append(model_class.objects.create(resume=instance, **item_data).id)
-            getattr(instance, field_name).exclude(id__in=current_ids).delete()
-
-        if versioned_change:
-            request = self.context.get('request')
-            create_resume_version(
-                resume=instance,
-                resume_json=legacy_resume_to_json_resume(instance),
-                layout_json=instance.content_json or {},
-                user=getattr(request, 'user', instance.user),
-                source=ResumeVersion.Source.EDITOR,
-                change_summary='通过兼容编辑器保存简历',
-            )
+        legacy_content = validated_data.pop('content_json', None)
+        legacy_scalars = {
+            key: validated_data.pop(key)
+            for key in ('full_name', 'phone', 'email', 'job_title', 'city', 'summary')
+            if key in validated_data
+        }
+        template_name = validated_data.pop('template_name', None)
+        for attr in ('title', 'status', 'is_default'):
+            if attr in validated_data:
+                setattr(instance, attr, validated_data[attr])
+        instance.save(update_fields=[
+            *[key for key in ('title', 'status', 'is_default') if key in validated_data],
+            'updated_at',
+        ])
+        current = ensure_resume_version(instance, self.context.get('request').user)
+        canonical = deepcopy(current.resume_json)
+        basics = canonical.setdefault('basics', {})
+        scalar_map = {
+            'full_name': 'name', 'phone': 'phone', 'email': 'email',
+            'job_title': 'label', 'summary': 'summary',
+        }
+        for source, target in scalar_map.items():
+            if source in legacy_scalars:
+                basics[target] = legacy_scalars[source]
+        if 'city' in legacy_scalars:
+            basics.setdefault('location', {})['city'] = legacy_scalars['city']
+        if nested['educations'] is not None:
+            canonical['education'] = [{
+                'institution': item.get('school', ''),
+                'area': item.get('major', ''),
+                'studyType': item.get('degree', ''),
+                'startDate': str(item.get('start_date') or ''),
+                'endDate': str(item.get('end_date') or ''),
+                'courses': [],
+            } for item in nested['educations']]
+        if nested['work_experiences'] is not None:
+            canonical['work'] = [{
+                'name': item.get('company', ''),
+                'position': item.get('position', ''),
+                'startDate': str(item.get('start_date') or ''),
+                'endDate': str(item.get('end_date') or ''),
+                'summary': item.get('description', ''),
+                'highlights': [],
+            } for item in nested['work_experiences']]
+        if nested['project_experiences'] is not None:
+            canonical['projects'] = [{
+                'name': item.get('project_name', ''),
+                'roles': [item.get('role')] if item.get('role') else [],
+                'startDate': str(item.get('start_date') or ''),
+                'endDate': str(item.get('end_date') or ''),
+                'description': item.get('description', ''),
+                'keywords': [],
+                'highlights': [],
+            } for item in nested['project_experiences']]
+        if nested['skills'] is not None:
+            canonical['skills'] = [{
+                'name': item.get('skill_name', ''),
+                'level': item.get('proficiency', ''),
+                'keywords': [],
+            } for item in nested['skills']]
+        if legacy_content is not None:
+            converted = legacy_resume_to_json_resume(instance, legacy_content)
+            for key in ('basics', 'work', 'education', 'projects', 'skills'):
+                if converted.get(key):
+                    canonical[key] = converted[key]
+        request = self.context.get('request')
+        create_resume_version(
+            resume=instance,
+            resume_json=canonical,
+            user=getattr(request, 'user', instance.user),
+            source=ResumeVersion.Source.EDITOR,
+            change_summary='通过 v1 兼容适配器保存到 Canonical JSON',
+        )
+        if template_name:
+            from .studio import ensure_studio
+            from .templates import RESUME_TEMPLATES
+            draft, _ = ensure_studio(instance, getattr(request, 'user', instance.user))
+            if template_name in RESUME_TEMPLATES:
+                draft.design_json['template_key'] = template_name
+                draft.save(update_fields=['design_json', 'updated_at'])
         return instance
 
 

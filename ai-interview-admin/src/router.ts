@@ -25,6 +25,7 @@ const router = createRouter({
         { path: 'audit', name: 'Audit', component: () => import('./views/Audit.vue') },
         { path: 'governance', name: 'Governance', component: () => import('./views/Governance.vue') },
         { path: 'career-config', name: 'CareerConfig', component: () => import('./views/PlatformDomain.vue') },
+        { path: 'resume-config', name: 'ResumeConfig', component: () => import('./views/PlatformDomain.vue') },
         { path: 'companies', name: 'Companies', component: () => import('./views/PlatformDomain.vue') },
         { path: 'jobs', name: 'Jobs', component: () => import('./views/PlatformDomain.vue') },
         { path: 'community', name: 'CommunityControl', component: () => import('./views/PlatformDomain.vue') },

@@ -1,377 +1,211 @@
-<!-- src/views/Resume.vue -->
-<template>
-  <div class="resume-page">
-    <div class="resume-hero">
-      <div>
-        <p class="hero-kicker">Resume Center</p>
-        <h1>我的简历</h1>
-        <p>统一管理在线简历与上传简历，让创建、编辑和预览路径更清晰。</p>
-      </div>
-      <div class="hero-pill-group">
-        <span class="hero-pill">总数 {{ resumeList.length }}</span>
-        <span class="hero-pill">在线编辑与文件简历统一管理</span>
-      </div>
-    </div>
-
-    <el-card class="resume-card">
-      <template #header>
-        <div class="page-card-header">
-          <div>
-            <p class="section-kicker">Resume Library</p>
-            <span>我的简历</span>
-          </div>
-          <el-dropdown @command="handleCreateCommand">
-            <el-button type="primary" class="create-button">
-              新建简历 <el-icon class="el-icon--right"><arrow-down /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="online">在线创建新简历</el-dropdown-item>
-                <el-dropdown-item command="upload">上传简历文件</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </template>
-
-      <el-table :data="resumeList" v-loading="isLoading" style="width: 100%" class="resume-table">
-        <el-table-column prop="title" label="简历标题" />
-        <el-table-column prop="status" label="状态" width="120">
-          <template #default="scope">
-            <el-tag :type="statusTagType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="updated_at" label="最后更新时间" width="200">
-           <template #default="scope">{{ formatDateTime(scope.row.updated_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right">
-          <template #default="scope">
-            <el-button v-if="isOnlineResume(scope.row.status)" link type="primary" @click="handleEdit(scope.row.id)">编辑</el-button>
-            <el-button link type="primary" @click="handlePreview(scope.row)">预览</el-button>
-            <el-button link type="primary" @click="showVersions(scope.row)">版本</el-button>
-            <el-button v-if="scope.row.latest_import_job?.status === 'review_required'" link type="success" @click="confirmImport(scope.row)">确认导入</el-button>
-            <el-popconfirm title="确定要删除这份简历吗？" @confirm="handleDelete(scope.row.id)">
-              <template #reference>
-                <el-button link type="danger">删除</el-button>
-              </template>
-            </el-popconfirm>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <!-- 文件上传对话框 -->
-    <el-dialog v-model="uploadDialogVisible" title="上传简历文件" width="500px" class="upload-dialog" @close="resetUploadDialog">
-      <!-- 【核心修改#2】增加标题输入框 -->
-      <el-form-item label="简历标题">
-        <el-input v-model="uploadForm.title" placeholder="请输入简历标题，默认为文件名"></el-input>
-      </el-form-item>
-      <el-upload
-        ref="uploadRef"
-        drag
-        action="#"
-        :http-request="handleUpload"
-        :limit="1"
-        :on-exceed="handleExceed"
-        :auto-upload="false"
-        :on-change="handleFileChange"
-      >
-        <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-        <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
-        <template #tip><div class="el-upload__tip">支持 PDF、DOCX、TXT、Markdown、JSON Resume，大小不超过 15MB。</div></template>
-      </el-upload>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="uploadDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitUpload" :loading="isUploading">
-            {{ isUploading ? '解析中...' : '确定上传' }}
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
-    <el-drawer v-model="versionDrawer" title="简历版本历史" size="520px">
-      <el-empty v-if="!versions.length" description="暂无版本" />
-      <el-timeline v-else>
-        <el-timeline-item v-for="version in versions" :key="version.id" :timestamp="formatDateTime(version.created_at)" placement="top">
-          <div class="version-item"><strong>v{{ version.version_number }} · {{ sourceText(version.source) }}</strong><p>{{ version.change_summary || '未填写变更说明' }}</p><span>JSON Resume {{ version.schema_version }} · 证据 {{ version.evidence_snapshot.length }} 条</span><el-button v-if="activeResume?.current_version?.id !== version.id" link type="primary" @click="restoreVersion(version)">恢复为新版本</el-button><el-tag v-else type="success">当前版本</el-tag></div>
-        </el-timeline-item>
-      </el-timeline>
-    </el-drawer>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { confirmResumeImportApi, getResumeListApi, createResumeApi, deleteResumeApi, getResumeVersionsApi, restoreResumeVersionApi, type ResumeItem, type ResumeVersion } from '@/api/modules/resume';
-import { ElMessage, ElPopconfirm, ElMessageBox } from 'element-plus';
-import type { UploadInstance, UploadProps, UploadRawFile, UploadFile } from 'element-plus';
-import { ArrowDown, UploadFilled } from '@element-plus/icons-vue';
-import { genFileId } from 'element-plus';
+import { ArrowRight, DocumentAdd, UploadFilled } from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox, type UploadFile, type UploadInstance } from 'element-plus';
+import {
+  createResumeV2Api,
+  deleteResumeV2Api,
+  getResumesV2Api,
+  importResumeV2Api,
+  type ResumeV2,
+} from '@/api/modules/resume';
 import { formatDateTime } from '@/utils/format';
 
 const router = useRouter();
-const resumeList = ref<ResumeItem[]>([]);
-const isLoading = ref(true);
-const uploadDialogVisible = ref(false);
-const isUploading = ref(false);
-const versionDrawer = ref(false);
-const versions = ref<ResumeVersion[]>([]);
-const activeResume = ref<ResumeItem | null>(null);
+const resumes = ref<ResumeV2[]>([]);
+const loading = ref(false);
+const uploadVisible = ref(false);
+const uploading = ref(false);
 const uploadRef = ref<UploadInstance>();
-// 【核心修改#2】使用 reactive 对象来管理上传表单
-const uploadForm = reactive({
-  title: '',
-  file: null as UploadFile | null
-});
+const uploadFile = ref<UploadFile | null>(null);
+const uploadTitle = ref('');
 
-const fetchResumeList = async () => {
-  isLoading.value = true;
+async function load() {
+  loading.value = true;
   try {
-    // 【核心修改】处理分页响应
-    const response = await getResumeListApi();
-    resumeList.value = response.results;
-  } catch (error) {
-    console.error("获取简历列表失败:", error);
-    ElMessage.error('简历列表加载失败');
+    resumes.value = await getResumesV2Api();
   } finally {
-    isLoading.value = false;
+    loading.value = false;
   }
-};
+}
 
-onMounted(fetchResumeList);
+async function createResume() {
+  const title = await ElMessageBox.prompt('给这份简历起一个便于识别的名称。', '创建简历', {
+    inputPlaceholder: '例如：后端工程师主简历',
+    inputPattern: /\S+/,
+    inputErrorMessage: '请输入简历名称',
+  }).then(result => result.value).catch(() => '');
+  if (!title) return;
+  const resume = await createResumeV2Api({ title, status: 'draft', is_default: resumes.value.length === 0 });
+  ElMessage.success('简历已创建');
+  await router.push({ name: 'ResumeStudio', params: { id: resume.id } });
+}
 
-const handleDelete = async (id: number) => {
-  try {
-    await deleteResumeApi(id);
-    ElMessage.success('删除成功');
-    // 【优化】从列表中移除，而不是重新请求
-    const index = resumeList.value.findIndex(r => r.id === id);
-    if (index > -1) resumeList.value.splice(index, 1);
-  } catch (error) { ElMessage.error('删除失败'); }
-};
+function openStudio(resume: ResumeV2) {
+  router.push({ name: 'ResumeStudio', params: { id: resume.id } });
+}
 
-const isOnlineResume = (status: string): boolean => status === 'draft' || status === 'published';
-const handleEdit = (id: number) => router.push({ name: 'ResumeEditor', params: { id } });
-const handlePreview = (row: ResumeItem) => {
-
-  if ((row.status === 'parsed' || row.status === 'failed') && row.file_url) {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL;
-    if (!baseUrl) { ElMessage.error('系统配置错误，无法生成预览链接。'); return; }
-    const domain = baseUrl.split('/api/v1')[0];
-    window.open(`${domain}${row.file_url}`, '_blank');
-  } else if (isOnlineResume(row.status)) {
-    const routeData = router.resolve({ name: 'ResumePreview', params: { id: row.id } });
-    window.open(routeData.href, '_blank');
-  } else {
-    ElMessage.info('该简历当前没有可预览的内容。');
-  }
-};
-
-const handleCreateCommand = (command: string) => {
-  if (command === 'online') handleCreateOnline();
-  else if (command === 'upload') uploadDialogVisible.value = true;
-};
-
-// --- 【核心修改#1 & #2】创建与上传逻辑 ---
-
-const handleCreateOnline = async () => {
-  // 弹窗让用户输入标题
-  ElMessageBox.prompt('请输入新简历的标题', '创建在线简历', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    inputPattern: /\S/,
-    inputErrorMessage: '标题不能为空',
-  }).then(async ({ value }) => {
-    try {
-      const newResume = await createResumeApi({ title: value, status: 'draft' });
-      // 【优化】直接将返回的数据添加到列表顶部
-      resumeList.value.unshift(newResume);
-      ElMessage.success('在线简历创建成功！');
-      // 询问是否立即编辑
-      ElMessageBox.confirm('是否立即跳转到编辑器？', '提示', {
-        confirmButtonText: '立即跳转',
-        cancelButtonText: '稍后',
-        type: 'success'
-      }).then(() => {
-        router.push({ name: 'ResumeEditor', params: { id: newResume.id } });
-      });
-    } catch (error) { ElMessage.error('创建失败'); }
-  }).catch(() => {
-    ElMessage.info('已取消创建');
+async function removeResume(resume: ResumeV2) {
+  await ElMessageBox.confirm(`删除“${resume.title}”？不可变版本、分享链接和导出文件也会一并删除。`, '删除简历', {
+    type: 'warning',
+    confirmButtonText: '删除',
   });
-};
+  await deleteResumeV2Api(resume.id);
+  resumes.value = resumes.value.filter(item => item.id !== resume.id);
+  ElMessage.success('简历已删除');
+}
 
-const submitUpload = () => uploadRef.value?.submit();
+function onFileChange(file: UploadFile) {
+  uploadFile.value = file;
+  if (!uploadTitle.value) uploadTitle.value = file.name.replace(/\.[^.]+$/, '');
+}
 
-const handleUpload = async () => {
-  if (!uploadForm.file) { ElMessage.warning('请先选择文件'); return; }
-  isUploading.value = true;
-  const formData = new FormData();
-  formData.append('file', uploadForm.file.raw!);
-  // 如果用户输入了标题，就发送；否则后端会使用文件名
-  if (uploadForm.title) formData.append('title', uploadForm.title);
-
-  try {
-    const newResume = await createResumeApi(formData);
-    ElMessage.success('文件已上传，正在后台解析。');
-    // 【优化】直接将返回的数据添加到列表顶部
-    resumeList.value.unshift(newResume);
-    uploadDialogVisible.value = false;
-  } catch (error) { ElMessage.error('上传或解析失败'); } 
-  finally { isUploading.value = false; }
-};
-
-const handleFileChange: UploadProps['onChange'] = (uploadFile) => {
-  uploadForm.file = uploadFile;
-  // 如果用户未输入标题，则自动使用文件名（不含扩展名）填充
-  if (!uploadForm.title && uploadFile.name) {
-    uploadForm.title = uploadFile.name.replace(/\.[^/.]+$/, "");
+async function submitImport() {
+  if (!uploadFile.value?.raw) {
+    ElMessage.warning('请先选择文件');
+    return;
   }
-};
+  uploading.value = true;
+  try {
+    const form = new FormData();
+    form.append('file', uploadFile.value.raw);
+    if (uploadTitle.value) form.append('title', uploadTitle.value);
+    const accepted = await importResumeV2Api(form);
+    uploadVisible.value = false;
+    ElMessage.success(`导入任务已受理（${accepted.operation_id.slice(0, 8)}）`);
+    await load();
+  } finally {
+    uploading.value = false;
+  }
+}
 
-const handleExceed: UploadProps['onExceed'] = (files) => {
+function resetUpload() {
+  uploadFile.value = null;
+  uploadTitle.value = '';
   uploadRef.value?.clearFiles();
-  const file = files[0] as UploadRawFile;
-  file.uid = genFileId();
-  uploadRef.value?.handleStart(file);
-};
+}
 
-const resetUploadDialog = () => {
-  uploadForm.title = '';
-  uploadForm.file = null;
-  uploadRef.value?.clearFiles();
-};
+const statusText = (status: string) => ({
+  draft: '编辑中',
+  ready: '可投递',
+  archived: '已归档',
+}[status] || status);
 
-const showVersions = async (row: ResumeItem) => { activeResume.value = row; versions.value = await getResumeVersionsApi(row.id); versionDrawer.value = true; };
-const restoreVersion = async (version: ResumeVersion) => { if (!activeResume.value) return; const resumeId = activeResume.value.id; await ElMessageBox.confirm(`恢复 v${version.version_number}？系统会创建一个新的恢复版本。`, '恢复版本'); await restoreResumeVersionApi(resumeId, version.id); await fetchResumeList(); const refreshed = resumeList.value.find(item => item.id === resumeId); if (refreshed) await showVersions(refreshed); };
-const confirmImport = async (row: ResumeItem) => { const job = row.latest_import_job; if (!job) return; await ElMessageBox.confirm('确认解析结果并创建不可变简历版本？', '确认导入'); await confirmResumeImportApi(job.id); ElMessage.success('导入结果已确认'); await fetchResumeList(); };
-const sourceText = (source: string) => ({ legacy_migration: '旧数据迁移', editor: '在线编辑', import: '文件导入', ai_suggestion: 'AI 建议', jd_variant: 'JD 定制', restore: '版本恢复' }[source] || source);
-
-const statusText = (status: string) => ({ draft: '草稿', processing: '解析中', published: '已发布', parsed: '待确认', failed: '解析失败' }[status] || '未知');
-const statusTagType = (status: string) => ({ draft: 'info', processing: 'warning', published: 'success', parsed: 'warning', failed: 'danger' }[status] || 'info');
+onMounted(load);
 </script>
 
+<template>
+  <main class="resume-library">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">Resume Intelligence</span>
+        <h1>把经历整理成可信、可投递的简历</h1>
+        <p>结构化编辑、ATS 检查、岗位定制、证据约束改写、版本 Diff 与稳定导出集中在同一个工作台。</p>
+      </div>
+      <div class="hero-actions">
+        <el-button :icon="UploadFilled" @click="uploadVisible = true">导入简历</el-button>
+        <el-button type="primary" :icon="DocumentAdd" @click="createResume">创建结构化简历</el-button>
+      </div>
+    </section>
+
+    <section class="library-panel" v-loading="loading">
+      <header>
+        <div>
+          <h2>简历库</h2>
+          <p>{{ resumes.length }} 份简历 · JSON Resume 1.3.1 唯一事实源</p>
+        </div>
+      </header>
+
+      <el-empty v-if="!loading && !resumes.length" description="还没有简历">
+        <el-button type="primary" @click="createResume">创建第一份简历</el-button>
+      </el-empty>
+
+      <div v-else class="resume-grid">
+        <article v-for="resume in resumes" :key="resume.id" class="resume-card" @click="openStudio(resume)">
+          <div class="card-top">
+            <span class="status" :data-status="resume.status">{{ statusText(resume.status) }}</span>
+            <el-tag v-if="resume.is_default" size="small" effect="plain">默认简历</el-tag>
+          </div>
+          <div>
+            <h3>{{ resume.title }}</h3>
+            <p>{{ resume.current_version?.resume_json?.basics?.label || '尚未填写目标职位' }}</p>
+          </div>
+          <dl>
+            <div><dt>内容版本</dt><dd>v{{ resume.current_version?.version_number || 1 }}</dd></div>
+            <div><dt>母版</dt><dd>{{ resume.current_design_revision?.template_key || 'ATS Classic' }}</dd></div>
+            <div><dt>更新</dt><dd>{{ formatDateTime(resume.updated_at) }}</dd></div>
+          </dl>
+          <footer>
+            <el-button link type="danger" @click.stop="removeResume(resume)">删除</el-button>
+            <span>进入 Studio <el-icon><ArrowRight /></el-icon></span>
+          </footer>
+        </article>
+      </div>
+    </section>
+
+    <el-dialog v-model="uploadVisible" title="导入现有简历" width="min(520px, 92vw)" @closed="resetUpload">
+      <el-form label-position="top">
+        <el-form-item label="简历名称">
+          <el-input v-model="uploadTitle" placeholder="默认使用文件名" />
+        </el-form-item>
+        <el-form-item label="文件">
+          <el-upload
+            ref="uploadRef"
+            class="uploader"
+            drag
+            action="#"
+            :auto-upload="false"
+            :limit="1"
+            :on-change="onFileChange"
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">拖拽或点击选择 PDF、DOCX、TXT、Markdown、JSON</div>
+            <template #tip><div class="el-upload__tip">最大 15 MB；解析完成后必须人工确认，AI 不会直接改写事实。</div></template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="uploadVisible = false">取消</el-button>
+        <el-button type="primary" :loading="uploading" @click="submitImport">开始解析</el-button>
+      </template>
+    </el-dialog>
+  </main>
+</template>
+
 <style scoped>
-.resume-page {
-  min-height: calc(100vh - 60px);
-  padding: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(79, 138, 255, 0.12), transparent 28%),
-    linear-gradient(180deg, #f7faff 0%, #eff4fb 100%);
-}
-
-.resume-hero {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 22px;
-  padding: 28px 30px;
-  border: 1px solid rgba(201, 214, 236, 0.75);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 20px 44px rgba(47, 74, 119, 0.08);
-  backdrop-filter: blur(14px);
-}
-
-.hero-kicker,
-.section-kicker {
-  margin: 0 0 8px;
-  color: #5d7bb0;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.resume-hero h1 {
-  margin: 0 0 10px;
-  color: #1d2d4d;
-  font-size: 30px;
-}
-
-.resume-hero p:last-child {
-  margin: 0;
-  color: #697994;
-}
-
-.hero-pill-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.hero-pill {
-  padding: 10px 14px;
-  border: 1px solid #d7e3f7;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
-  color: #49658f;
-  font-size: 13px;
-}
-
-.resume-card {
-  border: 1px solid rgba(207, 219, 238, 0.8);
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 22px 50px rgba(43, 67, 108, 0.08);
-}
-
-.page-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.page-card-header > div > span {
-  color: #1f3152;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.create-button {
-  min-height: 44px;
-  border: none;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #2a65d8 0%, #5f9fff 100%);
-  box-shadow: 0 16px 28px rgba(42, 101, 216, 0.18);
-}
-
-.resume-table :deep(.el-table__row td) {
-  padding-top: 14px;
-  padding-bottom: 14px;
-}
-.version-item { padding: 12px; border: 1px solid #e1e6ee; border-radius: 6px; }.version-item p { margin: 8px 0; color: #475467; }.version-item span { display: block; margin-bottom: 8px; color: #667085; font-size: 12px; }
-
-:deep(.upload-dialog .el-dialog) {
-  border-radius: 24px;
-  overflow: hidden;
-}
-
-:deep(.upload-dialog .el-dialog__header) {
-  padding: 22px 24px 18px;
-  margin-right: 0;
-  border-bottom: 1px solid #edf1f8;
-}
-
-:deep(.upload-dialog .el-dialog__body) {
-  padding: 24px;
-}
-
-@media (max-width: 900px) {
-  .resume-page {
-    padding: 16px;
-  }
-
-  .resume-hero {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .hero-pill-group {
-    justify-content: flex-start;
-  }
+.resume-library { min-height: calc(100vh - 60px); padding: 28px; color: #172033; background: #f4f6f8; }
+.hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 36px; border-radius: 24px; color: #fff; background: linear-gradient(120deg, #0f172a 0%, #1e3a5f 58%, #0f766e 120%); box-shadow: 0 22px 50px rgba(15, 23, 42, .18); }
+.eyebrow { color: #99f6e4; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+h1 { max-width: 760px; margin: 10px 0 12px; font-size: clamp(30px, 4vw, 46px); line-height: 1.12; }
+.hero p { max-width: 760px; margin: 0; color: #dbeafe; line-height: 1.7; }
+.hero-actions { display: flex; flex-shrink: 0; gap: 12px; }
+.hero-actions :deep(.el-button) { min-height: 44px; border-radius: 12px; }
+.library-panel { margin-top: 24px; padding: 28px; border: 1px solid #e1e6ed; border-radius: 24px; background: #fff; }
+.library-panel > header { display: flex; justify-content: space-between; margin-bottom: 22px; }
+h2 { margin: 0 0 6px; font-size: 22px; }
+.library-panel header p { margin: 0; color: #667085; }
+.resume-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
+.resume-card { display: flex; min-height: 270px; flex-direction: column; justify-content: space-between; padding: 22px; border: 1px solid #e3e8ef; border-radius: 18px; background: linear-gradient(180deg, #fff 0%, #f8fafc 100%); cursor: pointer; transition: .2s ease; }
+.resume-card:hover { transform: translateY(-3px); border-color: #94a3b8; box-shadow: 0 15px 30px rgba(15, 23, 42, .08); }
+.card-top, .resume-card footer { display: flex; align-items: center; justify-content: space-between; }
+.status { color: #92400e; font-size: 13px; font-weight: 700; }
+.status[data-status="ready"] { color: #047857; }
+.status[data-status="archived"] { color: #64748b; }
+.resume-card h3 { margin: 22px 0 8px; font-size: 21px; }
+.resume-card p { margin: 0; color: #667085; }
+dl { display: grid; gap: 8px; margin: 20px 0; }
+dl div { display: flex; justify-content: space-between; gap: 20px; font-size: 13px; }
+dt { color: #667085; }
+dd { margin: 0; color: #344054; text-align: right; }
+.resume-card footer { padding-top: 14px; border-top: 1px solid #e5e7eb; color: #0f766e; font-size: 13px; font-weight: 700; }
+.resume-card footer span { display: inline-flex; align-items: center; gap: 4px; }
+.uploader { width: 100%; }
+.uploader :deep(.el-upload), .uploader :deep(.el-upload-dragger) { width: 100%; }
+@media (max-width: 760px) {
+  .resume-library { padding: 14px; }
+  .hero { align-items: stretch; flex-direction: column; padding: 24px; }
+  .hero-actions { display: grid; grid-template-columns: 1fr; }
+  .library-panel { padding: 18px; }
 }
 </style>

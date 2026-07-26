@@ -7,6 +7,10 @@ from careers.models import Company, CompanyVerification, JobPosting, SkillTaxono
 from community.models import CommunityContent, ModerationCase, ModerationDecision, ReputationLedger
 from core.models import ConsumerInbox, IntegrationOutbox, RuntimePolicy
 from core.events import enqueue_integration_event
+from resumes.models import ResumeArtifact
+from resumes.rendering import RENDERER_NAME, RENDERER_VERSION
+from resumes.schema import JSON_RESUME_SCHEMA_VERSION, schema_snapshot_hash
+from resumes.templates import RESUME_TEMPLATES, template_catalog
 
 from .idempotency import run_staff_idempotent
 from .operations_views import operation_reason
@@ -80,6 +84,100 @@ class CareerConfigAdminView(StaffProtectedView):
             return Response({'id': row.pk, 'resource': resource})
 
         return run_staff_idempotent(request, 'career-config', apply)
+
+
+class ResumeConfigAdminView(StaffProtectedView):
+    required_permissions = ['resume_config.manage']
+
+    def get(self, request):
+        policy = RuntimePolicy.objects.filter(key='resume-config').first()
+        artifact_counts = dict(
+            ResumeArtifact.objects.values('status').annotate(total=Count('id')).values_list('status', 'total')
+        )
+        return Response({
+            'schema': {
+                'version': JSON_RESUME_SCHEMA_VERSION,
+                'snapshot_hash': schema_snapshot_hash(),
+            },
+            'renderer': {
+                'name': RENDERER_NAME,
+                'version': RENDERER_VERSION,
+                'queue': 'resume.render',
+                'network_access': False,
+                'artifact_status': artifact_counts,
+            },
+            'templates': template_catalog(enabled_only=False),
+            'policy': {
+                'id': policy.pk if policy else None,
+                'version': policy.version if policy else 0,
+                'enabled': policy.enabled if policy else True,
+                'config': policy.config if policy else {
+                    'enabled_templates': list(RESUME_TEMPLATES),
+                    'renderer_version': RENDERER_VERSION,
+                    'ats_rules_version': '1.0.0',
+                    'render_timeout_seconds': 20,
+                    'max_input_bytes': 2_000_000,
+                },
+            },
+            'privacy_contract': '管理员只能管理母版、规则和任务健康，不能读取用户简历正文。',
+        })
+
+    def post(self, request):
+        reason, error = operation_reason(request)
+        if error:
+            return error
+
+        def apply():
+            config = request.data.get('config') or {}
+            enabled_templates = config.get('enabled_templates', list(RESUME_TEMPLATES))
+            if (
+                not isinstance(enabled_templates, list)
+                or not enabled_templates
+                or any(key not in RESUME_TEMPLATES for key in enabled_templates)
+            ):
+                return Response({'code': 'invalid_resume_templates'}, status=400)
+            if config.get('renderer_version', RENDERER_VERSION) != RENDERER_VERSION:
+                return Response({
+                    'code': 'renderer_version_not_deployed',
+                    'deployed_version': RENDERER_VERSION,
+                }, status=409)
+            allowed = {
+                'enabled_templates', 'renderer_version', 'ats_rules_version',
+                'render_timeout_seconds', 'max_input_bytes',
+            }
+            if set(config) - allowed:
+                return Response({'code': 'unsupported_resume_config_key'}, status=400)
+            timeout_seconds = config.get('render_timeout_seconds', 20)
+            max_input_bytes = config.get('max_input_bytes', 2_000_000)
+            ats_rules_version = str(config.get('ats_rules_version', '1.0.0')).strip()
+            if not isinstance(timeout_seconds, int) or not 5 <= timeout_seconds <= 60:
+                return Response({'code': 'invalid_render_timeout'}, status=400)
+            if not isinstance(max_input_bytes, int) or not 100_000 <= max_input_bytes <= 2_000_000:
+                return Response({'code': 'invalid_resume_input_limit'}, status=400)
+            if not ats_rules_version or len(ats_rules_version) > 40:
+                return Response({'code': 'invalid_ats_rules_version'}, status=400)
+            row, created = RuntimePolicy.objects.get_or_create(
+                key='resume-config',
+                defaults={'name': '简历配置', 'description': '简历母版、渲染器与 ATS 规则。'},
+            )
+            before = {'version': row.version, 'config': row.config, 'enabled': row.enabled}
+            row.config = config
+            row.enabled = bool(request.data.get('enabled', True))
+            row.version = row.version if created else row.version + 1
+            row.updated_by_staff_id = request.user.pk
+            row.save()
+            audit(
+                request,
+                action='resume_config.update',
+                resource_type='RuntimePolicy',
+                resource_id=row.pk,
+                reason=reason,
+                before=before,
+                after={'version': row.version, 'config': row.config, 'enabled': row.enabled},
+            )
+            return Response({'id': row.pk, 'key': row.key, 'version': row.version})
+
+        return run_staff_idempotent(request, 'resume-config', apply)
 
 
 class CompanyReviewAdminView(StaffProtectedView):

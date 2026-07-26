@@ -41,6 +41,7 @@ from .platform_views import (
     JobReviewAdminView,
     PlatformEventsAdminView,
     ReliabilityAdminView,
+    ResumeConfigAdminView,
 )
 
 
@@ -107,6 +108,7 @@ urlpatterns = [
     path('maintenance-notices/', MaintenanceNoticeAdminView.as_view()),
     path('audit-logs/', AdminAuditListView.as_view()),
     path('career-config/', CareerConfigAdminView.as_view()),
+    path('resume-config/', ResumeConfigAdminView.as_view()),
     path('companies/', CompanyReviewAdminView.as_view()),
     path('companies/<uuid:company_id>/<str:decision>/', CompanyReviewAdminView.as_view()),
     path('jobs/', JobReviewAdminView.as_view()),

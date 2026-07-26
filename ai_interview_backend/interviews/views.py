@@ -70,9 +70,7 @@ from .serializers import (
     InterviewTemplateSerializer,
 )
 from .ai_services import (
-    analyze_resume_against_jd,
     polish_description_by_ai,
-    generate_resume_by_ai,
     generate_reference_answer_for_question,
 )
 from .agent import get_interview_agent_engine
@@ -80,8 +78,6 @@ from .configuration import assemble_generation_context, resolve_agent_config, st
 from .agent_v4.events import publish_agent_event, read_agent_events
 from .speech_services import synthesize_question_tts
 from urllib.parse import quote
-from reports.models import ResumeAnalysisReport
-from reports.serializers import ResumeAnalysisReportSerializer
 
 def format_resume_to_text(resume: Resume) -> str:
     """
@@ -1975,6 +1971,8 @@ class ResumeAnalysisView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
+        from resumes.legacy import legacy_job_match_response
+
         resume_id = request.data.get('resume_id')
         resume_version_id = request.data.get('resume_version_id')
         job_target_id = request.data.get('job_target_id')
@@ -2022,83 +2020,25 @@ class ResumeAnalysisView(APIView):
             except JobTarget.DoesNotExist:
                 return Response({'error': '目标岗位不存在', 'code': 'job_target_not_found'}, status=status.HTTP_404_NOT_FOUND)
             jd_text = str(job_target.jd_text or '').strip()
-        if not jd_text:
-            return Response({
-                'error': '请提供真实岗位 JD 或选择包含 JD 的目标岗位',
-                'code': 'jd_required',
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        if resume_version:
-            resume_snapshot = resume_version.resume_json or {}
-            resume_text = json_resume_plain_text(resume_snapshot)
-        else:
-            resume_snapshot = {}
-            resume_text = format_resume_to_text(resume_instance)
-        if not resume_text.strip():
-            return Response({
-                'error': '简历没有可分析的已确认内容',
-                'code': 'resume_content_empty',
-            }, status=status.HTTP_409_CONFLICT)
-
-        # 1. 调用AI服务
-        analysis_report_data = analyze_resume_against_jd(
-            resume_text=resume_text,
+        if not resume_version:
+            from resumes.versioning import ensure_resume_version
+            resume_version = ensure_resume_version(resume_instance, request.user)
+        return legacy_job_match_response(
+            request,
+            resume_version=resume_version,
             jd_text=jd_text,
-            user=request.user
+            job_target=job_target,
+            scope=f'legacy.interviews.analyze_resume:{resume_version.pk}',
         )
-
-        if "error" in analysis_report_data:
-            return Response(analysis_report_data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        try:
-            ai_setting = AISetting.objects.select_related('chat_model').filter(user=request.user).first()
-            model_snapshot = {
-                'chat_model_id': ai_setting.chat_model_id if ai_setting else None,
-                'chat_model_slug': ai_setting.chat_model.model_slug if ai_setting and ai_setting.chat_model else '',
-            }
-            new_report = ResumeAnalysisReport.objects.create(
-                user=request.user,
-                resume=resume_instance,
-                resume_version=resume_version,
-                job_target=job_target,
-                resume_snapshot=resume_snapshot,
-                jd_text=jd_text,
-                model_config_snapshot=model_snapshot,
-                evidence_sources=[{
-                    'type': 'resume_version' if resume_version else 'legacy_resume',
-                    'resume_id': resume_instance.id,
-                    'resume_version_id': resume_version.id if resume_version else None,
-                }, {
-                    'type': 'job_target' if job_target else 'provided_jd',
-                    'job_target_id': job_target.id if job_target else None,
-                }],
-                report_data=analysis_report_data,
-                overall_score=analysis_report_data.get('overall_score', 0)
-            )
-        except Exception as e:
-            return Response({'error': f'保存分析报告失败: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        serializer = ResumeAnalysisReportSerializer(new_report)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class GenerateResumeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        name = request.data.get('name')
-        position = request.data.get('position')
-        experience_years = request.data.get('experience_years')
-        keywords = request.data.get('keywords', '')
-
-        if not all([name, position, experience_years]):
-            return Response({'error': '姓名、岗位和工作年限为必填项'}, status=status.HTTP_400_BAD_REQUEST)
-
-        resume_json = generate_resume_by_ai(
-            name, position, experience_years, keywords, request.user
-        )
-
-        if 'error' in resume_json:
-            return Response(resume_json, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response(resume_json, status=status.HTTP_200_OK)
+        return Response({
+            'code': 'legacy_resume_generation_retired',
+            'message': '旧 AI 整包生成接口已停用。请在 Resume Studio 中基于已确认职业事实生成候选建议。',
+            'migration_url': '/dashboard/resumes',
+            'replacement_task_key': 'resume.from_career_facts',
+        }, status=status.HTTP_410_GONE)

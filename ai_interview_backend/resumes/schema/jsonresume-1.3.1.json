@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jsonresume.org/schema/1.3.1",
+  "title": "JSON Resume 1.3.1",
+  "description": "Vendored JSON Resume schema snapshot used by iFaceOff. Runtime validation never fetches remote resources.",
+  "type": "object",
+  "additionalProperties": true,
+  "definitions": {
+    "iso8601": {
+      "type": "string",
+      "pattern": "^$|^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$"
+    },
+    "uri": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048
+    },
+    "stringArray": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"type": "string", "maxLength": 10000}
+    },
+    "datedItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "startDate": {"$ref": "#/definitions/iso8601"},
+        "endDate": {"$ref": "#/definitions/iso8601"}
+      }
+    }
+  },
+  "properties": {
+    "$schema": {"$ref": "#/definitions/uri"},
+    "basics": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": {"type": "string", "maxLength": 300},
+        "label": {"type": "string", "maxLength": 300},
+        "image": {"type": "string", "maxLength": 2048},
+        "email": {"type": "string", "format": "email", "maxLength": 320},
+        "phone": {"type": "string", "maxLength": 80},
+        "url": {"$ref": "#/definitions/uri"},
+        "summary": {"type": "string", "maxLength": 20000},
+        "location": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "address": {"type": "string", "maxLength": 1000},
+            "postalCode": {"type": "string", "maxLength": 40},
+            "city": {"type": "string", "maxLength": 120},
+            "countryCode": {"type": "string", "maxLength": 8},
+            "region": {"type": "string", "maxLength": 120}
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "network": {"type": "string", "maxLength": 120},
+              "username": {"type": "string", "maxLength": 300},
+              "url": {"$ref": "#/definitions/uri"}
+            }
+          }
+        }
+      }
+    },
+    "work": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "allOf": [{"$ref": "#/definitions/datedItem"}],
+        "properties": {
+          "name": {"type": "string"}, "location": {"type": "string"},
+          "description": {"type": "string"}, "position": {"type": "string"},
+          "url": {"$ref": "#/definitions/uri"}, "summary": {"type": "string"},
+          "highlights": {"$ref": "#/definitions/stringArray"}
+        }
+      }
+    },
+    "volunteer": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "allOf": [{"$ref": "#/definitions/datedItem"}],
+        "properties": {
+          "organization": {"type": "string"}, "position": {"type": "string"},
+          "url": {"$ref": "#/definitions/uri"}, "summary": {"type": "string"},
+          "highlights": {"$ref": "#/definitions/stringArray"}
+        }
+      }
+    },
+    "education": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "allOf": [{"$ref": "#/definitions/datedItem"}],
+        "properties": {
+          "institution": {"type": "string"}, "url": {"$ref": "#/definitions/uri"},
+          "area": {"type": "string"}, "studyType": {"type": "string"},
+          "score": {"type": "string"}, "courses": {"$ref": "#/definitions/stringArray"}
+        }
+      }
+    },
+    "awards": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {
+          "title": {"type": "string"}, "date": {"$ref": "#/definitions/iso8601"},
+          "awarder": {"type": "string"}, "summary": {"type": "string"}
+        }
+      }
+    },
+    "certificates": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {
+          "name": {"type": "string"}, "date": {"$ref": "#/definitions/iso8601"},
+          "url": {"$ref": "#/definitions/uri"}, "issuer": {"type": "string"}
+        }
+      }
+    },
+    "publications": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {
+          "name": {"type": "string"}, "publisher": {"type": "string"},
+          "releaseDate": {"$ref": "#/definitions/iso8601"},
+          "url": {"$ref": "#/definitions/uri"}, "summary": {"type": "string"}
+        }
+      }
+    },
+    "skills": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {
+          "name": {"type": "string"}, "level": {"type": "string"},
+          "keywords": {"$ref": "#/definitions/stringArray"}
+        }
+      }
+    },
+    "languages": {
+      "type": "array", "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {"language": {"type": "string"}, "fluency": {"type": "string"}}
+      }
+    },
+    "interests": {
+      "type": "array", "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {"name": {"type": "string"}, "keywords": {"$ref": "#/definitions/stringArray"}}
+      }
+    },
+    "references": {
+      "type": "array", "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "properties": {"name": {"type": "string"}, "reference": {"type": "string"}}
+      }
+    },
+    "projects": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "allOf": [{"$ref": "#/definitions/datedItem"}],
+        "properties": {
+          "name": {"type": "string"}, "description": {"type": "string"},
+          "highlights": {"$ref": "#/definitions/stringArray"},
+          "keywords": {"$ref": "#/definitions/stringArray"},
+          "url": {"$ref": "#/definitions/uri"},
+          "roles": {"$ref": "#/definitions/stringArray"},
+          "entity": {"type": "string"}, "type": {"type": "string"}
+        }
+      }
+    },
+    "meta": {"type": "object", "additionalProperties": true},
+    "x-ifaceoff": {"type": "object", "additionalProperties": true}
+  }
+}

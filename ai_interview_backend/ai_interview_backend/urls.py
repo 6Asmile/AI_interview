@@ -44,7 +44,7 @@ urlpatterns = [
     path('accounts/', include('allauth.urls')),
     path('api/v2/', include([
         path('', include('careers.urls')),
-        path('', include('resumes.urls')),
+        path('', include('resumes.urls_v2')),
         path('', include('community.urls_v2')),
         path('', include('core.urls_v2')),
     ])),

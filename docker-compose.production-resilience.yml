@@ -113,6 +113,43 @@ services:
     networks:
       - ifaceoff_network
 
+  celery-resume-render-worker:
+    image: ifaceoff/backend:latest
+    command: celery -A ai_interview_backend worker -l info -Q resume.render --concurrency=${RESUME_RENDER_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
+    env_file:
+      - ./.env.docker
+    environment:
+      IFACEOFF_RUN_MIGRATIONS: "0"
+      IFACEOFF_COLLECTSTATIC: "0"
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
+      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
+      RABBITMQ_HOST: rabbitmq
+      HOME: /tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,noexec,nosuid,nodev
+    volumes:
+      - media_volume:/app/media
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1.5
+    pids_limit: 128
+    stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis-coordination:
+        condition: service_healthy
+    networks:
+      - ifaceoff_network
+
   celery-platform-worker:
     image: ifaceoff/backend:latest
     command: celery -A ai_interview_backend worker -l info -Q career.analysis,community.moderation,events,search.index --concurrency=${PLATFORM_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1

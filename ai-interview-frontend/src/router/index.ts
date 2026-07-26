@@ -35,7 +35,8 @@ const routes: Array<RouteRecordRaw> = [
         meta: { desktopOnly: true, desktopFeature: '实时 AI 模拟面试' },
       },
       
-      { path: 'resumes', name: 'ResumeManagement', component: () => import('@/views/Resume.vue') },
+        { path: 'resumes', name: 'ResumeManagement', component: () => import('@/views/Resume.vue') },
+        { path: 'resumes/:id', name: 'ResumeStudio', component: () => import('@/views/ResumeStudio.vue'), props: true },
       { path: 'knowledge', name: 'KnowledgeBase', component: () => import('@/views/KnowledgeBase.vue'), meta: { desktopOnly: true, desktopFeature: '知识库解析与编辑' } },
       { path: 'interview-admin', name: 'EnterpriseInterviewAdmin', component: () => import('@/views/LegacyAdminRedirect.vue'), meta: { desktopOnly: true, desktopFeature: '独立运营后台' } },
       { path: 'history', name: 'History', component: () => import('@/views/History.vue') },
@@ -131,6 +132,7 @@ const routes: Array<RouteRecordRaw> = [
       },
     ],
   },
+  { path: '/resume-shares/:token', name: 'PublicResumeShare', component: () => import('@/views/PublicResumeShare.vue'), props: true },
 ];
 
 const router = createRouter({ history: createWebHistory(), routes });
