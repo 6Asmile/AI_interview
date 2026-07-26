@@ -5,6 +5,212 @@ from users.models import User
 from resumes.models import Resume
 
 
+class AgentConfigProfile(models.Model):
+    class Scope(models.TextChoices):
+        PLATFORM = 'platform', '平台默认'
+        TEMPLATE = 'template', '模板覆盖'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=160, unique=True)
+    description = models.TextField(blank=True)
+    scope = models.CharField(max_length=20, choices=Scope.choices, default=Scope.TEMPLATE, db_index=True)
+    active_revision = models.ForeignKey(
+        'AgentConfigRevision',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_agent_config_profiles',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['scope', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['scope'],
+                condition=models.Q(scope='platform'),
+                name='uniq_platform_agent_config_profile',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class AgentConfigRevision(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', '草稿'
+        PENDING_REVIEW = 'pending_review', '待审核'
+        APPROVED = 'approved', '已审核'
+        PUBLISHED = 'published', '已发布'
+        REJECTED = 'rejected', '已拒绝'
+        SUPERSEDED = 'superseded', '已替代'
+
+    class ComponentMode(models.TextChoices):
+        INHERIT = 'inherit', '继承平台配置'
+        REPLACE = 'replace', '完整替换'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(AgentConfigProfile, on_delete=models.CASCADE, related_name='revisions')
+    base_revision = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='derived_revisions',
+    )
+    version = models.PositiveIntegerField()
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    context_mode = models.CharField(max_length=16, choices=ComponentMode.choices, default=ComponentMode.REPLACE)
+    context_policy = models.JSONField(default=dict, blank=True)
+    knowledge_mode = models.CharField(max_length=16, choices=ComponentMode.choices, default=ComponentMode.INHERIT)
+    config_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    validation_report = models.JSONField(default=dict, blank=True)
+    evaluation_summary = models.JSONField(default=dict, blank=True)
+    change_summary = models.TextField(blank=True)
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_agent_config_revisions',
+    )
+    approved_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_agent_config_revisions',
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['profile', '-version']
+        constraints = [
+            models.UniqueConstraint(fields=['profile', 'version'], name='uniq_agent_config_revision'),
+        ]
+
+    def __str__(self):
+        return f'{self.profile.name} v{self.version}'
+
+
+class AgentPromptTemplate(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    revision = models.ForeignKey(AgentConfigRevision, on_delete=models.CASCADE, related_name='prompts')
+    task_key = models.CharField(max_length=120, db_index=True)
+    system_template = models.TextField()
+    user_template = models.TextField()
+    variable_schema = models.JSONField(default=dict, blank=True)
+    output_contract = models.JSONField(default=dict, blank=True)
+    model_alias = models.ForeignKey(
+        'system.ModelAlias',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='agent_prompt_templates',
+    )
+    temperature = models.DecimalField(max_digits=3, decimal_places=2, default=0.3)
+    max_output_tokens = models.PositiveIntegerField(default=800)
+    content_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['revision', 'task_key']
+        constraints = [
+            models.UniqueConstraint(fields=['revision', 'task_key'], name='uniq_agent_prompt_task_revision'),
+        ]
+
+    def __str__(self):
+        return f'{self.revision} {self.task_key}'
+
+
+class AgentConfigKnowledgeBinding(models.Model):
+    revision = models.ForeignKey(AgentConfigRevision, on_delete=models.CASCADE, related_name='knowledge_bindings')
+    knowledge_base_revision = models.ForeignKey(
+        'knowledge.KnowledgeBaseRevision',
+        on_delete=models.PROTECT,
+        related_name='agent_config_bindings',
+    )
+    retrieval_profile_revision = models.ForeignKey(
+        'knowledge.RetrievalProfileRevision',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='agent_config_overrides',
+    )
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['revision', 'knowledge_base_revision'],
+                name='uniq_agent_config_knowledge_binding',
+            ),
+        ]
+
+
+class AgentConfigEvaluationRun(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待运行'
+        RUNNING = 'running', '运行中'
+        SUCCEEDED = 'succeeded', '成功'
+        FAILED = 'failed', '失败'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    revision = models.ForeignKey(
+        AgentConfigRevision,
+        on_delete=models.CASCADE,
+        related_name='config_evaluation_runs',
+    )
+    baseline_revision = models.ForeignKey(
+        AgentConfigRevision,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='baseline_config_evaluation_runs',
+    )
+    dataset = models.ForeignKey(
+        'EvaluationDataset',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent_config_evaluation_runs',
+    )
+    evaluation_type = models.CharField(max_length=32, default='full', db_index=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    metrics = models.JSONField(default=dict, blank=True)
+    result_samples = models.JSONField(default=list, blank=True)
+    error_message = models.TextField(blank=True)
+    revision_hash = models.CharField(max_length=64, db_index=True)
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent_config_evaluation_runs',
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
 class InterviewRubric(models.Model):
     class Visibility(models.TextChoices):
         SYSTEM = 'system', '系统内置'
@@ -103,6 +309,15 @@ class InterviewTemplate(models.Model):
     candidate_question_minutes = models.PositiveIntegerField(default=3, verbose_name='候选人反问预留时长')
     style_profile = models.JSONField(default=dict, blank=True, verbose_name='面试风格配置')
     config = models.JSONField(default=dict, blank=True, verbose_name='模板配置')
+    agent_config_profile = models.ForeignKey(
+        AgentConfigProfile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='interview_templates',
+        limit_choices_to={'scope': AgentConfigProfile.Scope.TEMPLATE},
+        verbose_name='Agent配置覆盖',
+    )
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='interview_templates')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -253,6 +468,7 @@ class InterviewSession(models.Model):
     )
     session_plan = models.JSONField(default=dict, blank=True, verbose_name='本场面试计划快照')
     template_snapshot = models.JSONField(default=dict, blank=True, verbose_name='模板快照')
+    agent_config_snapshot = models.JSONField(default=dict, blank=True, verbose_name='Agent配置快照')
     coverage_summary = models.JSONField(default=dict, blank=True, verbose_name='能力覆盖汇总')
     memory_summary = models.JSONField(default=dict, blank=True, verbose_name='短期记忆摘要')
     covered_topics = models.JSONField(default=list, blank=True, verbose_name='已覆盖话题')
@@ -414,6 +630,11 @@ class InterviewAgentRun(models.Model):
     error_message = models.TextField(blank=True)
     model_config_snapshot = models.JSONField(default=dict, blank=True)
     prompt_version = models.CharField(max_length=80, blank=True, db_index=True)
+    agent_config_revision_id = models.UUIDField(null=True, blank=True, db_index=True)
+    agent_config_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    prompt_hashes = models.JSONField(default=dict, blank=True)
+    context_envelope_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    context_token_usage = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -897,6 +1118,18 @@ class EvaluationCase(models.Model):
     expected_dimensions = models.JSONField(default=list, blank=True, verbose_name='期望能力标签')
     expected_follow_up = models.TextField(blank=True, verbose_name='期望追问方向')
     ground_truth = models.TextField(blank=True, verbose_name='参考答案/真值')
+    expected_document_revision_ids = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='期望命中的文档修订',
+    )
+    irrelevant_document_revision_ids = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='无关文档修订',
+    )
+    expected_topics = models.JSONField(default=list, blank=True, verbose_name='期望主题')
+    is_no_answer = models.BooleanField(default=False, db_index=True, verbose_name='无答案样例')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

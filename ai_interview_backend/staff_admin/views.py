@@ -35,12 +35,18 @@ def client_ip(request):
 
 
 def audit(request, *, action, resource_type, resource_id='', reason='', before=None, after=None, metadata=None):
+    def json_safe(value):
+        return json.loads(json.dumps(value or {}, ensure_ascii=False, default=str))
+
     previous = AdminAuditEvent.objects.order_by('-created_at', '-id').values_list('event_hash', flat=True).first() or ''
     event = AdminAuditEvent(
         actor=request.user if isinstance(request.user, StaffAccount) else None,
         action=action, resource_type=resource_type, resource_id=str(resource_id or ''),
         operation_reason=str(reason or '')[:500], request_id=getattr(request, 'request_id', ''),
-        ip_address=client_ip(request), before_summary=before or {}, after_summary=after or {}, metadata=metadata or {},
+        ip_address=client_ip(request),
+        before_summary=json_safe(before),
+        after_summary=json_safe(after),
+        metadata=json_safe(metadata),
         previous_hash=previous,
     )
     canonical = json.dumps({

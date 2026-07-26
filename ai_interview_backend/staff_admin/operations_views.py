@@ -477,7 +477,7 @@ class GatewayResourceAdminView(StaffProtectedView):
         if resource == 'credentials':
             return Response([{'id': item.id, 'name': item.name, 'provider': item.provider, 'scope': item.scope, 'secret_hint': item.secret_hint, 'is_active': item.is_active, 'last_verified_at': item.last_verified_at, 'updated_at': item.updated_at} for item in ProviderCredential.objects.filter(scope=ProviderCredential.Scope.PLATFORM)])
         if resource == 'deployments':
-            return Response([{'id': item.id, 'name': item.name, 'provider': item.provider, 'remote_model': item.remote_model, 'model_type': item.model_type, 'base_url': item.base_url, 'credential_id': item.credential_id, 'priority': item.priority, 'timeout_seconds': item.timeout_seconds, 'is_active': item.is_active, 'last_health_status': item.last_health_status, 'last_health_at': item.last_health_at} for item in ModelDeployment.objects.select_related('credential')])
+            return Response([{'id': item.id, 'name': item.name, 'provider': item.provider, 'remote_model': item.remote_model, 'model_type': item.model_type, 'base_url': item.base_url, 'credential_id': item.credential_id, 'context_window': item.context_window, 'tokenizer_family': item.tokenizer_family, 'tokenizer_name': item.tokenizer_name, 'priority': item.priority, 'timeout_seconds': item.timeout_seconds, 'is_active': item.is_active, 'last_health_status': item.last_health_status, 'last_health_at': item.last_health_at} for item in ModelDeployment.objects.select_related('credential')])
         if resource == 'aliases':
             return Response([{'id': item.id, 'slug': item.slug, 'name': item.name, 'model_type': item.model_type, 'description': item.description, 'is_active': item.is_active} for item in ModelAlias.objects.all()])
         if resource == 'routes':
@@ -509,6 +509,9 @@ class GatewayResourceAdminView(StaffProtectedView):
                     name=request.data.get('name') or '', provider=request.data.get('provider') or 'openai_compatible',
                     remote_model=request.data.get('remote_model') or '', model_type=request.data.get('model_type') or 'chat',
                     base_url=request.data.get('base_url') or '', credential_id=request.data.get('credential_id') or None,
+                    context_window=int(request.data['context_window']) if request.data.get('context_window') else None,
+                    tokenizer_family=str(request.data.get('tokenizer_family') or '').strip(),
+                    tokenizer_name=str(request.data.get('tokenizer_name') or '').strip(),
                     priority=int(request.data.get('priority') or 100), timeout_seconds=int(request.data.get('timeout_seconds') or 30),
                 )
             elif resource == 'aliases':
@@ -546,7 +549,7 @@ class GatewayResourceAdminDetailView(StaffProtectedView):
             before = {'is_active': getattr(item, 'is_active', None), 'updated_at': getattr(item, 'updated_at', None)}
             allowed = {
                 'credentials': ['name', 'provider', 'is_active'],
-                'deployments': ['name', 'provider', 'remote_model', 'model_type', 'base_url', 'credential_id', 'priority', 'timeout_seconds', 'is_active'],
+                'deployments': ['name', 'provider', 'remote_model', 'model_type', 'base_url', 'credential_id', 'context_window', 'tokenizer_family', 'tokenizer_name', 'priority', 'timeout_seconds', 'is_active'],
                 'aliases': ['name', 'description', 'is_active'],
                 'routes': ['strategy', 'total_timeout_seconds', 'max_attempts', 'is_active'],
             }[resource]

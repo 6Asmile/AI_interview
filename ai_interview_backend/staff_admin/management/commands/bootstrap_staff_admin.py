@@ -8,8 +8,18 @@ ROLE_PRESETS = {
     'hr_ops': ('HR 运营', [
         'dashboard.view', 'interview.audit', 'interview.operate', 'template.manage',
         'candidate.support', 'candidate.private_access', 'tasks.manage', 'analytics.view',
+        'agent_config.view',
     ]),
-    'knowledge_reviewer': ('知识审核', ['dashboard.view', 'knowledge.review', 'knowledge.operate', 'tasks.manage']),
+    'knowledge_reviewer': ('知识审核', [
+        'dashboard.view', 'knowledge.review', 'knowledge.operate', 'knowledge_base.manage',
+        'agent_config.view', 'tasks.manage',
+    ]),
+    'agent_config_admin': ('Agent 配置管理员', [
+        'dashboard.view', 'agent_config.view', 'agent_config.manage',
+        'agent_config.evaluate', 'agent_config.publish', 'knowledge_base.manage',
+        'knowledge.review', 'template.manage', 'gateway.manage', 'interview.audit',
+        'audit.view', 'tasks.manage',
+    ]),
     'model_ops': ('模型运维', ['dashboard.view', 'gateway.manage', 'system.health', 'tasks.manage', 'analytics.view']),
     'moderator': ('社区审核', ['dashboard.view', 'moderation.manage', 'content.manage']),
     'support': ('客服', [

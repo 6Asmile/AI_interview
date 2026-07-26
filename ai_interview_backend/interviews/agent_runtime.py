@@ -10,6 +10,8 @@ from typing import Any, Callable
 from django.conf import settings
 from jsonschema import ValidationError, validate
 
+from .configuration import assemble_generation_context
+
 
 def user_can_manage_agent_system(user) -> bool:
     if not user or not getattr(user, 'is_authenticated', False):
@@ -226,6 +228,15 @@ class ContextBudgetManager:
         return max(1, len(text) // 2)
 
     def compress(self, *, session, history: list, rag_context: list, memory_events: list, media_context: dict) -> dict:
+        if getattr(session, 'agent_config_snapshot', None):
+            return assemble_generation_context(
+                session=session,
+                history=history,
+                rag_context=rag_context,
+                memory_events=memory_events,
+                media_context=media_context,
+                task_context={},
+            )
         memory = session.memory_summary or {}
         required = {
             'job_position': session.job_position,

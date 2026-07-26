@@ -15,6 +15,7 @@ const router = createRouter({
         { path: 'candidates', name: 'Candidates', component: () => import('./views/Candidates.vue') },
         { path: 'interviews', name: 'Interviews', component: () => import('./views/Interviews.vue') },
         { path: 'interview-config', name: 'InterviewConfig', component: () => import('./views/InterviewConfig.vue') },
+        { path: 'agent-config', name: 'AgentConfig', component: () => import('./views/AgentConfig.vue') },
         { path: 'knowledge', name: 'KnowledgeReviews', component: () => import('./views/KnowledgeReviews.vue') },
         { path: 'agent-runs', name: 'AgentRuns', component: () => import('./views/AgentRuns.vue') },
         { path: 'gateway', name: 'Gateway', component: () => import('./views/Gateway.vue') },

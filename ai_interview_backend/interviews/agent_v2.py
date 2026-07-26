@@ -17,6 +17,7 @@ from system.models import AIModel
 from .agent import CompositeInterviewAgentEngine, InterviewAgentState, _json_safe
 from .agent_runtime import AgentToolExecutor, AgentToolSpec
 from .ai_services import generate_next_question_stream
+from .configuration import assemble_generation_context
 from .evaluation import (
     combine_rule_and_ai_evaluation,
     rule_evaluate_answer,
@@ -432,6 +433,18 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
 
     def _node_ai_evaluate(self, state: dict) -> dict:
         session = InterviewSession.objects.get(id=state['session_id'])
+        evaluation_context = assemble_generation_context(
+            session=session,
+            history=state.get('history') or [],
+            rag_context=[],
+            memory_events=state.get('retrieved_memory_events') or [],
+            media_context=state.get('media_context') or {},
+            task_context={'task': 'answer_evaluation'},
+            current_question=state['question_text'],
+            candidate_answer=state['answer_text'],
+            resume_text=state.get('resume_text') or '',
+            jd_text=state.get('jd_text') or '',
+        )
         result = self._execute_tool(
             'model.answer_evaluate', state,
             lambda **kwargs: self.evaluate_answer(**kwargs),
@@ -441,6 +454,8 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
                 'answer': state['answer_text'],
                 'user': session.user,
                 'jd_text': state.get('jd_text') or '',
+                'agent_config_snapshot': session.agent_config_snapshot,
+                'context_envelope': evaluation_context,
             },
         )
         ai_result = result.output if result.ok and isinstance(result.output, dict) else {}
@@ -523,6 +538,19 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             current_stage=next_stage,
             resume_text=state.get('resume_text') or '',
             jd_text=state.get('jd_text') or '',
+            agent_config_snapshot=session.agent_config_snapshot,
+            context_envelope=assemble_generation_context(
+                session=session,
+                history=state.get('history') or [],
+                rag_context=[],
+                memory_events=state.get('retrieved_memory_events') or [],
+                media_context=state.get('media_context') or {},
+                task_context={'task': 'memory_summary', 'next_stage': next_stage},
+                current_question=state.get('question_text') or '',
+                candidate_answer=state.get('answer_text') or '',
+                resume_text=state.get('resume_text') or '',
+                jd_text=state.get('jd_text') or '',
+            ),
         )
         preserved = session.memory_summary or {}
         for key in (
@@ -646,22 +674,24 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
 
     def _node_assemble_context(self, state: dict) -> dict:
         session = InterviewSession.objects.get(id=state['session_id'])
-        context = self.context_budget_manager.compress(
+        context = assemble_generation_context(
             session=session,
             history=state.get('history') or [],
             rag_context=state.get('rag_context') or [],
             memory_events=state.get('retrieved_memory_events') or [],
             media_context=state.get('media_context') or {},
+            task_context=state.get('question_plan') or {},
+            current_question=state.get('question_text') or '',
+            candidate_answer=state.get('answer_text') or '',
+            resume_text=state.get('resume_text') or '',
+            jd_text=state.get('jd_text') or '',
         )
-        context['target_stage'] = state['question_plan'].get('target_stage')
-        context['target_dimension'] = state['question_plan'].get('target_dimension')
-        context['target_gap'] = state['question_plan'].get('target_gap')
-        context['allowed_rag_source_ids'] = state['question_plan'].get('rag_source_ids') or []
+        metadata = context.get('metadata') or {}
         return {'generation_context': context, 'context_budget': {
-            'token_budget': context.get('token_budget'),
-            'estimated_tokens': context.get('estimated_tokens'),
-            'section_tokens': context.get('section_tokens'),
-            'dropped': context.get('dropped'),
+            'token_budget': metadata.get('token_budget'),
+            'estimated_tokens': metadata.get('estimated_tokens'),
+            'section_tokens': metadata.get('section_tokens'),
+            'dropped': metadata.get('dropped'),
         }}
 
     def _node_ingest_generation(self, state: dict) -> dict:
@@ -707,7 +737,10 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
         compat.loop_iteration = attempt + 1
         repair_context = {
             **(state.get('generation_context') or {}),
-            'repair': {'attempt': attempt, 'validation_errors': state.get('validation_errors') or []},
+            'metadata': {
+                **((state.get('generation_context') or {}).get('metadata') or {}),
+                'repair': {'attempt': attempt, 'validation_errors': state.get('validation_errors') or []},
+            },
         }
         setattr(compat, 'generation_context', repair_context)
         repaired = ''.join(self.generate_question_chunks(compat)).strip()
@@ -897,6 +930,11 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
 
     def _get_or_create_run(self, *, session, question, answer_text: str, event: str) -> InterviewAgentRun:
         request_hash = self._run_request_hash(session, question, answer_text, event)
+        config_snapshot = session.agent_config_snapshot or {}
+        active_revision = (
+            (config_snapshot.get('template_override') or {}).get('revision_id')
+            or (config_snapshot.get('platform') or {}).get('revision_id')
+        )
         run, created = InterviewAgentRun.objects.get_or_create(
             session=session,
             event=event,
@@ -908,6 +946,9 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
                 'state_schema_version': self.state_schema_version,
                 'prompt_version': getattr(settings, 'AGENT_PROMPT_VERSION', 'interview-agent-v1'),
                 'model_config_snapshot': (session.session_plan or {}).get('model_config_snapshot', {}),
+                'agent_config_revision_id': active_revision or None,
+                'agent_config_hash': config_snapshot.get('config_hash') or '',
+                'prompt_hashes': config_snapshot.get('prompt_hashes') or {},
                 'started_at': timezone.now(),
             },
         )
@@ -1001,6 +1042,30 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
     def _adapter_from_dto(self, state: dict) -> InterviewAgentState:
         session = InterviewSession.objects.get(id=state['session_id'])
         question = session.questions.get(id=state['question_id'])
+        canonical_context = state.get('generation_context') or {}
+        # Preserve the pre-v2 diagnostic accessor without duplicating data in the
+        # canonical envelope sent to the model or persisted in run snapshots.
+        compatibility_context = dict(canonical_context)
+        canonical_rag = [
+            dict(item.get('content') or {})
+            for item in canonical_context.get('evidence_context') or []
+            if item.get('item_type') == 'rag_document' and isinstance(item.get('content'), dict)
+        ]
+        legacy_rag = canonical_rag or [
+            dict(item)
+            for item in state.get('rag_context') or []
+            if isinstance(item, dict)
+        ]
+        compatibility_context['rag_evidence'] = [
+            {
+                **item,
+                'content': str(item.get('content') or '')[:600],
+                'content_preview_hash': hashlib.sha256(
+                    str(item.get('content') or '').encode('utf-8')
+                ).hexdigest()[:16],
+            }
+            for item in legacy_rag
+        ]
         compat = InterviewAgentState(
             session=session,
             user=session.user,
@@ -1028,35 +1093,36 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
             memory_events=state.get('memory_events') or [],
             retrieved_memory_events=state.get('retrieved_memory_events') or [],
             context_budget=state.get('context_budget') or {},
-            compressed_context_summary=state.get('generation_context') or {},
+            compressed_context_summary=compatibility_context,
             prompt_version=getattr(settings, 'AGENT_PROMPT_VERSION', 'interview-agent-v1'),
         )
         setattr(compat, 'agent_run_id', state.get('run_id'))
         setattr(compat, 'v2_state', state)
-        setattr(compat, 'generation_context', state.get('generation_context') or {})
+        setattr(compat, 'generation_context', compatibility_context)
         return compat
 
     def generate_question_chunks(self, state: InterviewAgentState):
+        canonical_context = (
+            (getattr(state, 'v2_state', {}) or {}).get('generation_context')
+            or getattr(state, 'generation_context', {})
+        )
         yield from generate_next_question_stream(
-            job_position=state.session.job_position,
-            interview_history=state.history,
             user=state.user,
-            total_questions=state.session.question_count,
-            resume_text=state.resume_text,
-            difficulty=state.session.difficulty,
-            current_stage=state.session.current_stage,
-            memory_summary=state.session.memory_summary,
-            covered_topics=state.session.covered_topics,
-            pending_topics=state.session.pending_topics,
-            last_evaluation=state.answer_evaluation,
-            jd_text=state.jd_text,
-            rag_context=state.rag_context,
-            generation_context=getattr(state, 'generation_context', {}),
+            agent_config_snapshot=state.session.agent_config_snapshot,
+            context_envelope=canonical_context,
         )
 
     def finalize_generated_question(self, state: InterviewAgentState, full_question_text: str) -> InterviewQuestion:
         dto = dict(getattr(state, 'v2_state', {}) or {})
         run = InterviewAgentRun.objects.get(id=getattr(state, 'agent_run_id'))
+        envelope_metadata = (getattr(state, 'generation_context', {}) or {}).get('metadata') or {}
+        run.context_envelope_hash = envelope_metadata.get('envelope_hash') or ''
+        run.context_token_usage = {
+            'estimated_tokens': envelope_metadata.get('estimated_tokens'),
+            'section_tokens': envelope_metadata.get('section_tokens') or {},
+            'tokenizer_exact': envelope_metadata.get('tokenizer_exact'),
+        }
+        run.save(update_fields=['context_envelope_hash', 'context_token_usage', 'updated_at'])
         dto = {**dto, **(run.state_snapshot or {}), 'generated_text': full_question_text, 'generation_attempt': 0}
         if self._finalize_graph:
             dto = self._invoke_graph('finalize', self._finalize_graph, dto)
@@ -1104,6 +1170,14 @@ class CompositeV2InterviewAgentEngine(CompositeInterviewAgentEngine):
                 'status': InterviewAgentRun.Status.RUNNING,
                 'state_schema_version': self.state_schema_version,
                 'prompt_version': getattr(settings, 'AGENT_PROMPT_VERSION', 'interview-agent-v1'),
+                'model_config_snapshot': (session.session_plan or {}).get('model_config_snapshot', {}),
+                'agent_config_revision_id': (
+                    ((session.agent_config_snapshot or {}).get('template_override') or {}).get('revision_id')
+                    or ((session.agent_config_snapshot or {}).get('platform') or {}).get('revision_id')
+                    or None
+                ),
+                'agent_config_hash': (session.agent_config_snapshot or {}).get('config_hash') or '',
+                'prompt_hashes': (session.agent_config_snapshot or {}).get('prompt_hashes') or {},
                 'started_at': timezone.now(),
             },
         )

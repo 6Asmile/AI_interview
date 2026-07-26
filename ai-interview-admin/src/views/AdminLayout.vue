@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { staffAuth } from '@/auth';
-import { Bell, Briefcase, Cpu, DataAnalysis, DocumentChecked, Files, HomeFilled, Lock, Setting, SwitchButton, User, UserFilled } from '@element-plus/icons-vue';
+import { Bell, Briefcase, Connection, Cpu, DataAnalysis, DocumentChecked, Files, HomeFilled, Lock, Setting, SwitchButton, User, UserFilled } from '@element-plus/icons-vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -12,6 +12,7 @@ const items = computed(() => [
   { path: '/candidates', label: '候选人支持', icon: UserFilled, permission: 'candidate.support' },
   { path: '/interviews', label: '面试会话', icon: Briefcase, permission: 'interview.audit' },
   { path: '/interview-config', label: '模板与评估', icon: Setting, permission: 'template.manage' },
+  { path: '/agent-config', label: 'Agent 配置中心', icon: Connection, permission: 'agent_config.view' },
   { path: '/knowledge', label: '知识审批', icon: DocumentChecked, permission: 'knowledge.review' },
   { path: '/agent-runs', label: 'Agent 运行', icon: DataAnalysis, permission: 'interview.audit' },
   { path: '/gateway', label: '模型网关', icon: Cpu, permission: 'gateway.manage' },

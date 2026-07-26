@@ -113,11 +113,18 @@ def _blocks_to_content(blocks: list[ParsedKnowledgeBlock]) -> str:
     return '\n\n'.join(block.text.strip() for block in blocks if block.text.strip())
 
 
-def _serialize_blocks(blocks: list[ParsedKnowledgeBlock], parser_name: str, parser_version: str, fallback_reason: str = '') -> dict:
+def _serialize_blocks(
+    blocks: list[ParsedKnowledgeBlock],
+    parser_name: str,
+    parser_version: str,
+    fallback_reason: str = '',
+    parser_options: dict | None = None,
+) -> dict:
     return {
         'parser_name': parser_name,
         'parser_version': parser_version,
         'parser_fallback_reason': fallback_reason,
+        'parser_options': parser_options or {},
         'blocks': [
             {
                 'block_type': block.block_type,
@@ -177,12 +184,57 @@ class DocumentParsingService:
         if extension not in SUPPORTED_EXTENSIONS:
             raise ValueError(f'不支持的文件类型：{extension or "unknown"}')
 
-        docling_error = ''
-        if extension in {'.pdf', '.docx', '.xlsx'}:
+        degradation_reasons = []
+        if extension == '.pdf':
             try:
-                return self._parse_with_docling(uploaded_file, title or name, extension)
+                return self._parse_with_docling(
+                    uploaded_file,
+                    title or name,
+                    extension,
+                    use_ocr=False,
+                )
             except Exception as exc:
-                docling_error = f'Docling 解析失败，已降级：{exc}'
+                degradation_reasons.append(f'Docling 结构解析失败：{exc}')
+            if self.enable_ocr:
+                try:
+                    return self._parse_with_docling(
+                        uploaded_file,
+                        title or name,
+                        extension,
+                        use_ocr=True,
+                        fallback_reason='；'.join(degradation_reasons),
+                    )
+                except Exception as exc:
+                    degradation_reasons.append(f'Docling OCR 失败：{exc}')
+                try:
+                    return self._parse_pdf_with_paddleocr(
+                        uploaded_file,
+                        title or name,
+                        fallback_reason='；'.join(degradation_reasons),
+                    )
+                except Exception as exc:
+                    degradation_reasons.append(f'PaddleOCR 分页识别失败：{exc}')
+            try:
+                return self._parse_pdf_fallback(
+                    uploaded_file,
+                    title or name,
+                    fallback_reason='；'.join(degradation_reasons),
+                )
+            except Exception as exc:
+                degradation_reasons.append(f'PyPDF 文本提取失败：{exc}')
+                raise ValueError('；'.join(degradation_reasons)) from exc
+
+        docling_error = ''
+        if extension in {'.docx', '.xlsx'}:
+            try:
+                return self._parse_with_docling(
+                    uploaded_file,
+                    title or name,
+                    extension,
+                    use_ocr=False,
+                )
+            except Exception as exc:
+                docling_error = f'Docling 结构解析失败，已降级：{exc}'
 
         if extension in IMAGE_EXTENSIONS:
             if not self.enable_ocr:
@@ -190,8 +242,6 @@ class DocumentParsingService:
             return self._parse_image_with_ocr(uploaded_file, title or name, extension, docling_error)
         if extension in {'.md', '.txt'}:
             return self._parse_text(uploaded_file, title or name, extension, docling_error)
-        if extension == '.pdf':
-            return self._parse_pdf_fallback(uploaded_file, title or name, docling_error)
         if extension == '.docx':
             return self._parse_docx_fallback(uploaded_file, title or name, docling_error)
         if extension == '.xlsx':
@@ -200,7 +250,15 @@ class DocumentParsingService:
             return self._parse_csv(uploaded_file, title or name, docling_error)
         raise ValueError(f'不支持的文件类型：{extension}')
 
-    def _parse_with_docling(self, uploaded_file, title: str, extension: str) -> ParsedKnowledgeDocument:
+    def _parse_with_docling(
+        self,
+        uploaded_file,
+        title: str,
+        extension: str,
+        *,
+        use_ocr: bool = False,
+        fallback_reason: str = '',
+    ) -> ParsedKnowledgeDocument:
         try:
             from docling.document_converter import DocumentConverter
         except Exception as exc:
@@ -208,28 +266,39 @@ class DocumentParsingService:
 
         path = _save_temp_file(uploaded_file, extension)
         try:
-            converter = DocumentConverter()
+            parser_options = {
+                'ocr_enabled': bool(use_ocr),
+                'ocr_engine': 'docling' if use_ocr else '',
+                'ocr_languages': [self.ocr_lang] if use_ocr else [],
+                'table_structure_enabled': True,
+                'layout_enabled': True,
+            }
+            if extension == '.pdf':
+                from django.conf import settings
+                from docling.datamodel.base_models import InputFormat
+                from docling.datamodel.pipeline_options import PdfPipelineOptions
+                from docling.document_converter import PdfFormatOption
+
+                pipeline_options = PdfPipelineOptions()
+                pipeline_options.do_ocr = bool(use_ocr)
+                pipeline_options.do_table_structure = bool(
+                    getattr(settings, 'DOCLING_ENABLE_TABLE_STRUCTURE', True)
+                )
+                parser_options['table_structure_enabled'] = pipeline_options.do_table_structure
+                if use_ocr and getattr(pipeline_options, 'ocr_options', None) is not None:
+                    try:
+                        pipeline_options.ocr_options.lang = [self.ocr_lang]
+                    except Exception:
+                        pass
+                converter = DocumentConverter(format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+                })
+            else:
+                converter = DocumentConverter()
             result = converter.convert(path)
             document = result.document
             markdown = document.export_to_markdown()
             blocks = self._blocks_from_markdown(markdown, default_type='paragraph')
-            ocr_text = ''
-            ocr_items = []
-            if self.enable_ocr and extension in IMAGE_EXTENSIONS:
-                try:
-                    ocr_text, ocr_items = _run_paddleocr(path, lang=self.ocr_lang)
-                except Exception as exc:
-                    blocks.append(ParsedKnowledgeBlock(
-                        block_type='ocr_error',
-                        text='',
-                        metadata={'ocr_engine': 'paddleocr', 'error': str(exc)},
-                    ))
-            if ocr_text:
-                blocks.append(ParsedKnowledgeBlock(
-                    block_type='ocr',
-                    text=ocr_text,
-                    metadata={'ocr_engine': 'paddleocr', 'ocr_items': ocr_items},
-                ))
             content = _blocks_to_content(blocks)
             if not content:
                 raise ValueError('Docling 未提取到文本内容。')
@@ -239,10 +308,17 @@ class DocumentParsingService:
                 content=content,
                 source_type='document',
                 file_type=extension.lstrip('.'),
-                parsed_content=_serialize_blocks(blocks, 'docling', parser_version),
-                parser_name='docling',
+                parsed_content=_serialize_blocks(
+                    blocks,
+                    'docling_ocr' if use_ocr else 'docling',
+                    parser_version,
+                    fallback_reason,
+                    parser_options,
+                ),
+                parser_name='docling_ocr' if use_ocr else 'docling',
                 parser_version=parser_version,
-                ocr_enabled=bool(ocr_text),
+                parser_fallback_reason=fallback_reason,
+                ocr_enabled=bool(use_ocr),
             )
         finally:
             try:
@@ -383,6 +459,88 @@ class DocumentParsingService:
             parser_version=_package_version('pypdf'),
             parser_fallback_reason=fallback_reason,
         )
+
+    def _parse_pdf_with_paddleocr(
+        self,
+        uploaded_file,
+        title: str,
+        fallback_reason: str = '',
+    ) -> ParsedKnowledgeDocument:
+        try:
+            import pypdfium2 as pdfium
+        except Exception as exc:
+            raise RuntimeError(f'pypdfium2 不可用：{exc}') from exc
+
+        pdf_path = _save_temp_file(uploaded_file, '.pdf')
+        image_paths = []
+        blocks = []
+        try:
+            pdf = pdfium.PdfDocument(pdf_path)
+            for page_index in range(len(pdf)):
+                page = pdf[page_index]
+                image = page.render(scale=2).to_pil()
+                image_handle = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                image_path = image_handle.name
+                image_handle.close()
+                image.save(image_path)
+                image_paths.append(image_path)
+                text, items = _run_paddleocr(image_path, lang=self.ocr_lang)
+                if text.strip():
+                    confidences = [
+                        float(item['confidence'])
+                        for item in items
+                        if item.get('confidence') is not None
+                    ]
+                    blocks.append(ParsedKnowledgeBlock(
+                        block_type='ocr',
+                        text=text,
+                        page_start=page_index + 1,
+                        page_end=page_index + 1,
+                        metadata={
+                            'ocr_engine': 'paddleocr',
+                            'ocr_language': self.ocr_lang,
+                            'confidence': (
+                                sum(confidences) / len(confidences) if confidences else None
+                            ),
+                            'ocr_items': items,
+                        },
+                    ))
+            content = _blocks_to_content(blocks)
+            if not content:
+                raise ValueError('PaddleOCR 未从 PDF 页面识别到文本。')
+            parser_version = _package_version('paddleocr')
+            return ParsedKnowledgeDocument(
+                title=title,
+                content=content,
+                source_type='document',
+                file_type='pdf',
+                parsed_content=_serialize_blocks(
+                    blocks,
+                    'paddleocr_pdf',
+                    parser_version,
+                    fallback_reason,
+                    {
+                        'ocr_enabled': True,
+                        'ocr_engine': 'paddleocr',
+                        'ocr_languages': [self.ocr_lang],
+                        'page_count': len(blocks),
+                    },
+                ),
+                parser_name='paddleocr_pdf',
+                parser_version=parser_version,
+                parser_fallback_reason=fallback_reason,
+                ocr_enabled=True,
+            )
+        finally:
+            for image_path in image_paths:
+                try:
+                    os.unlink(image_path)
+                except OSError:
+                    pass
+            try:
+                os.unlink(pdf_path)
+            except OSError:
+                pass
 
     def _parse_docx_fallback(self, uploaded_file, title: str, fallback_reason: str = '') -> ParsedKnowledgeDocument:
         uploaded_file.seek(0)

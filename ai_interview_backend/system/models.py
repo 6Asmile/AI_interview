@@ -205,6 +205,8 @@ class ModelDeployment(models.Model):
     credential = models.ForeignKey(ProviderCredential, on_delete=models.SET_NULL, null=True, blank=True, related_name='deployments')
     capabilities = models.JSONField(default=dict, blank=True)
     context_window = models.PositiveIntegerField(null=True, blank=True)
+    tokenizer_family = models.CharField(max_length=80, blank=True)
+    tokenizer_name = models.CharField(max_length=160, blank=True)
     input_price_per_million = models.DecimalField(max_digits=12, decimal_places=6, default=0)
     output_price_per_million = models.DecimalField(max_digits=12, decimal_places=6, default=0)
     priority = models.PositiveIntegerField(default=100)

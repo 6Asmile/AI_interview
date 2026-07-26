@@ -10,6 +10,11 @@ from users.models import User
 from system.models import AISetting, AIModel
 from system.ai_config import resolve_ai_config
 from system.model_gateway import ModelGateway
+from .configuration import (
+    assemble_initial_generation_context,
+    render_registered_prompt,
+    validate_prompt_output,
+)
 from .prompts.profiles import build_interview_prompt_context
 from knowledge.services import format_rag_context_for_prompt
 
@@ -134,6 +139,47 @@ def _call_openai_api_stream(api_key: str, model: AIModel, messages: list, max_to
     yield from gateway.chat_stream(messages, max_tokens=max_tokens, temperature=temperature)
 
 
+def _call_registered_json(
+    *,
+    user,
+    api_key: str,
+    model: AIModel,
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    alias_slug: str = '',
+):
+    if alias_slug:
+        return ModelGateway(user).chat_json(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            alias_slug=alias_slug,
+        )
+    return _call_openai_api(api_key, model, messages, max_tokens, temperature)
+
+
+def _call_registered_stream(
+    *,
+    user,
+    api_key: str,
+    model: AIModel,
+    messages: list,
+    max_tokens: int,
+    temperature: float,
+    alias_slug: str = '',
+):
+    if alias_slug:
+        yield from ModelGateway(user).chat_stream(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            alias_slug=alias_slug,
+        )
+        return
+    yield from _call_openai_api_stream(api_key, model, messages, max_tokens, temperature)
+
+
 def _build_stage_guidance(next_sequence: int, total_questions: int, difficulty: str) -> str:
     if next_sequence <= 1:
         phase = "开场定位"
@@ -210,6 +256,8 @@ def update_interview_memory(
     current_stage: str,
     resume_text: str = None,
     jd_text: str = None,
+    agent_config_snapshot: dict | None = None,
+    context_envelope: dict | None = None,
 ) -> dict:
     api_key, model = _get_user_ai_config(user)
     fallback = {
@@ -258,14 +306,34 @@ def update_interview_memory(
         "}"
     )
 
+    registered = render_registered_prompt(
+        agent_config_snapshot,
+        'interview.memory_summary',
+        {'context_json': json.dumps(context_envelope or {
+            'job_position': job_position,
+            'current_stage': current_stage,
+            'resume_text': resume_text or '',
+            'recent_history': history_prompt,
+        }, ensure_ascii=False)},
+    )
+    messages = registered[0] if registered else [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    metadata = registered[1] if registered else {
+        'max_output_tokens': 600, 'temperature': 0.3, 'model_alias': '',
+    }
     try:
-        result = _call_openai_api(
-            api_key,
-            model,
-            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            600,
-            0.3
+        result = _call_registered_json(
+            user=user,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            max_tokens=metadata['max_output_tokens'],
+            temperature=metadata['temperature'],
+            alias_slug=metadata.get('model_alias') or '',
         )
+        validate_prompt_output(result, metadata.get('output_contract'))
         result.setdefault("summary", fallback["summary"])
         result.setdefault("strengths", [])
         result.setdefault("risks", [])
@@ -298,12 +366,25 @@ def generate_first_question(
     resume_text: str = None,
     difficulty: str = "medium",
     jd_text: str = None,
+    agent_config_snapshot: dict | None = None,
 ) -> str:
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         return "系统AI服务未配置或模型不存在。"
 
     prompt_context = build_interview_prompt_context(job_position, jd_text=jd_text, resume_text=resume_text)
+    context_envelope = (
+        assemble_initial_generation_context(
+            snapshot=agent_config_snapshot,
+            job_position=job_position,
+            difficulty=difficulty,
+            prompt_brief=prompt_context['brief'],
+            resume_text=resume_text or '',
+            jd_text=jd_text or '',
+        )
+        if agent_config_snapshot
+        else {}
+    )
     system_prompt = (
         f"你是一名资深面试官，正在面试 {job_position} 岗位候选人。"
         "你必须严格遵守面试流程，第一题只让候选人进行自我介绍，不追问项目细节。"
@@ -320,9 +401,35 @@ def generate_first_question(
         "{\"question\": \"(你的问题在这里)\"}"
     )
 
+    registered = render_registered_prompt(
+        agent_config_snapshot,
+        'interview.first_question',
+        {
+            'context_json': json.dumps(context_envelope, ensure_ascii=False),
+            'job_position': job_position,
+            'difficulty': difficulty,
+            'prompt_brief': prompt_context['brief'],
+            'resume_text': resume_text or '',
+        },
+    )
+    messages = registered[0] if registered else [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    metadata = registered[1] if registered else {
+        'max_output_tokens': 300, 'temperature': 0.7, 'model_alias': '',
+    }
     try:
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        ai_response = _call_openai_api(api_key, model, messages, 300, 0.7)
+        ai_response = _call_registered_json(
+            user=user,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            max_tokens=metadata['max_output_tokens'],
+            temperature=metadata['temperature'],
+            alias_slug=metadata.get('model_alias') or '',
+        )
+        validate_prompt_output(ai_response, metadata.get('output_contract'))
         question = ai_response.get("question") or ""
         if "自我介绍" not in question:
             return _first_intro_question(job_position)
@@ -359,7 +466,15 @@ def analyze_answer(job_position: str, question: str, answer: str, user: User) ->
         return "AI 在分析时遇到了一点小问题。"
 
 
-def evaluate_answer(job_position: str, question: str, answer: str, user: User, jd_text: str = None) -> dict:
+def evaluate_answer(
+    job_position: str,
+    question: str,
+    answer: str,
+    user: User,
+    jd_text: str = None,
+    agent_config_snapshot: dict | None = None,
+    context_envelope: dict | None = None,
+) -> dict:
     api_key, model = _get_user_ai_config(user)
     fallback_feedback = "回答已记录。建议继续补充更具体的场景、你的个人贡献、技术细节和量化结果。"
     if not api_key or not model:
@@ -397,14 +512,35 @@ def evaluate_answer(job_position: str, question: str, answer: str, user: User, j
         "follow_up_reason 只说明可展示给候选人的依据，例如“上一题缺少指标，因此追问结果验证”。"
     )
 
+    registered = render_registered_prompt(
+        agent_config_snapshot,
+        'interview.answer_evaluation',
+        {
+            'context_json': json.dumps(context_envelope or {}, ensure_ascii=False),
+            'job_position': job_position,
+            'prompt_brief': prompt_context['brief'],
+            'question': question,
+            'answer': answer,
+        },
+    )
+    messages = registered[0] if registered else [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    metadata = registered[1] if registered else {
+        'max_output_tokens': 700, 'temperature': 0.2, 'model_alias': '',
+    }
     try:
-        result = _call_openai_api(
-            api_key,
-            model,
-            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            700,
-            0.2
+        result = _call_registered_json(
+            user=user,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            max_tokens=metadata['max_output_tokens'],
+            temperature=metadata['temperature'],
+            alias_slug=metadata.get('model_alias') or '',
         )
+        validate_prompt_output(result, metadata.get('output_contract'))
         return _normalize_answer_evaluation(result, fallback_feedback)
     except Exception as e:
         print(f"调用 AI 结构化评估回答时发生错误: {e}")
@@ -435,26 +571,30 @@ def decide_adaptive_difficulty(base_difficulty: str, recent_feedback: list, curr
 
 
 def generate_next_question_stream(
-    job_position: str,
-    interview_history: list,
+    *,
     user: User,
-    total_questions: int = 5,
-    resume_text: str = None,
-    difficulty: str = "medium",
-    current_stage: str = "technical_deep_dive",
-    memory_summary: dict | None = None,
-    covered_topics: list | None = None,
-    pending_topics: list | None = None,
-    last_evaluation: dict | None = None,
-    jd_text: str = None,
-    rag_context: list | None = None,
-    generation_context: dict | None = None,
+    agent_config_snapshot: dict | None = None,
+    context_envelope: dict | None = None,
+    **legacy,
 ):
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
         yield "AI服务未配置。"
         return
 
+    context_envelope = context_envelope or legacy.get('generation_context') or {}
+    interview_history = legacy.get('interview_history') or []
+    job_position = legacy.get('job_position') or ''
+    total_questions = legacy.get('total_questions') or 5
+    resume_text = legacy.get('resume_text')
+    difficulty = legacy.get('difficulty') or 'medium'
+    current_stage = legacy.get('current_stage') or 'technical_deep_dive'
+    memory_summary = legacy.get('memory_summary') or {}
+    covered_topics = legacy.get('covered_topics') or []
+    pending_topics = legacy.get('pending_topics') or []
+    last_evaluation = legacy.get('last_evaluation') or {}
+    jd_text = legacy.get('jd_text')
+    rag_context = legacy.get('rag_context') or []
     next_sequence = len(interview_history) + 1
     history_prompt_part = ""
     for turn in interview_history:
@@ -478,7 +618,7 @@ def generate_next_question_stream(
     adaptive_difficulty = memory_summary.get("adaptive_difficulty") or difficulty
     prompt_context = build_interview_prompt_context(job_position, jd_text=jd_text, resume_text=resume_text)
     rag_prompt_part = format_rag_context_for_prompt(rag_context)
-    generation_context = generation_context or {}
+    generation_context = context_envelope
 
     system_prompt = (
         f"你是一名资深面试官，正在面试 {job_position} 岗位候选人。"
@@ -524,9 +664,28 @@ def generate_next_question_stream(
         "现在，请直接给出下一题。"
     )
 
+    registered = render_registered_prompt(
+        agent_config_snapshot,
+        'interview.next_question',
+        {'context_json': json.dumps(context_envelope, ensure_ascii=False)},
+    )
+    messages = registered[0] if registered else [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    metadata = registered[1] if registered else {
+        'max_output_tokens': 500, 'temperature': 0.8, 'model_alias': '',
+    }
     try:
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        yield from _call_openai_api_stream(api_key, model, messages, 500, 0.8)
+        yield from _call_registered_stream(
+            user=user,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            max_tokens=metadata['max_output_tokens'],
+            temperature=metadata['temperature'],
+            alias_slug=metadata.get('model_alias') or '',
+        )
     except Exception as e:
         print(f"调用 AI 生成下一问时发生错误: {e}")
         yield _fallback_next_question(job_position, next_sequence, total_questions)
@@ -566,7 +725,9 @@ def generate_final_report(
     interview_history: list,
     user: User,
     resume_text: str = None,
-    memory_summary: dict | None = None
+    memory_summary: dict | None = None,
+    agent_config_snapshot: dict | None = None,
+    context_envelope: dict | None = None,
 ) -> dict:
     api_key, model = _get_user_ai_config(user)
     if not api_key or not model:
@@ -660,9 +821,34 @@ def generate_final_report(
         "}"
     )
 
+    registered = render_registered_prompt(
+        agent_config_snapshot,
+        'interview.final_report',
+        {'context_json': json.dumps(context_envelope or {
+            'job_position': job_position,
+            'resume_text': resume_text or '',
+            'memory_summary': memory_summary or {},
+            'interview_history': interview_history,
+        }, ensure_ascii=False)},
+    )
+    messages = registered[0] if registered else [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    metadata = registered[1] if registered else {
+        'max_output_tokens': 4096, 'temperature': 0.5, 'model_alias': '',
+    }
     try:
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        report_data = _call_openai_api(api_key, model, messages, 4096, 0.5)
+        report_data = _call_registered_json(
+            user=user,
+            api_key=api_key,
+            model=model,
+            messages=messages,
+            max_tokens=metadata['max_output_tokens'],
+            temperature=metadata['temperature'],
+            alias_slug=metadata.get('model_alias') or '',
+        )
+        validate_prompt_output(report_data, metadata.get('output_contract'))
 
         if 'overall_score' in report_data:
             try:

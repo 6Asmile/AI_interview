@@ -4,6 +4,84 @@ from django.conf import settings
 from django.db import models
 
 
+class RetrievalProfile(models.Model):
+    """Logical retrieval configuration with immutable published revisions."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=160, unique=True)
+    description = models.TextField(blank=True)
+    active_revision = models.ForeignKey(
+        'RetrievalProfileRevision',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_retrieval_profiles',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class RetrievalProfileRevision(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', '草稿'
+        PENDING_REVIEW = 'pending_review', '待审核'
+        APPROVED = 'approved', '已审核'
+        PUBLISHED = 'published', '已发布'
+        REJECTED = 'rejected', '已拒绝'
+        SUPERSEDED = 'superseded', '已替代'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    profile = models.ForeignKey(RetrievalProfile, on_delete=models.CASCADE, related_name='revisions')
+    version = models.PositiveIntegerField()
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    config = models.JSONField(default=dict, blank=True)
+    config_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    validation_report = models.JSONField(default=dict, blank=True)
+    evaluation_summary = models.JSONField(default=dict, blank=True)
+    change_summary = models.TextField(blank=True)
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_retrieval_profile_revisions',
+    )
+    approved_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_retrieval_profile_revisions',
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['profile', '-version']
+        constraints = [
+            models.UniqueConstraint(fields=['profile', 'version'], name='uniq_retrieval_profile_revision'),
+        ]
+
+    def __str__(self):
+        return f'{self.profile.name} v{self.version}'
+
+
 class KnowledgeDocument(models.Model):
     class Visibility(models.TextChoices):
         PRIVATE = 'private', '私有'
@@ -135,6 +213,110 @@ class KnowledgeDocument(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class KnowledgeBase(models.Model):
+    class Visibility(models.TextChoices):
+        SYSTEM = 'system', '系统'
+        SHARED = 'shared', '共享'
+        PRIVATE = 'private', '私有'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=160, unique=True)
+    description = models.TextField(blank=True)
+    visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.SHARED)
+    active_revision = models.ForeignKey(
+        'KnowledgeBaseRevision',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_knowledge_bases',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class KnowledgeBaseRevision(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = 'draft', '草稿'
+        PENDING_REVIEW = 'pending_review', '待审核'
+        APPROVED = 'approved', '已审核'
+        PUBLISHED = 'published', '已发布'
+        REJECTED = 'rejected', '已拒绝'
+        SUPERSEDED = 'superseded', '已替代'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    knowledge_base = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name='revisions')
+    version = models.PositiveIntegerField()
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    ingestion_policy = models.JSONField(default=dict, blank=True)
+    default_retrieval_revision = models.ForeignKey(
+        RetrievalProfileRevision,
+        on_delete=models.PROTECT,
+        related_name='knowledge_base_revisions',
+    )
+    documents = models.ManyToManyField(
+        KnowledgeDocument,
+        through='KnowledgeBaseRevisionDocument',
+        related_name='knowledge_base_revisions',
+    )
+    config_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    validation_report = models.JSONField(default=dict, blank=True)
+    change_summary = models.TextField(blank=True)
+    created_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_knowledge_base_revisions',
+    )
+    approved_by_staff = models.ForeignKey(
+        'staff_admin.StaffAccount',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_knowledge_base_revisions',
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['knowledge_base', '-version']
+        constraints = [
+            models.UniqueConstraint(fields=['knowledge_base', 'version'], name='uniq_knowledge_base_revision'),
+        ]
+
+    def __str__(self):
+        return f'{self.knowledge_base.name} v{self.version}'
+
+
+class KnowledgeBaseRevisionDocument(models.Model):
+    revision = models.ForeignKey(KnowledgeBaseRevision, on_delete=models.CASCADE, related_name='document_bindings')
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.PROTECT, related_name='knowledge_base_bindings')
+    order = models.PositiveIntegerField(default=0)
+    required = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['revision', 'document'], name='uniq_knowledge_base_revision_document'),
+        ]
 
 
 class KnowledgeDocumentRevision(models.Model):

@@ -12,7 +12,7 @@ from django.conf import settings
 from django.db.models import F, Q
 from django.utils import timezone
 
-from knowledge.services import search_knowledge_context
+from knowledge.services import RequiredRAGContextUnavailable, search_knowledge_context
 
 from .agent_runtime import (
     AgentHookManager,
@@ -39,6 +39,7 @@ from .ai_services import (
     update_interview_memory,
 )
 from .prompts.profiles import build_interview_prompt_context
+from .configuration import assemble_generation_context
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +131,10 @@ class InterviewAgentEngine:
     def build_initial_memory(self, job_position: str, resume_text: str = '', jd_text: str = '') -> tuple[dict, list[str]]:
         raise NotImplementedError
 
-    def generate_first_question(self, *, job_position: str, user, resume_text: str = '', difficulty: str = 'medium', jd_text: str = '') -> str:
+    def generate_first_question(self, *, job_position: str, user, resume_text: str = '', difficulty: str = 'medium', jd_text: str = '', agent_config_snapshot: dict | None = None) -> str:
         raise NotImplementedError
 
-    def evaluate_answer(self, *, job_position: str, question: str, answer: str, user, jd_text: str = '') -> dict:
+    def evaluate_answer(self, *, job_position: str, question: str, answer: str, user, jd_text: str = '', agent_config_snapshot: dict | None = None, context_envelope: dict | None = None) -> dict:
         raise NotImplementedError
 
     def summarize_perception(self, analysis_data: list | None) -> dict:
@@ -142,7 +143,7 @@ class InterviewAgentEngine:
     def decide_stage(self, *, next_sequence: int, total_questions: int, has_resume: bool) -> str:
         raise NotImplementedError
 
-    def update_memory(self, *, job_position: str, user, history: list, current_stage: str, resume_text: str = '', jd_text: str = '') -> dict:
+    def update_memory(self, *, job_position: str, user, history: list, current_stage: str, resume_text: str = '', jd_text: str = '', agent_config_snapshot: dict | None = None, context_envelope: dict | None = None) -> dict:
         raise NotImplementedError
 
     def decide_difficulty(self, *, base_difficulty: str, recent_feedback: list, current_stage: str) -> str:
@@ -406,11 +407,26 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
         }
         return memory, pending_topics
 
-    def generate_first_question(self, *, job_position: str, user, resume_text: str = '', difficulty: str = 'medium', jd_text: str = '') -> str:
-        return generate_first_question(job_position, user, resume_text, difficulty, jd_text=jd_text)
+    def generate_first_question(self, *, job_position: str, user, resume_text: str = '', difficulty: str = 'medium', jd_text: str = '', agent_config_snapshot: dict | None = None) -> str:
+        return generate_first_question(
+            job_position,
+            user,
+            resume_text,
+            difficulty,
+            jd_text=jd_text,
+            agent_config_snapshot=agent_config_snapshot,
+        )
 
-    def evaluate_answer(self, *, job_position: str, question: str, answer: str, user, jd_text: str = '') -> dict:
-        return evaluate_answer(job_position, question, answer, user, jd_text=jd_text)
+    def evaluate_answer(self, *, job_position: str, question: str, answer: str, user, jd_text: str = '', agent_config_snapshot: dict | None = None, context_envelope: dict | None = None) -> dict:
+        return evaluate_answer(
+            job_position,
+            question,
+            answer,
+            user,
+            jd_text=jd_text,
+            agent_config_snapshot=agent_config_snapshot,
+            context_envelope=context_envelope,
+        )
 
     def summarize_perception(self, analysis_data: list | None) -> dict:
         return summarize_perception_data(analysis_data)
@@ -418,8 +434,17 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
     def decide_stage(self, *, next_sequence: int, total_questions: int, has_resume: bool) -> str:
         return decide_interview_stage(next_sequence, total_questions, has_resume)
 
-    def update_memory(self, *, job_position: str, user, history: list, current_stage: str, resume_text: str = '', jd_text: str = '') -> dict:
-        return update_interview_memory(job_position, user, history, current_stage, resume_text, jd_text=jd_text)
+    def update_memory(self, *, job_position: str, user, history: list, current_stage: str, resume_text: str = '', jd_text: str = '', agent_config_snapshot: dict | None = None, context_envelope: dict | None = None) -> dict:
+        return update_interview_memory(
+            job_position,
+            user,
+            history,
+            current_stage,
+            resume_text,
+            jd_text=jd_text,
+            agent_config_snapshot=agent_config_snapshot,
+            context_envelope=context_envelope,
+        )
 
     def decide_difficulty(self, *, base_difficulty: str, recent_feedback: list, current_stage: str) -> str:
         return decide_adaptive_difficulty(base_difficulty, recent_feedback, current_stage)
@@ -448,6 +473,7 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
                 exclude_chunk_ids=used_chunk_ids,
                 limit=4,
                 return_trace=True,
+                agent_config_snapshot=session.agent_config_snapshot or {},
             )
             if isinstance(result, dict):
                 self.last_retrieval_trace = result.get('retrieval_trace') or {}
@@ -463,14 +489,23 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
                         turn_groups.add(group_id)
                     if len(contexts) >= 4:
                         break
+                if getattr(session.template, 'require_rag', False) and not contexts:
+                    raise RequiredRAGContextUnavailable(
+                        self.last_retrieval_trace.get('fallback_reason')
+                        or 'required_rag_context_unavailable'
+                    )
                 return contexts
             self.last_retrieval_trace = {}
             self.last_retrieval_explanation = {}
             return result
+        except RequiredRAGContextUnavailable:
+            raise
         except Exception as exc:
             logger.warning('Knowledge retrieval failed; continuing without RAG context: %s', exc)
             self.last_retrieval_trace = {'fallback_reason': str(exc)}
             self.last_retrieval_explanation = {'fallback_reason': str(exc), 'steps': []}
+            if getattr(session.template, 'require_rag', False):
+                raise RequiredRAGContextUnavailable(str(exc)) from exc
             return []
 
     def _build_knowledge_tool_result(self, state: InterviewAgentState) -> AgentToolResult:
@@ -742,12 +777,26 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
         return state
 
     def _node_evaluate_answer_ai(self, state: InterviewAgentState) -> InterviewAgentState:
+        context_envelope = assemble_generation_context(
+            session=state.session,
+            history=state.history,
+            rag_context=[],
+            memory_events=state.retrieved_memory_events,
+            media_context=state.media_context,
+            task_context={'task': 'answer_evaluation'},
+            current_question=state.current_question.question_text,
+            candidate_answer=state.answer_text,
+            resume_text=state.resume_text,
+            jd_text=state.jd_text,
+        )
         state.ai_evaluation = self.evaluate_answer(
             job_position=state.session.job_position,
             question=state.current_question.question_text,
             answer=state.answer_text,
             user=state.user,
             jd_text=state.jd_text,
+            agent_config_snapshot=state.session.agent_config_snapshot,
+            context_envelope=context_envelope,
         )
         state.answer_evaluation = combine_rule_and_ai_evaluation(state.rule_evaluation, state.ai_evaluation)
         self._mark_node(state, 'evaluate_answer_ai', {
@@ -784,6 +833,19 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
             current_stage=next_stage,
             resume_text=state.resume_text,
             jd_text=state.jd_text,
+            agent_config_snapshot=state.session.agent_config_snapshot,
+            context_envelope=assemble_generation_context(
+                session=state.session,
+                history=state.history,
+                rag_context=[],
+                memory_events=state.retrieved_memory_events,
+                media_context=state.media_context,
+                task_context={'task': 'memory_summary', 'next_stage': next_stage},
+                current_question=state.current_question.question_text,
+                candidate_answer=state.answer_text,
+                resume_text=state.resume_text,
+                jd_text=state.jd_text,
+            ),
         )
         recent_feedback = [
             item.get('evaluation')
@@ -1009,20 +1071,26 @@ class DefaultInterviewAgentEngine(InterviewAgentEngine):
         return state
 
     def generate_question_chunks(self, state: InterviewAgentState):
+        context_envelope = (
+            getattr(state, 'generation_context', None)
+            or state.compressed_context_summary
+            or assemble_generation_context(
+                session=state.session,
+                history=state.history,
+                rag_context=state.rag_context,
+                memory_events=state.retrieved_memory_events,
+                media_context=state.media_context,
+                task_context=state.question_plan or {},
+                current_question=state.current_question.question_text if state.current_question else '',
+                candidate_answer=state.answer_text,
+                resume_text=state.resume_text,
+                jd_text=state.jd_text,
+            )
+        )
         yield from self.generate_next_question_stream(
-            job_position=state.session.job_position,
-            interview_history=state.history,
             user=state.user,
-            total_questions=state.session.question_count,
-            resume_text=state.resume_text,
-            difficulty=state.session.difficulty,
-            current_stage=state.session.current_stage,
-            memory_summary=state.session.memory_summary,
-            covered_topics=state.session.covered_topics,
-            pending_topics=state.session.pending_topics,
-            last_evaluation=state.answer_evaluation,
-            jd_text=state.jd_text,
-            rag_context=state.rag_context,
+            agent_config_snapshot=state.session.agent_config_snapshot,
+            context_envelope=context_envelope,
         )
 
     def finalize_generated_question(self, state: InterviewAgentState, full_question_text: str) -> InterviewQuestion:
@@ -1348,7 +1416,11 @@ class CompositeInterviewAgentEngine(LangGraphInterviewAgentEngine):
         state.node_outputs[name] = payload
 
     def _node_load_session_state(self, state: InterviewAgentState) -> InterviewAgentState:
-        state.prompt_version = normalize_prompt_version()
+        snapshot = state.session.agent_config_snapshot or {}
+        state.prompt_version = str(
+            (snapshot.get('platform') or {}).get('version')
+            or normalize_prompt_version()
+        )
         state.loop_iteration = state.loop_iteration or 1
         state.context_budget = {
             'token_budget': self.context_budget_manager.token_budget,
@@ -1360,16 +1432,39 @@ class CompositeInterviewAgentEngine(LangGraphInterviewAgentEngine):
         return super()._node_load_long_term_memory(state)
 
     def _node_compress_context(self, state: InterviewAgentState) -> InterviewAgentState:
-        state.compressed_context_summary = self.context_budget_manager.compress(
+        canonical_context = assemble_generation_context(
             session=state.session,
             history=state.history,
             rag_context=state.rag_context,
             memory_events=state.retrieved_memory_events,
             media_context=state.media_context,
+            task_context=state.question_plan or {},
+            current_question=state.current_question.question_text if state.current_question else '',
+            candidate_answer=state.answer_text,
+            resume_text=state.resume_text,
+            jd_text=state.jd_text,
         )
+        state.generation_context = canonical_context
+        state.compressed_context_summary = {
+            **canonical_context,
+            # Legacy diagnostics only. Generation reads state.generation_context,
+            # so this view cannot become a second prompt context channel.
+            'rag_evidence': [
+                {
+                    **dict(item),
+                    'content': str(item.get('content') or '')[:600],
+                    'content_preview_hash': hashlib.sha256(
+                        str(item.get('content') or '').encode('utf-8')
+                    ).hexdigest()[:16],
+                }
+                for item in (state.rag_context or [])
+                if isinstance(item, dict)
+            ],
+        }
+        metadata = canonical_context.get('metadata') or {}
         state.context_budget = {
-            'token_budget': state.compressed_context_summary.get('token_budget'),
-            'estimated_tokens': state.compressed_context_summary.get('estimated_tokens'),
+            'token_budget': metadata.get('token_budget'),
+            'estimated_tokens': metadata.get('estimated_tokens'),
             'compression': 'structured_summary',
             'prompt_version': state.prompt_version or normalize_prompt_version(),
         }
@@ -1377,9 +1472,13 @@ class CompositeInterviewAgentEngine(LangGraphInterviewAgentEngine):
         memory['context_window'] = {
             'estimated_tokens': state.context_budget.get('estimated_tokens'),
             'token_budget': state.context_budget.get('token_budget'),
-            'history_items': len(state.compressed_context_summary.get('history') or []),
-            'memory_recall_items': len(state.compressed_context_summary.get('memory_recall') or []),
-            'rag_evidence_items': len(state.compressed_context_summary.get('rag_evidence') or []),
+            'history_items': len(state.compressed_context_summary.get('conversation_context') or []),
+            'memory_recall_items': len(state.compressed_context_summary.get('memory_context') or []),
+            'rag_evidence_items': sum(
+                1
+                for item in state.compressed_context_summary.get('evidence_context') or []
+                if item.get('item_type') == 'rag_document'
+            ),
         }
         state.session.memory_summary = memory
         state.session.save(update_fields=['memory_summary', 'updated_at'])

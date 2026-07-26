@@ -17,6 +17,8 @@ from rest_framework.views import APIView
 from resumes.models import Resume, ResumeImportJob, ResumeVersion
 from resumes.json_resume import json_resume_plain_text
 from careers.models import JobTarget
+from knowledge.services import RequiredRAGContextUnavailable
+from staff_admin.feature_flags import feature_flag_enabled
 from system.models import AISetting
 from users.models import User
 from .evaluation import (
@@ -74,6 +76,7 @@ from .ai_services import (
     generate_reference_answer_for_question,
 )
 from .agent import get_interview_agent_engine
+from .configuration import assemble_generation_context, resolve_agent_config, stable_hash
 from .agent_v4.events import publish_agent_event, read_agent_events
 from .speech_services import synthesize_question_tts
 from urllib.parse import quote
@@ -716,6 +719,40 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             interview_mode=interview_mode,
             experience_mode=experience_mode,
         )
+        candidate_agent_config = resolve_agent_config(template)
+        config_enabled = feature_flag_enabled(
+            'agent-config-new-sessions',
+            subject=request.user,
+            default=False,
+        )
+        shadow_enabled = feature_flag_enabled(
+            'agent-config-shadow',
+            subject=request.user,
+            default=False,
+        )
+        agent_config_snapshot = candidate_agent_config if config_enabled else {}
+        rollout_snapshot = {
+            'shadow_enabled': shadow_enabled,
+            'control_plane_enabled': config_enabled,
+            'candidate_config_hash': candidate_agent_config.get('config_hash') or '',
+            'candidate_revision_ids': candidate_agent_config.get('revision_ids') or [],
+            'candidate_prompt_hashes': candidate_agent_config.get('prompt_hashes') or {},
+            'candidate_knowledge_revision_ids': [
+                item.get('knowledge_base_revision_id')
+                for item in candidate_agent_config.get('knowledge_bindings') or []
+            ],
+            'legacy': {
+                'prompt_version': getattr(settings, 'AGENT_PROMPT_VERSION', 'interview-agent-v1'),
+                'context_token_budget': getattr(settings, 'AGENT_CONTEXT_TOKEN_BUDGET', 6000),
+                'hybrid_search_topk': getattr(settings, 'HYBRID_SEARCH_TOPK', 4),
+            },
+        }
+        rollout_snapshot['comparison_hash'] = stable_hash(rollout_snapshot)
+        if shadow_enabled or config_enabled:
+            template_snapshot = {
+                **template_snapshot,
+                'agent_config_rollout': rollout_snapshot,
+            }
         initial_memory, initial_pending_topics = agent.build_initial_memory(
             job_position,
             resume_text=resume_text,
@@ -727,7 +764,8 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             user=request.user,
             resume_text=resume_text,
             difficulty=InterviewSession.Difficulty.MEDIUM,
-            jd_text=jd_text
+            jd_text=jd_text,
+            agent_config_snapshot=agent_config_snapshot,
         )
         with transaction.atomic():
             request.user.__class__.objects.select_for_update().get(pk=request.user.pk)
@@ -769,6 +807,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 template=template,
                 session_plan=session_plan,
                 template_snapshot=template_snapshot,
+                agent_config_snapshot=agent_config_snapshot,
                 coverage_summary={'coverage': {}, 'coverage_gaps': session_plan.get('coverage_gaps', [])},
                 current_stage=InterviewSession.InterviewStage.OPENING,
                 memory_summary=initial_memory,
@@ -1032,23 +1071,34 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         history = self._build_answered_history(session, current_question)
 
         resume_text = None
-        if session.resume:
+        if session.resume_snapshot:
+            resume_text = json_resume_plain_text(session.resume_snapshot)
+        elif session.resume:
             resume_text = format_resume_to_text(session.resume)
 
-        turn_state = agent.prepare_submit_answer_turn(
-            session=session,
-            current_question=current_question,
-            answer_text=answer_text,
-            user=request.user,
-            answered_count=answered_count,
-            history=history,
-            resume_text=resume_text,
-            jd_text=jd_text,
-            media_context={
-                'audio_artifact_id': str(audio_artifact_id) if audio_artifact_id else '',
-                'asr_transcript_meta': asr_transcript_meta,
-            },
-        )
+        try:
+            turn_state = agent.prepare_submit_answer_turn(
+                session=session,
+                current_question=current_question,
+                answer_text=answer_text,
+                user=request.user,
+                answered_count=answered_count,
+                history=history,
+                resume_text=resume_text,
+                jd_text=jd_text,
+                media_context={
+                    'audio_artifact_id': str(audio_artifact_id) if audio_artifact_id else '',
+                    'asr_transcript_meta': asr_transcript_meta,
+                },
+            )
+        except RequiredRAGContextUnavailable as exc:
+            return Response({
+                'code': 'required_rag_unavailable',
+                'message': '本轮必须使用已审批知识，但检索服务或可用证据暂不可用。',
+                'reason': str(exc),
+                'retryable': True,
+                'paused': True,
+            }, status=status.HTTP_409_CONFLICT)
         answer_evaluation = turn_state.answer_evaluation
         feedback_text = turn_state.feedback_text
         realistic = session.experience_mode == InterviewSession.ExperienceMode.REALISTIC
@@ -1446,15 +1496,24 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
         history = self._build_answered_history(session, answered_question)
         last_evaluation = answered_question.ai_feedback if isinstance(answered_question.ai_feedback, dict) else {}
         agent = self._agent()
-        turn_state = agent.prepare_regenerate_question_turn(
-            session=session,
-            answered_question=answered_question,
-            user=request.user,
-            answered_count=answered_count,
-            history=history,
-            resume_text=resume_text,
-            jd_text=jd_text,
-        )
+        try:
+            turn_state = agent.prepare_regenerate_question_turn(
+                session=session,
+                answered_question=answered_question,
+                user=request.user,
+                answered_count=answered_count,
+                history=history,
+                resume_text=resume_text,
+                jd_text=jd_text,
+            )
+        except RequiredRAGContextUnavailable as exc:
+            return Response({
+                'code': 'required_rag_unavailable',
+                'message': '本轮必须使用已审批知识，但检索服务或可用证据暂不可用。',
+                'reason': str(exc),
+                'retryable': True,
+                'paused': True,
+            }, status=status.HTTP_409_CONFLICT)
         if turn_state.interview_finished:
             generation_job.status = InterviewQuestionGenerationJob.Status.COMPLETED
             generation_job.completed_at = timezone.now()
@@ -1563,7 +1622,26 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             interview_history=history,
             user=request.user,
             resume_text=resume_text,
-            memory_summary=report_memory
+            memory_summary=report_memory,
+            agent_config_snapshot=session.agent_config_snapshot,
+            context_envelope=assemble_generation_context(
+                session=session,
+                history=history,
+                rag_context=[
+                    item
+                    for turn in history
+                    for item in (turn.get('rag_context') or [])
+                    if isinstance(item, dict)
+                ],
+                memory_events=[],
+                media_context={},
+                task_context={
+                    'task': 'final_report',
+                    'agent_trace_summary': trace_summary,
+                },
+                resume_text=resume_text or '',
+                jd_text=session.jd_snapshot or '',
+            ),
         )
         if getattr(report_agent, 'engine_name', '').startswith('composite_v'):
             report_kwargs['session'] = session

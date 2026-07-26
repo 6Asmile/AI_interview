@@ -176,6 +176,7 @@ class InterviewSessionSerializer(serializers.ModelSerializer):
             data['covered_topics'] = []
             data['pending_topics'] = []
             data['template_snapshot'] = {}
+            data['agent_config_snapshot'] = {}
             data['session_plan'] = {
                 'interview_mode': instance.interview_mode,
                 'experience_mode': instance.experience_mode,

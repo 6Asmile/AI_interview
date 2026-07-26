@@ -20,6 +20,20 @@ from .operations_views import (
     MaintenanceNoticeAdminView, NotificationOperationsAdminView,
     ResilienceMetricsAdminView,
 )
+from .agent_config_views import (
+    AgentConfigExperimentView,
+    AgentConfigEvaluationDatasetView,
+    AgentConfigProfileRevisionView,
+    AgentConfigProfileView,
+    AgentConfigResolvedPreviewView,
+    AgentConfigRevisionActionView,
+    AgentConfigRevisionView,
+    AgentPromptPreviewView,
+    KnowledgeBaseRevisionView,
+    KnowledgeBaseView,
+    RetrievalProfileActionView,
+    RetrievalProfileView,
+)
 
 
 urlpatterns = [
@@ -50,6 +64,18 @@ urlpatterns = [
     path('agent-runs/', AgentRunListView.as_view()),
     path('agent-runs/<uuid:run_id>/', AgentRunAdminDetailView.as_view()),
     path('interview-config/<str:resource>/', InterviewConfigAdminView.as_view()),
+    path('agent-config/profiles/', AgentConfigProfileView.as_view()),
+    path('agent-config/profiles/<uuid:profile_id>/revisions/', AgentConfigProfileRevisionView.as_view()),
+    path('agent-config/revisions/<uuid:revision_id>/', AgentConfigRevisionView.as_view()),
+    path('agent-config/revisions/<uuid:revision_id>/resolved-preview/', AgentConfigResolvedPreviewView.as_view()),
+    path('agent-config/revisions/<uuid:revision_id>/<str:action>/', AgentConfigRevisionActionView.as_view()),
+    path('agent-config/prompts/<path:task_key>/preview/', AgentPromptPreviewView.as_view()),
+    path('agent-config/experiments/retrieval/', AgentConfigExperimentView.as_view()),
+    path('agent-config/evaluation-datasets/', AgentConfigEvaluationDatasetView.as_view()),
+    path('knowledge-bases/', KnowledgeBaseView.as_view()),
+    path('knowledge-bases/revisions/<uuid:revision_id>/', KnowledgeBaseRevisionView.as_view()),
+    path('retrieval-profiles/', RetrievalProfileView.as_view()),
+    path('retrieval-profiles/revisions/<uuid:revision_id>/<str:action>/', RetrievalProfileActionView.as_view()),
     path('model-gateway/summary/', ModelGatewaySummaryView.as_view()),
     path('model-gateway/<str:resource>/', GatewayResourceAdminView.as_view()),
     path('model-gateway/<str:resource>/<int:object_id>/', GatewayResourceAdminDetailView.as_view()),

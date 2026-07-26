@@ -21,6 +21,8 @@ services:
       REDIS_REALTIME_URL: redis://redis:6379/3
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
@@ -35,6 +37,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      meilisearch:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:8000/api/v1/schema/', timeout=5)\nPY"]
       interval: 30s
@@ -98,10 +102,14 @@ services:
       REDIS_REALTIME_URL: redis://redis:6379/3
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
     volumes:
       - media_volume:/app/media
     depends_on:
       backend:
+        condition: service_healthy
+      meilisearch:
         condition: service_healthy
     networks:
       - ifaceoff_network
@@ -230,12 +238,31 @@ services:
     networks:
       - ifaceoff_network
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.45.1
+    container_name: Ifaceoff-meilisearch
+    environment:
+      MEILI_ENV: ${MEILI_ENV:-development}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+    ports:
+      - "${MEILISEARCH_PORT:-7700}:7700"
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --spider http://127.0.0.1:7700/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - ifaceoff_network
+
 volumes:
   postgres_data:
   redis_data:
   static_volume:
   media_volume:
   qdrant_data:
+  meilisearch_data:
 
 networks:
   ifaceoff_network:

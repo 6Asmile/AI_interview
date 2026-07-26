@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from datetime import timedelta
+from knowledge.services import RequiredRAGContextUnavailable
 from .execution import cas_transition
 from .models import (
     EvaluationRun,
@@ -402,6 +403,13 @@ def run_interview_execution(self, execution_id: str):
             completed_at=timezone.now(),
             updated_at=timezone.now(),
         )
+        if isinstance(exc, RequiredRAGContextUnavailable):
+            return {
+                'run_id': str(execution.run_id),
+                'status': InterviewAgentExecution.Status.FAILED_RETRYABLE,
+                'paused': True,
+                'error_code': 'required_rag_unavailable',
+            }
         if terminal:
             raise
         countdown = min(60, (2 ** retry_count) + random.uniform(0, 1.5))
