@@ -10,10 +10,13 @@ from django.db.models import Q
 from django.utils import timezone
 from openai import OpenAI
 
+from core.admission import concurrency_lease
+
 from .models import (
     ModelAlias,
     ModelDeployment,
     ModelRequestLedger,
+    ModelAttempt,
     ProviderCredential,
     UsageBudget,
 )
@@ -33,6 +36,7 @@ class ExecutionTarget:
     deployment: ModelDeployment
     api_key: str
     timeout: int
+    total_timeout: int
 
 
 def _month_start():
@@ -53,6 +57,7 @@ class GatewayExecutor:
 
     def __init__(self, user=None):
         self.user = user if getattr(user, 'is_authenticated', False) else None
+        self._clients = {}
 
     def _budget(self):
         if not self.user:
@@ -111,6 +116,7 @@ class GatewayExecutor:
                 deployment=target.deployment,
                 api_key=key,
                 timeout=min(target.deployment.timeout_seconds, policy.total_timeout_seconds),
+                total_timeout=policy.total_timeout_seconds,
             ))
         if not resolved:
             raise GatewayExecutionError(f'no_available_deployment:{alias_slug}')
@@ -136,6 +142,52 @@ class GatewayExecutor:
             task_name=task_name,
             metadata={'input_units': _estimate_tokens(input_summary)},
         )
+
+    def _client(self, target: ExecutionTarget):
+        key = (target.deployment_id if hasattr(target, 'deployment_id') else target.deployment.pk, target.api_key)
+        if key not in self._clients:
+            self._clients[key] = OpenAI(
+                api_key=target.api_key,
+                base_url=target.deployment.base_url or None,
+                timeout=target.timeout,
+            )
+        return self._clients[key]
+
+    @staticmethod
+    def _error_details(exc):
+        status_code = getattr(exc, 'status_code', None)
+        error_name = type(exc).__name__
+        retryable = (
+            isinstance(exc, (TimeoutError, ConnectionError, requests.Timeout, requests.ConnectionError)) or
+            error_name in {'APITimeoutError', 'APIConnectionError', 'RateLimitError', 'InternalServerError'} or
+            status_code == 429 or
+            (isinstance(status_code, int) and status_code >= 500)
+        )
+        return error_name[:120], status_code, retryable
+
+    def _record_attempt(self, ledger, target, attempt_number, *, started, success, error=None, input_tokens=0, output_tokens=0):
+        error_code, http_status, retryable = ('', None, False) if not error else self._error_details(error)
+        ModelAttempt.objects.update_or_create(
+            request=ledger,
+            attempt_number=attempt_number,
+            defaults={
+                'deployment': target.deployment,
+                'status': ModelAttempt.Status.SUCCEEDED if success else ModelAttempt.Status.FAILED,
+                'retryable': retryable,
+                'error_code': error_code,
+                'http_status': http_status,
+                'input_tokens': max(0, input_tokens),
+                'output_tokens': max(0, output_tokens),
+                'latency_ms': int((time.perf_counter() - started) * 1000),
+                'completed_at': timezone.now(),
+            },
+        )
+        return retryable
+
+    @staticmethod
+    def _ensure_deadline(started, target):
+        if time.perf_counter() - started >= target.total_timeout:
+            raise GatewayExecutionError('model_gateway_total_deadline_exceeded')
 
     @transaction.atomic
     def _complete(self, ledger, target, *, started, input_tokens, output_tokens, success, error='', fallback_count=0):
@@ -169,15 +221,23 @@ class GatewayExecutor:
         started = time.perf_counter()
         last_error = ''
         for index, target in enumerate(targets):
+            attempt_started = time.perf_counter()
             try:
-                response = OpenAI(api_key=target.api_key, base_url=target.deployment.base_url or None, timeout=target.timeout).chat.completions.create(
-                    model=target.deployment.remote_model,
-                    messages=messages,
-                    stream=False,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    response_format={'type': 'json_object'},
-                )
+                self._ensure_deadline(started, target)
+                with concurrency_lease(
+                    scope='model-deployment',
+                    identity=str(target.deployment_id if hasattr(target, 'deployment_id') else target.deployment.pk),
+                    limit=int((target.deployment.capabilities or {}).get('max_concurrency') or 8),
+                    lease_seconds=target.timeout + 10,
+                ):
+                    response = self._client(target).chat.completions.create(
+                        model=target.deployment.remote_model,
+                        messages=messages,
+                        stream=False,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        response_format={'type': 'json_object'},
+                    )
                 content = (response.choices[0].message.content or '{}').strip()
                 if content.startswith('```json'):
                     content = content[7:]
@@ -187,10 +247,16 @@ class GatewayExecutor:
                 input_tokens = getattr(usage, 'prompt_tokens', 0) or _estimate_tokens(messages)
                 output_tokens = getattr(usage, 'completion_tokens', 0) or _estimate_tokens(content)
                 result = json.loads(content.strip() or '{}')
+                self._record_attempt(
+                    ledger, target, index + 1, started=attempt_started, success=True,
+                    input_tokens=input_tokens, output_tokens=output_tokens,
+                )
                 self._complete(ledger, target, started=started, input_tokens=input_tokens, output_tokens=output_tokens, success=True, fallback_count=index)
                 return result
             except Exception as exc:
                 last_error = type(exc).__name__
+                if not self._record_attempt(ledger, target, index + 1, started=attempt_started, success=False, error=exc):
+                    break
         self._complete(ledger, targets[-1], started=started, input_tokens=_estimate_tokens(messages), output_tokens=0, success=False, error=last_error, fallback_count=max(0, len(targets) - 1))
         raise GatewayExecutionError(last_error or 'chat_json_failed')
 
@@ -201,18 +267,30 @@ class GatewayExecutor:
         last_error = ''
         for index, target in enumerate(targets):
             chunks = []
+            attempt_started = time.perf_counter()
             try:
-                stream = OpenAI(api_key=target.api_key, base_url=target.deployment.base_url or None, timeout=target.timeout).chat.completions.create(
-                    model=target.deployment.remote_model,
-                    messages=messages,
-                    stream=True,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+                self._ensure_deadline(started, target)
+                with concurrency_lease(
+                    scope='model-deployment',
+                    identity=str(target.deployment.pk),
+                    limit=int((target.deployment.capabilities or {}).get('max_concurrency') or 8),
+                    lease_seconds=target.timeout + 10,
+                ):
+                    stream = self._client(target).chat.completions.create(
+                        model=target.deployment.remote_model,
+                        messages=messages,
+                        stream=True,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                    for chunk in stream:
+                        value = chunk.choices[0].delta.content or ''
+                        chunks.append(value)
+                        yield value
+                self._record_attempt(
+                    ledger, target, index + 1, started=attempt_started, success=True,
+                    input_tokens=_estimate_tokens(messages), output_tokens=_estimate_tokens(''.join(chunks)),
                 )
-                for chunk in stream:
-                    value = chunk.choices[0].delta.content or ''
-                    chunks.append(value)
-                    yield value
                 self._complete(
                     ledger,
                     target,
@@ -227,8 +305,15 @@ class GatewayExecutor:
                 # Once output has reached the client it is unsafe to retry on another model.
                 last_error = type(exc).__name__
                 if chunks:
+                    self._record_attempt(
+                        ledger, target, index + 1, started=attempt_started,
+                        success=False, error=exc, input_tokens=_estimate_tokens(messages),
+                        output_tokens=_estimate_tokens(''.join(chunks)),
+                    )
                     self._complete(ledger, target, started=started, input_tokens=_estimate_tokens(messages), output_tokens=_estimate_tokens(''.join(chunks)), success=False, error=last_error, fallback_count=index)
                     raise GatewayExecutionError(last_error) from exc
+                if not self._record_attempt(ledger, target, index + 1, started=attempt_started, success=False, error=exc):
+                    break
         self._complete(ledger, targets[-1], started=started, input_tokens=_estimate_tokens(messages), output_tokens=0, success=False, error=last_error, fallback_count=max(0, len(targets) - 1))
         raise GatewayExecutionError(last_error or 'chat_stream_failed')
 
@@ -238,18 +323,31 @@ class GatewayExecutor:
         started = time.perf_counter()
         last_error = ''
         for index, target in enumerate(targets):
+            attempt_started = time.perf_counter()
             try:
-                response = OpenAI(api_key=target.api_key, base_url=target.deployment.base_url or None, timeout=target.timeout).embeddings.create(
-                    model=target.deployment.remote_model,
-                    input=(text or '')[:16000],
-                )
+                self._ensure_deadline(started, target)
+                with concurrency_lease(
+                    scope='model-deployment', identity=str(target.deployment.pk),
+                    limit=int((target.deployment.capabilities or {}).get('max_concurrency') or 8),
+                    lease_seconds=target.timeout + 10,
+                ):
+                    response = self._client(target).embeddings.create(
+                        model=target.deployment.remote_model,
+                        input=(text or '')[:16000],
+                    )
                 vector = response.data[0].embedding
                 usage = getattr(response, 'usage', None)
                 input_tokens = getattr(usage, 'prompt_tokens', 0) or _estimate_tokens(text)
+                self._record_attempt(
+                    ledger, target, index + 1, started=attempt_started,
+                    success=True, input_tokens=input_tokens,
+                )
                 self._complete(ledger, target, started=started, input_tokens=input_tokens, output_tokens=0, success=True, fallback_count=index)
                 return vector, target.deployment.remote_model, {'alias': alias_slug, 'deployment': target.deployment.name}
             except Exception as exc:
                 last_error = type(exc).__name__
+                if not self._record_attempt(ledger, target, index + 1, started=attempt_started, success=False, error=exc):
+                    break
         self._complete(ledger, targets[-1], started=started, input_tokens=_estimate_tokens(text), output_tokens=0, success=False, error=last_error, fallback_count=max(0, len(targets) - 1))
         raise GatewayExecutionError(last_error or 'embedding_failed')
 
@@ -260,16 +358,29 @@ class GatewayExecutor:
         started = time.perf_counter()
         last_error = ''
         for index, target in enumerate(targets):
+            attempt_started = time.perf_counter()
             try:
+                self._ensure_deadline(started, target)
                 url = target.deployment.base_url.rstrip('/')
                 payload = {'model': target.deployment.remote_model, 'query': query, 'documents': docs, 'top_n': min(max(1, top_n), len(docs)), 'return_documents': False}
-                response = requests.post(url, json=payload, headers={'Authorization': f'Bearer {target.api_key}'}, timeout=target.timeout)
-                response.raise_for_status()
+                with concurrency_lease(
+                    scope='model-deployment', identity=str(target.deployment.pk),
+                    limit=int((target.deployment.capabilities or {}).get('max_concurrency') or 8),
+                    lease_seconds=target.timeout + 10,
+                ):
+                    response = requests.post(url, json=payload, headers={'Authorization': f'Bearer {target.api_key}'}, timeout=target.timeout)
+                    response.raise_for_status()
                 data = response.json()
                 results = data.get('results') or data.get('output', {}).get('results') or []
+                self._record_attempt(
+                    ledger, target, index + 1, started=attempt_started,
+                    success=True, input_tokens=_estimate_tokens([query, *docs]),
+                )
                 self._complete(ledger, target, started=started, input_tokens=_estimate_tokens([query, *docs]), output_tokens=0, success=True, fallback_count=index)
                 return results, {'alias': alias_slug, 'deployment': target.deployment.name}
             except Exception as exc:
                 last_error = type(exc).__name__
+                if not self._record_attempt(ledger, target, index + 1, started=attempt_started, success=False, error=exc):
+                    break
         self._complete(ledger, targets[-1], started=started, input_tokens=_estimate_tokens([query, *docs]), output_tokens=0, success=False, error=last_error, fallback_count=max(0, len(targets) - 1))
         raise GatewayExecutionError(last_error or 'rerank_failed')

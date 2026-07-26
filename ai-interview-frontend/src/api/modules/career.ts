@@ -90,3 +90,27 @@ export const deleteApplicationApi = (id: number) => v2({ url: `/applications/${i
 
 export const getLearningTasksApi = async (): Promise<LearningTask[]> => results<LearningTask>(await v2({ url: '/learning-tasks/', method: 'get' }));
 export const updateLearningTaskApi = (id: number, data: Partial<LearningTask>): Promise<LearningTask> => v2({ url: `/learning-tasks/${id}/`, method: 'patch', data });
+
+export const getCareerProfileApi = () => v2({ url: '/career/profile/', method: 'get' });
+export const updateCareerProfileApi = (data: Record<string, unknown>) => v2({ url: '/career/profile/', method: 'patch', data });
+export const getCareerTimelineApi = () => v2({ url: '/career/timeline/', method: 'get' });
+export const getAbilitySnapshotsApi = () => v2({ url: '/career/ability-snapshots/', method: 'get' });
+export const getWeeklyCareerReportsApi = () => v2({ url: '/career/weekly-reports/', method: 'get' });
+export const createJobMatchAnalysisApi = (targetId: number, resumeVersionId: number) => v2({
+  url: `/job-targets/${targetId}/match-analyses/`,
+  method: 'post',
+  data: { resume_version_id: resumeVersionId },
+  headers: { 'Idempotency-Key': crypto.randomUUID() },
+});
+export const getJobMatchAnalysisApi = (analysisId: string) => v2({ url: `/match-analyses/${analysisId}/`, method: 'get' });
+export const createLearningPlanApi = (analysisId: string) => v2({
+  url: `/match-analyses/${analysisId}/learning-plan/`,
+  method: 'post',
+  headers: { 'Idempotency-Key': crypto.randomUUID() },
+});
+export const getPublicJobsApi = () => v2({ url: '/jobs/', method: 'get' });
+export const savePublicJobAsTargetApi = (jobId: string) => v2({
+  url: `/jobs/${jobId}/save-as-target/`,
+  method: 'post',
+  headers: { 'Idempotency-Key': crypto.randomUUID() },
+});

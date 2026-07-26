@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from allauth.socialaccount.models import SocialAccount
 from django.core.serializers.json import DjangoJSONEncoder
-from django.core.cache import cache
+from django.core.cache import caches
 from rest_framework import views, status, generics, permissions
 from rest_framework.response import Response
 from rest_framework import serializers
@@ -257,6 +257,7 @@ class MFASetupView(views.APIView):
         if Authenticator.objects.filter(user=request.user, type=Authenticator.Type.TOTP).exists():
             return Response({'detail': 'TOTP 已启用。'}, status=status.HTTP_409_CONFLICT)
         secret = generate_totp_secret()
+        cache = caches['coordination']
         cache.set(f'mfa_setup:{request.user.id}', secret, timeout=600)
         issuer = 'iFaceoff'
         uri = f'otpauth://totp/{quote(issuer)}:{quote(request.user.email)}?secret={secret}&issuer={quote(issuer)}'
@@ -273,6 +274,7 @@ class MFAVerifyView(views.APIView):
         from allauth.mfa.recovery_codes.internal.auth import RecoveryCodes
         from allauth.mfa.totp.internal.auth import TOTP, validate_totp_code
         code = str(request.data.get('code') or '').strip()
+        cache = caches['coordination']
         secret = cache.get(f'mfa_setup:{request.user.id}')
         if not secret:
             return Response({'detail': '设置会话已过期，请重新生成二维码。'}, status=status.HTTP_400_BAD_REQUEST)

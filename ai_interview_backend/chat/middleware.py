@@ -44,7 +44,7 @@ class JwtAuthMiddleware:
         ticket = str((query.get('ticket') or [''])[0])
         expected_scope, expected_resource = _expected_scope(scope.get('path', ''))
         if ticket and expected_scope:
-            cache = caches['realtime']
+            cache = caches['coordination']
             cache_key = websocket_ticket_cache_key(ticket)
             payload = cache.get(cache_key)
             claim_key = f'{cache_key}:claimed'

@@ -305,3 +305,31 @@ class ModelRequestLedger(models.Model):
     class Meta:
         ordering = ['-created_at']
         indexes = [models.Index(fields=['user', 'task_name', 'created_at'])]
+
+
+class ModelAttempt(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = 'running', '运行中'
+        SUCCEEDED = 'succeeded', '成功'
+        FAILED = 'failed', '失败'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(ModelRequestLedger, on_delete=models.CASCADE, related_name='attempts')
+    deployment = models.ForeignKey(ModelDeployment, on_delete=models.SET_NULL, null=True, related_name='model_attempts')
+    attempt_number = models.PositiveSmallIntegerField()
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.RUNNING, db_index=True)
+    retryable = models.BooleanField(default=False)
+    error_code = models.CharField(max_length=120, blank=True)
+    http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['attempt_number']
+        constraints = [
+            models.UniqueConstraint(fields=['request', 'attempt_number'], name='uniq_model_request_attempt'),
+        ]

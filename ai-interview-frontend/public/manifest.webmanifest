@@ -1,0 +1,19 @@
+{
+  "name": "iFaceoff AI 求职成长平台",
+  "short_name": "iFaceoff",
+  "description": "从职业事实、简历和岗位匹配，到训练、面试与投递进度的可信求职工作台。",
+  "start_url": "/dashboard/career",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#1d4ed8",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

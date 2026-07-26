@@ -17,3 +17,11 @@ app.use(pinia)       // 注册 Pinia
 
 // 将应用挂载到 index.html 中的 #app 元素上
 app.mount('#app')
+
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(error => {
+      console.warn('PWA service worker registration failed', error)
+    })
+  })
+}

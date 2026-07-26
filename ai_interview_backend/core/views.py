@@ -17,7 +17,7 @@ class WebSocketTicketSerializer(serializers.Serializer):
 
 def websocket_ticket_cache_key(ticket: str) -> str:
     digest = hashlib.sha256(ticket.encode('utf-8')).hexdigest()
-    return f'ws_ticket:{digest}'
+    return f'ifaceoff:coordination:ws-ticket:{digest}'
 
 
 class WebSocketTicketView(APIView):
@@ -47,7 +47,7 @@ class WebSocketTicketView(APIView):
         ttl = max(30, min(60, int(getattr(settings, 'WS_TICKET_TTL_SECONDS', 45))))
         ticket = secrets.token_urlsafe(32)
         expires_at = timezone.now() + timedelta(seconds=ttl)
-        caches['realtime'].set(websocket_ticket_cache_key(ticket), {
+        caches['coordination'].set(websocket_ticket_cache_key(ticket), {
             'user_id': request.user.id,
             'scope': scope,
             'resource_id': resource_id,

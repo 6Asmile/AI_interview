@@ -1,7 +1,23 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import ApplicationEvent, CareerFact, JobApplication, JobTarget, LearningTask
+from .models import (
+    AbilitySnapshot,
+    ApplicationEvent,
+    CareerFact,
+    CareerProfile,
+    CareerTimelineEvent,
+    Company,
+    CompanyMember,
+    JobApplication,
+    JobMatchAnalysis,
+    JobPosting,
+    JobPostingRevision,
+    JobTarget,
+    LearningPlan,
+    LearningTask,
+    WeeklyCareerReport,
+)
 
 
 class CareerFactSerializer(serializers.ModelSerializer):
@@ -38,11 +54,32 @@ class JobTargetSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobTarget
         fields = [
-            'id', 'company_name', 'position_name', 'jd_text', 'source_url',
+            'id', 'source_type', 'job_posting', 'job_posting_revision',
+            'company_name', 'position_name', 'jd_text', 'jd_snapshot_hash', 'source_url',
             'location', 'deadline', 'keywords', 'status', 'application_count',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ('created_at', 'updated_at', 'application_count')
+        read_only_fields = (
+            'source_type', 'job_posting', 'job_posting_revision', 'jd_snapshot_hash',
+            'created_at', 'updated_at', 'application_count',
+        )
+
+    def validate(self, attrs):
+        if self.instance and self.instance.source_type == JobTarget.SourceType.COMPANY:
+            frozen_fields = {'company_name', 'position_name', 'jd_text', 'location', 'keywords'}
+            attempted = frozen_fields.intersection(getattr(self, 'initial_data', {}))
+            if attempted:
+                raise serializers.ValidationError({
+                    field: '企业岗位目标使用已发布修订快照，不允许原地修改。'
+                    for field in attempted
+                })
+        return attrs
+
+    def update(self, instance, validated_data):
+        if 'jd_text' in validated_data:
+            from .services import stable_hash
+            validated_data['jd_snapshot_hash'] = stable_hash({'jd_text': validated_data['jd_text']})
+        return super().update(instance, validated_data)
 
 
 class ApplicationEventSerializer(serializers.ModelSerializer):
@@ -92,10 +129,11 @@ class LearningTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = LearningTask
         fields = [
-            'id', 'application', 'interview_session', 'title', 'dimension',
-            'priority', 'status', 'evidence_refs', 'due_at', 'created_at', 'updated_at',
+            'id', 'plan', 'application', 'interview_session', 'title', 'dimension',
+            'priority', 'status', 'evidence_refs', 'source_type', 'source_id',
+            'due_at', 'created_at', 'updated_at',
         ]
-        read_only_fields = ('created_at', 'updated_at')
+        read_only_fields = ('source_type', 'source_id', 'created_at', 'updated_at')
 
     def validate(self, attrs):
         user = self.context['request'].user
@@ -107,3 +145,98 @@ class LearningTaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'interview_session': '不能引用其他用户的面试。'})
         return attrs
 
+
+class CareerProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CareerProfile
+        exclude = ('user',)
+        read_only_fields = ('profile_version', 'created_at', 'updated_at')
+
+    def update(self, instance, validated_data):
+        if validated_data:
+            validated_data['profile_version'] = instance.profile_version + 1
+        return super().update(instance, validated_data)
+
+
+class AbilitySnapshotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AbilitySnapshot
+        exclude = ('user',)
+
+
+class CareerTimelineEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CareerTimelineEvent
+        exclude = ('user', 'dedup_key')
+
+
+class WeeklyCareerReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WeeklyCareerReport
+        exclude = ('user',)
+
+
+class CompanySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Company
+        fields = [
+            'id', 'name', 'slug', 'website', 'description', 'industry', 'size',
+            'location', 'status', 'verified_at', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ('status', 'verified_at', 'created_at', 'updated_at')
+
+
+class CompanyMemberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyMember
+        fields = ('id', 'company', 'user', 'role', 'status', 'created_at')
+        read_only_fields = ('created_at',)
+
+
+class JobPostingRevisionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = JobPostingRevision
+        fields = [
+            'id', 'version', 'title', 'jd_text', 'requirements', 'skills',
+            'salary', 'content_hash', 'approved_at', 'created_at',
+        ]
+        read_only_fields = ('version', 'content_hash', 'approved_at', 'created_at')
+
+
+class JobPostingSerializer(serializers.ModelSerializer):
+    company_detail = CompanySerializer(source='company', read_only=True)
+    revision = JobPostingRevisionSerializer(source='current_revision', read_only=True)
+
+    class Meta:
+        model = JobPosting
+        fields = [
+            'id', 'company', 'company_detail', 'title', 'location', 'work_mode',
+            'employment_type', 'status', 'revision', 'published_at', 'closes_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ('status', 'published_at', 'created_at', 'updated_at')
+
+    def validate_company(self, company):
+        user = self.context['request'].user
+        if not CompanyMember.objects.filter(
+            company=company,
+            user=user,
+            status=CompanyMember.Status.ACTIVE,
+            role__in=(CompanyMember.Role.OWNER, CompanyMember.Role.RECRUITER),
+        ).exists():
+            raise serializers.ValidationError('你不是该企业的招聘成员。')
+        return company
+
+
+class JobMatchAnalysisSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = JobMatchAnalysis
+        exclude = ('user',)
+
+
+class LearningPlanSerializer(serializers.ModelSerializer):
+    tasks = LearningTaskSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = LearningPlan
+        exclude = ('user',)

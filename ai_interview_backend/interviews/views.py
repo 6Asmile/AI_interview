@@ -637,7 +637,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             lambda: self._start_interview_impl(request),
         )
 
-    def _start_interview_impl(self, request):
+    def _start_interview_impl(self, request, overrides=None):
         force_start = request.query_params.get('force', 'false').lower() == 'true'
         cache_key = get_user_cache_key(request.user)
         running_sessions = list(
@@ -650,7 +650,7 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 "code": "unfinished_interview_exists",
                 "sessions": [{"session_id": item.id, "job_position": item.job_position} for item in running_sessions],
             }, status=status.HTTP_409_CONFLICT)
-        serializer = StartInterviewSerializer(data=request.data)
+        serializer = StartInterviewSerializer(data={**request.data, **(overrides or {})})
         serializer.is_valid(raise_exception=True)
         job_position = serializer.validated_data.get('job_position', '').strip()
         jd_text = serializer.validated_data.get('jd_text', '').strip()
@@ -1698,7 +1698,31 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                     )
                     session.video_upload_task = upload_task
         
-        session.save()
+        with transaction.atomic():
+            session.save()
+            from careers.services import record_timeline_event
+            from core.events import enqueue_integration_event
+            record_timeline_event(
+                user=request.user,
+                event_type='interview.completed',
+                title=f'完成专项面试：{session.job_position}',
+                source_type='InterviewSession',
+                source_id=session.pk,
+                metadata={'job_target_id': session.job_target_id},
+                occurred_at=session.finished_at,
+            )
+            enqueue_integration_event(
+                event_type='interview.completed',
+                producer='interviews',
+                aggregate_type='InterviewSession',
+                aggregate_id=session.pk,
+                actor_id=request.user.pk,
+                payload={
+                    'interview_session_id': str(session.pk),
+                    'job_target_id': session.job_target_id,
+                    'status': session.status,
+                },
+            )
         cache.delete(cache_key)
         
         response_data = report_data.copy()

@@ -341,7 +341,9 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 REDIS_HOST = os.getenv('REDIS_HOST', '127.0.0.1')
 REDIS_PORT = os.getenv('REDIS_PORT', '6379')
 REDIS_CACHE_URL = os.getenv('REDIS_CACHE_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/1')
+REDIS_COORDINATION_URL = os.getenv('REDIS_COORDINATION_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/2')
 REDIS_REALTIME_URL = os.getenv('REDIS_REALTIME_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/3')
+IFACEOFF_ENV = os.getenv('IFACEOFF_ENV', 'dev')
 
 
 CACHES = {
@@ -364,6 +366,16 @@ CACHES = {
         },
         "TIMEOUT": 300,
         "KEY_PREFIX": "ifaceoff-realtime",
+    },
+    "coordination": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_COORDINATION_URL,
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "IGNORE_EXCEPTIONS": False,
+        },
+        "TIMEOUT": 300,
+        "KEY_PREFIX": "ifaceoff-coordination",
     },
 }
 
@@ -413,8 +425,14 @@ REST_AUTH = {
 # amqp://guest:guest@localhost:5672// 是 RabbitMQ 的默认连接地址
 
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
-
-CELERY_BROKER_URL = f'amqp://guest:guest@{RABBITMQ_HOST}:5672//'
+RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'guest')
+RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD', 'guest')
+RABBITMQ_VHOST = os.getenv('RABBITMQ_VHOST', '/')
+RABBITMQ_VHOST_PATH = '%2F' if RABBITMQ_VHOST == '/' else RABBITMQ_VHOST.strip('/')
+CELERY_BROKER_URL = os.getenv(
+    'RABBITMQ_URL',
+    f'amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:5672/{RABBITMQ_VHOST_PATH}',
+)
 # 指定结果后端(Result Backend)的地址，用于存储任务执行结果
 # Celery results are an operational acceleration layer. Durable task state lives
 # in PostgreSQL, so production may safely place these keys in the evictable
@@ -432,7 +450,85 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIP
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_DEFAULT_DELIVERY_MODE = 2
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_TRANSPORT_OPTIONS = {'confirm_publish': True, 'max_retries': 5}
+CELERY_TASK_PUBLISH_RETRY = True
+CELERY_TASK_PUBLISH_RETRY_POLICY = {
+    'max_retries': 5,
+    'interval_start': 0,
+    'interval_step': 0.5,
+    'interval_max': 3,
+}
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', '840'))
+CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '900'))
 CELERY_INSPECT_TIMEOUT_SECONDS = float(os.getenv('CELERY_INSPECT_TIMEOUT_SECONDS', '2'))
+
+from kombu import Exchange, Queue
+
+_commands_exchange = Exchange('ifaceoff.commands', type='direct', durable=True)
+_events_exchange = Exchange('ifaceoff.events', type='topic', durable=True)
+_dead_exchange = Exchange('ifaceoff.dlx', type='topic', durable=True)
+
+
+def _durable_queue(name, routing_key, *, exchange=_commands_exchange, quorum=False):
+    arguments = {
+        'x-dead-letter-exchange': 'ifaceoff.dlx',
+        'x-dead-letter-routing-key': f'dead.{name}',
+    }
+    if quorum:
+        arguments.update({
+            'x-queue-type': 'quorum',
+            'x-delivery-limit': int(os.getenv('RABBITMQ_DELIVERY_LIMIT', '12')),
+        })
+    return Queue(
+        name,
+        exchange=exchange,
+        routing_key=routing_key,
+        durable=True,
+        queue_arguments=arguments,
+    )
+
+
+def _retry_queue(name, routing_key):
+    return Queue(
+        f'{name}.retry',
+        exchange=_commands_exchange,
+        routing_key=f'{routing_key}.retry',
+        durable=True,
+        queue_arguments={
+            'x-message-ttl': int(os.getenv('RABBITMQ_RETRY_DELAY_MS', '30000')),
+            'x-dead-letter-exchange': 'ifaceoff.commands',
+            'x-dead-letter-routing-key': routing_key,
+            'x-expires': int(os.getenv('RABBITMQ_RETRY_QUEUE_EXPIRES_MS', '86400000')),
+        },
+    )
+
+
+CELERY_TASK_DEFAULT_QUEUE = 'celery'
+CELERY_TASK_QUEUES = (
+    _durable_queue('celery', 'celery'),
+    _durable_queue('agent', 'agent', quorum=True),
+    _durable_queue('career.analysis', 'career.analysis', quorum=True),
+    _durable_queue('documents', 'documents', quorum=True),
+    _durable_queue('media', 'media', quorum=True),
+    _durable_queue('community.moderation', 'community.moderation', quorum=True),
+    _retry_queue('agent', 'agent'),
+    _retry_queue('career.analysis', 'career.analysis'),
+    _retry_queue('documents', 'documents'),
+    _retry_queue('media', 'media'),
+    _retry_queue('community.moderation', 'community.moderation'),
+    _durable_queue('notifications', 'notifications'),
+    _durable_queue('search.index', 'search.index'),
+    _durable_queue('events', '#', exchange=_events_exchange),
+    Queue(
+        'ifaceoff.dead',
+        exchange=_dead_exchange,
+        routing_key='dead.#',
+        durable=True,
+        queue_arguments={'x-queue-type': 'quorum'},
+    ),
+)
 CELERY_TASK_ROUTES = {
     'interviews.tasks.run_interview_execution': {'queue': 'agent'},
     'interviews.tasks.run_composite_v4_turn': {'queue': 'agent'},
@@ -441,6 +537,11 @@ CELERY_TASK_ROUTES = {
     'video_uploads.tasks.*': {'queue': 'media'},
     'notifications.tasks.*': {'queue': 'notifications'},
     'chat.tasks.*': {'queue': 'notifications'},
+    'careers.tasks.*': {'queue': 'career.analysis'},
+    'community.tasks.moderate_community_content': {'queue': 'community.moderation'},
+    'community.tasks.*': {'queue': 'search.index'},
+    'core.tasks.consume_integration_event': {'queue': 'events'},
+    'core.tasks.publish_integration_outbox': {'queue': 'notifications'},
 }
 
 # --- CELERY BEAT SETTINGS (定时任务调度器) ---
@@ -483,6 +584,16 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'interviews.tasks.recover_stale_agent_executions',
         'schedule': 60,
         'options': {'queue': 'notifications'},
+    },
+    'publish-integration-outbox': {
+        'task': 'core.tasks.publish_integration_outbox',
+        'schedule': 2,
+        'options': {'queue': 'notifications'},
+    },
+    'generate-weekly-career-reports': {
+        'task': 'careers.tasks.generate_weekly_career_reports',
+        'schedule': crontab(hour=8, minute=0, day_of_week='monday'),
+        'options': {'queue': 'career.analysis'},
     },
 }
 #celery -A ai_interview_backend worker -l info -P gevent

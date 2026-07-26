@@ -88,7 +88,7 @@ services:
   celery-worker:
     image: ifaceoff/backend:latest
     container_name: Ifaceoff-celery-worker
-    command: celery -A ai_interview_backend worker -l info -P solo -Q celery,agent,documents,media,notifications
+    command: celery -A ai_interview_backend worker -l info -P solo -Q celery,agent,career.analysis,documents,media,community.moderation,notifications,search.index,events
     env_file:
       - ./.env.docker
     environment:
@@ -213,8 +213,12 @@ services:
       - ifaceoff_network
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.3.4-management-alpine}
     container_name: Ifaceoff-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"

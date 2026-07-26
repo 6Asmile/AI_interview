@@ -55,12 +55,13 @@ services:
       - ifaceoff_infra_network
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.3.4-management-alpine}
     container_name: Ifaceoff-infra-rabbitmq
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"

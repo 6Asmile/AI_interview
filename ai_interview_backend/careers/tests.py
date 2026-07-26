@@ -1,9 +1,17 @@
+from unittest.mock import patch
+
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from users.models import User
 
-from .models import CareerFact, JobApplication, JobTarget
+from resumes.models import Resume, ResumeVersion
+
+from .models import (
+    CareerFact, Company, JobApplication, JobPosting, JobPostingRevision, JobTarget,
+)
+from .services import stable_hash
 
 
 class CareerWorkspaceApiTests(TestCase):
@@ -66,3 +74,57 @@ class CareerWorkspaceApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['active_job_targets'], 1)
+
+    def test_published_company_job_is_frozen_when_saved(self):
+        company = Company.objects.create(
+            name='可信企业', slug='trusted-company', status=Company.Status.VERIFIED,
+            created_by=self.other, verified_at=timezone.now(),
+        )
+        posting = JobPosting.objects.create(
+            company=company, title='AI 工程师', status=JobPosting.Status.PUBLISHED,
+            created_by=self.other, published_at=timezone.now(),
+        )
+        revision = JobPostingRevision.objects.create(
+            posting=posting, version=1, title='AI 工程师', jd_text='Python RAG',
+            content_hash=stable_hash({'jd_text': 'Python RAG'}), created_by=self.other,
+            approved_at=timezone.now(),
+        )
+        posting.current_revision = revision
+        posting.save(update_fields=['current_revision'])
+
+        response = self.client.post(
+            f'/api/v2/jobs/{posting.pk}/save-as-target/',
+            {},
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='save-job-once',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        target = JobTarget.objects.get(user=self.user, job_posting=posting)
+        self.assertEqual(target.job_posting_revision_id, revision.pk)
+        self.assertEqual(target.jd_text, 'Python RAG')
+
+    @patch('careers.views.admit_expensive_operation')
+    @patch('careers.views.run_job_match_analysis.delay')
+    def test_match_analysis_returns_standard_operation_envelope(self, delay, _admit):
+        target = JobTarget.objects.create(
+            user=self.user, company_name='iFaceoff', position_name='Backend',
+            jd_text='Python Django', jd_snapshot_hash=stable_hash({'jd_text': 'Python Django'}),
+        )
+        resume = Resume.objects.create(user=self.user, title='主简历')
+        version = ResumeVersion.objects.create(
+            resume=resume, version_number=1,
+            resume_json={'basics': {'name': 'Candidate'}, 'skills': [{'name': 'Python'}]},
+            created_by=self.user,
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f'/api/v2/job-targets/{target.pk}/match-analyses/',
+                {'resume_version_id': version.pk},
+                format='json',
+                HTTP_IDEMPOTENCY_KEY='match-once',
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data['status'], 'accepted')
+        self.assertIn('/api/v2/operations/', response.data['events_url'])
+        delay.assert_called_once()

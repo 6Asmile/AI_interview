@@ -1,9 +1,10 @@
 import hashlib
 import json
+import time
 import uuid
 from datetime import timedelta
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, connection, transaction
 from django.utils import timezone
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
@@ -40,6 +41,59 @@ def _json_safe(value):
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
+def _claim_record(*, user, scope, key, fingerprint, now, claim_token, lease_expires_at, ttl_hours):
+    with transaction.atomic():
+        try:
+            record = IdempotencyRecord.objects.select_for_update().get(
+                user=user,
+                scope=scope,
+                key=key,
+            )
+            created = False
+        except IdempotencyRecord.DoesNotExist:
+            try:
+                with transaction.atomic():
+                    record = IdempotencyRecord.objects.create(
+                        user=user,
+                        scope=scope,
+                        key=key,
+                        request_hash=fingerprint,
+                        status=IdempotencyRecord.Status.PENDING,
+                        claim_token=claim_token,
+                        lease_expires_at=lease_expires_at,
+                        expires_at=now + timedelta(hours=ttl_hours),
+                    )
+                created = True
+            except IntegrityError:
+                record = IdempotencyRecord.objects.select_for_update().get(
+                    user=user,
+                    scope=scope,
+                    key=key,
+                )
+                created = False
+
+        if not created:
+            if record.request_hash != fingerprint:
+                raise IdempotencyConflict()
+            if record.status == IdempotencyRecord.Status.COMPLETED:
+                response = Response(record.response_body, status=record.response_status)
+                response['X-Idempotent-Replay'] = 'true'
+                response['X-Operation-Id'] = str(record.operation_id)
+                return record, response
+            lease_active = record.lease_expires_at and record.lease_expires_at > now
+            if record.status == IdempotencyRecord.Status.PENDING and lease_active:
+                raise OperationInProgress(record.operation_id)
+            record.status = IdempotencyRecord.Status.PENDING
+            record.claim_token = claim_token
+            record.lease_expires_at = lease_expires_at
+            record.error_code = ''
+            record.expires_at = now + timedelta(hours=ttl_hours)
+            record.save(update_fields=[
+                'status', 'claim_token', 'lease_expires_at', 'error_code', 'expires_at', 'updated_at',
+            ])
+        return record, None
+
+
 def run_idempotent(request, scope: str, callback, *, required=True, ttl_hours=24):
     key = str(request.headers.get('Idempotency-Key') or '').strip()
     if required and not key:
@@ -54,55 +108,28 @@ def run_idempotent(request, scope: str, callback, *, required=True, ttl_hours=24
     lease_expires_at = now + timedelta(minutes=5)
 
     try:
-        with transaction.atomic():
+        claim_attempt = 0
+        while True:
             try:
-                record = IdempotencyRecord.objects.select_for_update().get(
+                record, replay_response = _claim_record(
                     user=request.user,
                     scope=scope,
                     key=key,
+                    fingerprint=fingerprint,
+                    now=now,
+                    claim_token=claim_token,
+                    lease_expires_at=lease_expires_at,
+                    ttl_hours=ttl_hours,
                 )
-                created = False
-            except IdempotencyRecord.DoesNotExist:
-                try:
-                    with transaction.atomic():
-                        record = IdempotencyRecord.objects.create(
-                            user=request.user,
-                            scope=scope,
-                            key=key,
-                            request_hash=fingerprint,
-                            status=IdempotencyRecord.Status.PENDING,
-                            claim_token=claim_token,
-                            lease_expires_at=lease_expires_at,
-                            expires_at=now + timedelta(hours=ttl_hours),
-                        )
-                    created = True
-                except IntegrityError:
-                    record = IdempotencyRecord.objects.select_for_update().get(
-                        user=request.user,
-                        scope=scope,
-                        key=key,
-                    )
-                    created = False
-
-            if not created:
-                if record.request_hash != fingerprint:
-                    raise IdempotencyConflict()
-                if record.status == IdempotencyRecord.Status.COMPLETED:
-                    response = Response(record.response_body, status=record.response_status)
-                    response['X-Idempotent-Replay'] = 'true'
-                    response['X-Operation-Id'] = str(record.operation_id)
-                    return response
-                lease_active = record.lease_expires_at and record.lease_expires_at > now
-                if record.status == IdempotencyRecord.Status.PENDING and lease_active:
-                    raise OperationInProgress(record.operation_id)
-                record.status = IdempotencyRecord.Status.PENDING
-                record.claim_token = claim_token
-                record.lease_expires_at = lease_expires_at
-                record.error_code = ''
-                record.expires_at = now + timedelta(hours=ttl_hours)
-                record.save(update_fields=[
-                    'status', 'claim_token', 'lease_expires_at', 'error_code', 'expires_at', 'updated_at',
-                ])
+                if replay_response:
+                    return replay_response
+                break
+            except OperationalError as exc:
+                is_sqlite_lock = connection.vendor == 'sqlite' and 'locked' in str(exc).lower()
+                claim_attempt += 1
+                if not is_sqlite_lock or claim_attempt >= 50:
+                    raise
+                time.sleep(min(0.1, 0.005 * claim_attempt))
 
         response = callback()
         if not isinstance(response, Response) or getattr(response, 'streaming', False):

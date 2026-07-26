@@ -8,3 +8,4 @@ class CommunityConfig(AppConfig):
 
     def ready(self):
         from . import signals  # noqa: F401
+        from . import events  # noqa: F401

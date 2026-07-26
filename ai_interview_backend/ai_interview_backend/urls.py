@@ -45,6 +45,8 @@ urlpatterns = [
     path('api/v2/', include([
         path('', include('careers.urls')),
         path('', include('resumes.urls')),
+        path('', include('community.urls_v2')),
+        path('', include('core.urls_v2')),
     ])),
     # 【核心新增】API Schema & 文档路由
     path('api/v1/schema/', SpectacularAPIView.as_view(), name='schema'),

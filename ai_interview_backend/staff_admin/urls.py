@@ -34,6 +34,14 @@ from .agent_config_views import (
     RetrievalProfileActionView,
     RetrievalProfileView,
 )
+from .platform_views import (
+    CareerConfigAdminView,
+    CommunityModerationAdminView,
+    CompanyReviewAdminView,
+    JobReviewAdminView,
+    PlatformEventsAdminView,
+    ReliabilityAdminView,
+)
 
 
 urlpatterns = [
@@ -98,4 +106,14 @@ urlpatterns = [
     path('feature-flags/<int:flag_id>/', FeatureFlagAdminDetailView.as_view()),
     path('maintenance-notices/', MaintenanceNoticeAdminView.as_view()),
     path('audit-logs/', AdminAuditListView.as_view()),
+    path('career-config/', CareerConfigAdminView.as_view()),
+    path('companies/', CompanyReviewAdminView.as_view()),
+    path('companies/<uuid:company_id>/<str:decision>/', CompanyReviewAdminView.as_view()),
+    path('jobs/', JobReviewAdminView.as_view()),
+    path('jobs/<uuid:job_id>/<str:decision>/', JobReviewAdminView.as_view()),
+    path('community/moderation/', CommunityModerationAdminView.as_view()),
+    path('community/moderation/<uuid:case_id>/<str:decision>/', CommunityModerationAdminView.as_view()),
+    path('operations/events/', PlatformEventsAdminView.as_view()),
+    path('operations/events/<uuid:event_id>/replay/', PlatformEventsAdminView.as_view()),
+    path('reliability/', ReliabilityAdminView.as_view()),
 ]

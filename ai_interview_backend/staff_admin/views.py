@@ -4,7 +4,7 @@ import secrets
 from datetime import timedelta
 
 from django.contrib.auth.password_validation import validate_password
-from django.core.cache import cache
+from django.core.cache import caches
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import generics, permissions, serializers, status
@@ -32,6 +32,9 @@ from .services import enqueue_staff_invitation_email
 
 def client_ip(request):
     return (request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip() or request.META.get('REMOTE_ADDR') or None)
+
+
+cache = caches['coordination']
 
 
 def audit(request, *, action, resource_type, resource_id='', reason='', before=None, after=None, metadata=None):

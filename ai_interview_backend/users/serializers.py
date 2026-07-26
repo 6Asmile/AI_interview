@@ -1,9 +1,9 @@
 from rest_framework import serializers
-from django.core.cache import cache
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from allauth.socialaccount.models import SocialAccount
 from .models import AuthSession, NotificationPreference, PrivacyRequest, User
+from .services import verify_email_code
 
 
 # 【新增】为 SocialAccount 创建一个序列化器
@@ -59,11 +59,12 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def validate(self, data):
         email = data.get('email')
         code = data.get('code')
-        cache_key = f"email_code_{email}"
-        cached_code = cache.get(cache_key)
-        if not cached_code:
+        result = verify_email_code(email, code)
+        if result == 'expired':
             raise serializers.ValidationError({"code": "验证码已过期或不存在，请重新发送。"})
-        if cached_code.lower() != code.lower():
+        if result == 'locked':
+            raise serializers.ValidationError({"code": "验证码错误次数过多，请重新发送。"})
+        if result != 'ok':
             raise serializers.ValidationError({"code": "验证码错误。"})
         return data
 
@@ -74,7 +75,6 @@ class UserRegisterSerializer(serializers.ModelSerializer):
             email=validated_data['email'],
             password=validated_data['password']
         )
-        cache.delete(f"email_code_{validated_data['email']}")
         return user
 
 

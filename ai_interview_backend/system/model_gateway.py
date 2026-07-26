@@ -83,12 +83,7 @@ class ModelGateway:
         self.executor = GatewayExecutor(user)
 
     def _use_alias(self, alias_slug: str, callback):
-        try:
-            return callback(self.executor, alias_slug)
-        except GatewayBudgetExceeded:
-            raise
-        except GatewayExecutionError:
-            return None
+        return callback(self.executor, alias_slug)
 
     def config(self, model_type: str) -> GatewayConfig:
         return resolve_gateway_config(self.user, model_type)
@@ -129,24 +124,13 @@ class ModelGateway:
         return json.loads(content.strip() or '{}')
 
     def chat_stream(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.7, alias_slug: str = 'chat.default'):
-        try:
-            yield from self.executor.chat_stream(alias_slug, messages, task_name=alias_slug, max_tokens=max_tokens, temperature=temperature)
-            return
-        except GatewayBudgetExceeded:
-            raise
-        except GatewayExecutionError:
-            pass
-        config = self._require(AIModel.ModelType.CHAT)
-        client = self._openai_client(config)
-        stream = client.chat.completions.create(
-            model=config.model_slug,
-            messages=messages,
-            stream=True,
+        yield from self.executor.chat_stream(
+            alias_slug,
+            messages,
+            task_name=alias_slug,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        for chunk in stream:
-            yield chunk.choices[0].delta.content or ''
 
     def embed_text(self, text: str, alias_slug: str = 'embedding.default') -> tuple[list[float] | None, str, dict]:
         routed = self._use_alias(alias_slug, lambda executor, alias: executor.embed_text(alias, text, task_name=alias))
@@ -244,7 +228,14 @@ class ModelGateway:
                 result['ok'] = True
                 result['note'] = 'configured_only'
         except Exception as exc:
-            result['error'] = str(exc)[:500]
+            if (
+                isinstance(exc, GatewayExecutionError) and
+                str(exc).startswith(('alias_not_configured:', 'no_available_deployment:')) and
+                config.model and not config.api_key
+            ):
+                result['error'] = f'{model_type}_api_key_missing'
+            else:
+                result['error'] = str(exc)[:500]
         finally:
             result['latency_ms'] = int((time.perf_counter() - started) * 1000)
         return result

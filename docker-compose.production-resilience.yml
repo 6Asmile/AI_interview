@@ -6,6 +6,7 @@ services:
   backend:
     environment:
       REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
     depends_on: !override
@@ -19,12 +20,15 @@ services:
         condition: service_healthy
       redis-cache:
         condition: service_healthy
+      redis-coordination:
+        condition: service_healthy
       redis-realtime:
         condition: service_healthy
 
   agent-service:
     environment:
       REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
     depends_on: !override
@@ -41,12 +45,14 @@ services:
     command: celery -A ai_interview_backend worker -l info -Q celery,notifications --concurrency=4
     environment:
       REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
 
   celery-beat:
     environment:
       REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
 
@@ -61,6 +67,7 @@ services:
       IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
       AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
       REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
       RABBITMQ_HOST: rabbitmq
@@ -90,6 +97,7 @@ services:
       IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
       AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
       REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
@@ -105,10 +113,54 @@ services:
     networks:
       - ifaceoff_network
 
+  celery-platform-worker:
+    image: ifaceoff/backend:latest
+    command: celery -A ai_interview_backend worker -l info -Q career.analysis,community.moderation,events,search.index --concurrency=${PLATFORM_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1
+    env_file:
+      - ./.env.docker
+    environment:
+      IFACEOFF_RUN_MIGRATIONS: "0"
+      IFACEOFF_COLLECTSTATIC: "0"
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
+      REDIS_CACHE_URL: redis://redis-cache:6379/0
+      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
+      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
+      CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
+      RABBITMQ_HOST: rabbitmq
+      QDRANT_URL: http://qdrant:6333
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis-coordination:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    networks:
+      - ifaceoff_network
+
   redis-cache:
     image: redis:7-alpine
     command: redis-server --save "" --appendonly no --maxmemory ${REDIS_CACHE_MAXMEMORY:-1gb} --maxmemory-policy allkeys-lfu
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ifaceoff_network
+
+  redis-coordination:
+    image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory-policy noeviction
+    restart: unless-stopped
+    volumes:
+      - redis_coordination_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -132,4 +184,5 @@ services:
       - ifaceoff_network
 
 volumes:
+  redis_coordination_data:
   redis_realtime_data:

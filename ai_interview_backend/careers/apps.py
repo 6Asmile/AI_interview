@@ -6,3 +6,5 @@ class CareersConfig(AppConfig):
     name = 'careers'
     verbose_name = '求职工作台'
 
+    def ready(self):
+        from . import events  # noqa: F401
