@@ -10,7 +10,8 @@ from rest_framework.exceptions import ValidationError
 from careers.models import CareerFact
 
 from .json_resume import JSON_RESUME_SCHEMA_VERSION, legacy_resume_to_json_resume, normalize_json_resume
-from .models import Resume, ResumeSuggestion, ResumeVersion
+from .models import Resume, ResumeDraft, ResumeEvidenceLink, ResumeSuggestion, ResumeVersion
+from .schema import sha256_json, validate_resume
 
 
 def _confirmed_fact_snapshot(user, fact_ids: list[int] | None = None) -> list[dict]:
@@ -41,18 +42,25 @@ def create_resume_version(
     change_summary: str = '',
     parent: ResumeVersion | None = None,
     evidence_fact_ids: list[int] | None = None,
+    evidence_links: list[dict] | None = None,
+    language: str = 'zh-CN',
 ) -> ResumeVersion:
     locked = Resume.objects.select_for_update().get(pk=resume.pk)
     next_number = (locked.versions.aggregate(value=Max('version_number'))['value'] or 0) + 1
     parent = parent or locked.current_version
+    normalized = validate_resume(resume_json)
     version = ResumeVersion.objects.create(
         resume=locked,
         version_number=next_number,
         parent=parent,
         schema_version=JSON_RESUME_SCHEMA_VERSION,
-        resume_json=normalize_json_resume(resume_json),
+        resume_json=normalized,
+        content_hash=sha256_json(normalized),
+        language=language if language in {'zh-CN', 'en-US'} else 'zh-CN',
         layout_json=layout_json or {},
-        evidence_snapshot=_confirmed_fact_snapshot(locked.user, evidence_fact_ids),
+        # Legacy snapshot stays empty for new writes. Evidence now lives in
+        # pointer-level ResumeEvidenceLink records.
+        evidence_snapshot=[],
         source=source,
         change_summary=change_summary[:255],
         created_by=user if getattr(user, 'is_authenticated', False) else locked.user,
@@ -61,6 +69,60 @@ def create_resume_version(
     locked.canonical_schema_version = JSON_RESUME_SCHEMA_VERSION
     locked.save(update_fields=['current_version', 'canonical_schema_version', 'updated_at'])
     resume.current_version = version
+    requested_links = list(evidence_links or [])
+    requested_links.extend(
+        {'json_pointer': '/', 'fact_id': fact_id}
+        for fact_id in (evidence_fact_ids or [])
+    )
+    if requested_links:
+        fact_ids = {int(item['fact_id']) for item in requested_links}
+        facts = {
+            fact.id: fact
+            for fact in CareerFact.objects.filter(
+                user=locked.user,
+                id__in=fact_ids,
+                verification_status=CareerFact.VerificationStatus.CONFIRMED,
+            )
+        }
+        if set(facts) != fact_ids:
+            raise ValidationError({'evidence_links': '只能关联当前用户已确认的职业事实。'})
+        for item in requested_links:
+            pointer = str(item.get('json_pointer') or '/')
+            if not pointer.startswith('/') or len(pointer) > 500:
+                raise ValidationError({'evidence_links': f'无效 JSON Pointer: {pointer}'})
+            fact = facts[int(item['fact_id'])]
+            snapshot = {
+                'id': fact.id,
+                'type': fact.fact_type,
+                'title': fact.title,
+                'organization': fact.organization,
+                'role': fact.role,
+                'description': fact.description,
+                'skills': fact.skills,
+                'metrics': fact.metrics,
+                'source_type': fact.source_type,
+                'source_url': fact.source_url,
+                'verified_at': fact.verified_at.isoformat() if fact.verified_at else None,
+            }
+            ResumeEvidenceLink.objects.create(
+                resume_version=version,
+                json_pointer=pointer,
+                career_fact=fact,
+                fact_snapshot=snapshot,
+                fact_hash=sha256_json(snapshot),
+            )
+    draft = ResumeDraft.objects.select_for_update().filter(resume=locked).first()
+    if draft:
+        draft.base_version = version
+        draft.resume_json = normalized
+        draft.revision += 1
+        draft.etag = sha256_json({
+            'resume_json': draft.resume_json,
+            'design_json': draft.design_json,
+            'revision': draft.revision,
+        })
+        draft.updated_by = user if getattr(user, 'is_authenticated', False) else locked.user
+        draft.save()
     return version
 
 
@@ -158,11 +220,13 @@ def accept_suggestion(suggestion: ResumeSuggestion, user) -> ResumeVersion:
         source=ResumeVersion.Source.AI_SUGGESTION,
         change_summary=suggestion.summary,
         parent=current,
-        evidence_fact_ids=suggestion.evidence_fact_ids,
+        evidence_links=suggestion.evidence_links or [
+            {'json_pointer': '/', 'fact_id': fact_id}
+            for fact_id in suggestion.evidence_fact_ids
+        ],
     )
     suggestion.status = ResumeSuggestion.Status.ACCEPTED
     suggestion.accepted_version = version
     suggestion.decided_at = timezone.now()
     suggestion.save(update_fields=['status', 'accepted_version', 'decided_at'])
     return version
-

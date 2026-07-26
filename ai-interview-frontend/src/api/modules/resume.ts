@@ -136,3 +136,264 @@ export const getResumeImportApi = (jobId: number): Promise<ResumeImportJob> => r
 export const confirmResumeImportApi = (jobId: number, resume_json?: Record<string, any>): Promise<ResumeVersion> => request({ url: `/resume-imports/${jobId}/confirm/`, method: 'post', data: resume_json ? { resume_json } : {} });
 export const retryResumeImportApi = (jobId: number): Promise<ResumeImportJob> => request({ url: `/resume-imports/${jobId}/retry/`, method: 'post' });
 export const getResumeFitScoreApi = (resumeId: number, jd_text: string) => request({ url: `/resumes/${resumeId}/fit-score/`, method: 'post', data: { jd_text } });
+
+// Resume Intelligence V2. New Studio code uses these contracts exclusively;
+// legacy functions above remain for the two-release compatibility window.
+export interface JsonResume {
+  basics: Record<string, any>;
+  work: Array<Record<string, any>>;
+  volunteer: Array<Record<string, any>>;
+  education: Array<Record<string, any>>;
+  awards: Array<Record<string, any>>;
+  certificates: Array<Record<string, any>>;
+  publications: Array<Record<string, any>>;
+  skills: Array<Record<string, any>>;
+  languages: Array<Record<string, any>>;
+  interests: Array<Record<string, any>>;
+  references: Array<Record<string, any>>;
+  projects: Array<Record<string, any>>;
+  meta: Record<string, any>;
+  'x-ifaceoff': Record<string, any>;
+}
+
+export interface ResumeDesign {
+  template_key: string;
+  template_version: string;
+  page_size: 'A4' | 'Letter';
+  language: 'zh-CN' | 'en-US';
+  font: string;
+  color: string;
+  density: 'compact' | 'balanced' | 'comfortable';
+  date_format: string;
+  show_avatar: boolean;
+  section_order: string[];
+}
+
+export interface ResumeVersionV2 {
+  id: number;
+  version_number: number;
+  parent: number | null;
+  schema_version: string;
+  content_hash: string;
+  language: string;
+  resume_json: JsonResume;
+  source: string;
+  change_summary: string;
+  created_at: string;
+  evidence_links: Array<Record<string, any>>;
+}
+
+export interface ResumeDesignRevision {
+  id: number;
+  revision_number: number;
+  template_key: string;
+  template_version: string;
+  language: string;
+  page_size: string;
+  design_json: ResumeDesign;
+  design_hash: string;
+  created_at: string;
+}
+
+export interface ResumeV2 {
+  id: number;
+  title: string;
+  status: 'draft' | 'ready' | 'archived';
+  is_default: boolean;
+  canonical_schema_version: string;
+  current_version: ResumeVersionV2;
+  current_design_revision: ResumeDesignRevision;
+  draft_etag: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResumeDraft {
+  id: number;
+  base_version: number;
+  base_version_number: number;
+  resume_json: JsonResume;
+  design_json: ResumeDesign;
+  revision: number;
+  etag: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResumeTemplate {
+  key: string;
+  version: string;
+  name: Record<string, string>;
+  description: string;
+  default_font: string;
+  default_color: string;
+  default_density: string;
+  capabilities: Record<string, any>;
+}
+
+export interface AsyncOperationAccepted {
+  operation_id: string;
+  status: 'accepted';
+  events_url: string;
+  result_url: string;
+  artifact_id?: string;
+  quality_report_id?: number;
+  resume_id?: number;
+  import_job_id?: number;
+  etag?: string;
+}
+
+export interface ResumeArtifact {
+  id: string;
+  resume: number;
+  content_version: number | null;
+  content_version_number: number | null;
+  design_revision: number | null;
+  design_revision_number: number | null;
+  draft_etag: string;
+  format: 'preview' | 'pdf' | 'docx' | 'json';
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  renderer_name: string;
+  renderer_version: string;
+  page_count: number;
+  file_url: string | null;
+  error_code: string;
+  error_message: string;
+}
+
+export interface ResumeQualityReport {
+  id: number;
+  status: string;
+  score: number;
+  report_json: Record<string, any>;
+  error_message: string;
+  created_at: string;
+}
+
+export interface ResumeShareLink {
+  id: number;
+  token_hint: string;
+  field_policy: Record<string, boolean>;
+  expires_at: string | null;
+  revoked_at: string | null;
+  is_revoked: boolean;
+  allow_download: boolean;
+  download_limit: number | null;
+  download_count: number;
+  token?: string;
+  share_url?: string;
+}
+
+export interface ResumeSuggestionV2 {
+  id: number;
+  base_version: number;
+  patch: Array<Record<string, any>>;
+  summary: string;
+  rationale: string;
+  evidence_fact_ids: number[];
+  evidence_links: Array<Record<string, any>>;
+  status: 'pending' | 'accepted' | 'rejected';
+  accepted_version: number | null;
+  created_at: string;
+}
+
+const v2 = (path: string) => `/api/v2${path}`;
+const idempotencyKey = () => crypto.randomUUID();
+const asList = <T>(response: any): T[] => Array.isArray(response) ? response : (response?.results || []);
+
+export const getResumesV2Api = async (): Promise<ResumeV2[]> => asList<ResumeV2>(
+  await request({ url: v2('/resumes/'), method: 'get' }),
+);
+export const getResumeV2Api = (id: number): Promise<ResumeV2> => request({ url: v2(`/resumes/${id}/`), method: 'get' });
+export const createResumeV2Api = (data: { title: string; status?: string; is_default?: boolean }): Promise<ResumeV2> =>
+  request({ url: v2('/resumes/'), method: 'post', data });
+export const updateResumeV2Api = (id: number, data: Partial<Pick<ResumeV2, 'title' | 'status' | 'is_default'>>): Promise<ResumeV2> =>
+  request({ url: v2(`/resumes/${id}/`), method: 'patch', data });
+export const deleteResumeV2Api = (id: number) => request({ url: v2(`/resumes/${id}/`), method: 'delete' });
+export const getResumeDraftApi = (id: number): Promise<ResumeDraft> => request({ url: v2(`/resumes/${id}/draft/`), method: 'get' });
+export const patchResumeDraftApi = (id: number, etag: string, data: Partial<Pick<ResumeDraft, 'resume_json' | 'design_json'>>): Promise<ResumeDraft> =>
+  request({ url: v2(`/resumes/${id}/draft/`), method: 'patch', data, headers: { 'If-Match': `"${etag}"` } });
+export const getResumeAvatarApi = (id: number): Promise<{ avatar: { id: number; url: string; checksum_sha256: string } | null }> =>
+  request({ url: v2(`/resumes/${id}/avatar/`), method: 'get' });
+export const uploadResumeAvatarApi = (
+  id: number,
+  etag: string,
+  file: File,
+): Promise<{ avatar: { id: number; url: string; checksum_sha256: string }; etag: string }> => {
+  const data = new FormData();
+  data.append('file', file);
+  return request({
+    url: v2(`/resumes/${id}/avatar/`),
+    method: 'post',
+    data,
+    headers: { 'Content-Type': 'multipart/form-data', 'If-Match': `"${etag}"` },
+  });
+};
+export const deleteResumeAvatarApi = (id: number, etag: string): Promise<{ avatar: null; etag: string }> =>
+  request({ url: v2(`/resumes/${id}/avatar/`), method: 'delete', headers: { 'If-Match': `"${etag}"` } });
+export const commitResumeDraftApi = (id: number, etag: string, change_summary: string): Promise<ResumeVersionV2> =>
+  request({ url: v2(`/resumes/${id}/versions/`), method: 'post', data: { change_summary }, headers: { 'If-Match': `"${etag}"` } });
+export const getResumeVersionsV2Api = async (id: number): Promise<ResumeVersionV2[]> => asList<ResumeVersionV2>(
+  await request({ url: v2(`/resumes/${id}/versions/`), method: 'get' }),
+);
+export const getResumeVersionDiffApi = (resumeId: number, versionId: number, against?: number) =>
+  request({ url: v2(`/resumes/${resumeId}/versions/${versionId}/diff/`), method: 'get', params: against ? { against } : undefined });
+export const getResumeTemplatesApi = (): Promise<{ schema_version: string; templates: ResumeTemplate[] }> =>
+  request({ url: v2('/resume-templates/'), method: 'get' });
+export const requestResumePreviewApi = (id: number): Promise<AsyncOperationAccepted> =>
+  request({ url: v2(`/resumes/${id}/preview/`), method: 'post', data: {}, headers: { 'Idempotency-Key': idempotencyKey() } });
+export const requestResumeExportApi = (id: number, format: 'pdf' | 'docx' | 'json'): Promise<AsyncOperationAccepted> =>
+  request({ url: v2(`/resumes/${id}/exports/`), method: 'post', data: { format }, headers: { 'Idempotency-Key': idempotencyKey() } });
+export const getResumeArtifactApi = (id: string): Promise<ResumeArtifact> =>
+  request({ url: v2(`/resume-artifacts/${id}/`), method: 'get', suppressErrorToast: true } as any);
+export const requestResumeQualityApi = (id: number): Promise<AsyncOperationAccepted> =>
+  request({ url: v2(`/resumes/${id}/quality-reports/`), method: 'post', data: {}, headers: { 'Idempotency-Key': idempotencyKey() } });
+export const getResumeQualityReportsApi = async (id: number): Promise<ResumeQualityReport[]> => asList<ResumeQualityReport>(
+  await request({ url: v2(`/resumes/${id}/quality-reports/`), method: 'get' }),
+);
+export const getResumeShareLinksApi = async (id: number): Promise<ResumeShareLink[]> => asList<ResumeShareLink>(
+  await request({ url: v2(`/resumes/${id}/share-links/`), method: 'get' }),
+);
+export const createResumeShareLinkApi = (id: number, data: Record<string, any>): Promise<ResumeShareLink> =>
+  request({ url: v2(`/resumes/${id}/share-links/`), method: 'post', data });
+export const revokeResumeShareLinkApi = (resumeId: number, shareId: number): Promise<ResumeShareLink> =>
+  request({ url: v2(`/resumes/${resumeId}/share-links/${shareId}/revoke/`), method: 'post', data: {} });
+export const getResumeSuggestionsV2Api = async (id: number): Promise<ResumeSuggestionV2[]> => asList<ResumeSuggestionV2>(
+  await request({ url: v2(`/resumes/${id}/suggestions/`), method: 'get' }),
+);
+export const requestResumeSuggestionApi = (
+  id: number,
+  data: { task_key: string; instruction?: string; job_target_id?: number | null },
+): Promise<AsyncOperationAccepted> => request({
+  url: v2(`/resumes/${id}/suggestions/`),
+  method: 'post',
+  data,
+  headers: { 'Idempotency-Key': idempotencyKey() },
+});
+export const acceptResumeSuggestionApi = (resumeId: number, suggestionId: number): Promise<ResumeVersionV2> =>
+  request({ url: v2(`/resumes/${resumeId}/suggestions/${suggestionId}/accept/`), method: 'post', data: {} });
+export const rejectResumeSuggestionApi = (resumeId: number, suggestionId: number): Promise<ResumeSuggestionV2> =>
+  request({ url: v2(`/resumes/${resumeId}/suggestions/${suggestionId}/reject/`), method: 'post', data: {} });
+export const getAsyncOperationApi = (id: string): Promise<Record<string, any>> =>
+  request({ url: v2(`/operations/${id}/`), method: 'get', suppressErrorToast: true } as any);
+export const importResumeV2Api = (data: FormData): Promise<AsyncOperationAccepted> =>
+  request({
+    url: v2('/resume-imports/'),
+    method: 'post',
+    data,
+    headers: { 'Content-Type': 'multipart/form-data', 'Idempotency-Key': idempotencyKey() },
+  });
+export const getPublicResumeShareApi = (token: string, password = ''): Promise<{
+  title: string;
+  version: number;
+  resume_json: JsonResume;
+  design: ResumeDesign;
+  allow_download: boolean;
+  expires_at: string | null;
+}> => request({
+  url: v2(`/resume-shares/${encodeURIComponent(token)}/`),
+  method: 'get',
+  headers: password ? { 'X-Resume-Share-Password': password } : undefined,
+  _authRetry: true,
+  suppressErrorToast: true,
+} as any);

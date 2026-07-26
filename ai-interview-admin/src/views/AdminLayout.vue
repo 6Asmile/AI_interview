@@ -14,6 +14,7 @@ const items = computed(() => [
   { path: '/interview-config', label: '模板与评估', icon: Setting, permission: 'template.manage' },
   { path: '/agent-config', label: 'Agent 配置中心', icon: Connection, permission: 'agent_config.view' },
   { path: '/career-config', label: '职业配置', icon: Setting, permission: 'career_config.manage' },
+  { path: '/resume-config', label: '简历配置', icon: DocumentChecked, permission: 'resume_config.manage' },
   { path: '/companies', label: '企业认证', icon: Briefcase, permission: 'company.verify' },
   { path: '/jobs', label: '岗位审核', icon: DocumentChecked, permission: 'job.review' },
   { path: '/community', label: '原生社区治理', icon: Bell, permission: 'community.moderate' },

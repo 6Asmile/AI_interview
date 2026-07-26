@@ -7,11 +7,21 @@ import { api } from '@/api';
 const route = useRoute();
 const loading = ref(false);
 const data = ref<any>(null);
+const saving = ref(false);
+const resumeForm = ref({
+  enabled: true,
+  enabled_templates: [] as string[],
+  renderer_version: '2.8',
+  ats_rules_version: '1.0.0',
+  render_timeout_seconds: 20,
+  max_input_bytes: 2_000_000,
+});
 
 const config = computed(() => {
   const name = String(route.name || '');
   return ({
     CareerConfig: { title: '职业配置', endpoint: '/career-config/', description: '技能分类、岗位匹配、成长规则与计划模板。' },
+    ResumeConfig: { title: '简历配置', endpoint: '/resume-config/', description: '六套母版、RenderCV 版本、ATS 规则和渲染任务健康；不展示用户正文。' },
     Companies: { title: '企业认证', endpoint: '/companies/', description: '企业成员关系之外的独立平台认证与审计。' },
     Jobs: { title: '岗位审核', endpoint: '/jobs/', description: '岗位修订审核、发布与下架。' },
     CommunityControl: { title: '社区治理', endpoint: '/community/moderation/', description: '匿名内容、风险发现、举报与申诉处置。' },
@@ -28,8 +38,44 @@ async function load() {
   loading.value = true;
   try {
     data.value = await api.get(config.value.endpoint);
+    if (route.name === 'ResumeConfig' && data.value?.policy) {
+      resumeForm.value = {
+        enabled: data.value.policy.enabled !== false,
+        enabled_templates: [...(data.value.policy.config?.enabled_templates || [])],
+        renderer_version: data.value.policy.config?.renderer_version || data.value.renderer?.version || '2.8',
+        ats_rules_version: data.value.policy.config?.ats_rules_version || '1.0.0',
+        render_timeout_seconds: Number(data.value.policy.config?.render_timeout_seconds || 20),
+        max_input_bytes: Number(data.value.policy.config?.max_input_bytes || 2_000_000),
+      };
+    }
   } finally {
     loading.value = false;
+  }
+}
+
+async function saveResumeConfig() {
+  const reason = await ElMessageBox.prompt('请输入配置变更原因，前后快照会写入审计链。', '发布简历运行配置', {
+    inputPattern: /.+/,
+    inputErrorMessage: '必须填写操作原因',
+  }).then(result => result.value).catch(() => '');
+  if (!reason) return;
+  saving.value = true;
+  try {
+    await api.post('/resume-config/', {
+      operation_reason: reason,
+      enabled: resumeForm.value.enabled,
+      config: {
+        enabled_templates: resumeForm.value.enabled_templates,
+        renderer_version: resumeForm.value.renderer_version,
+        ats_rules_version: resumeForm.value.ats_rules_version,
+        render_timeout_seconds: resumeForm.value.render_timeout_seconds,
+        max_input_bytes: resumeForm.value.max_input_bytes,
+      },
+    });
+    ElMessage.success('简历配置已保存并完成审计');
+    await load();
+  } finally {
+    saving.value = false;
   }
 }
 
@@ -88,7 +134,47 @@ onMounted(load);
       <el-table-column prop="attempts" label="投递次数" width="100" />
       <el-table-column label="操作" width="100"><template #default="{ row }"><el-button size="small" @click="replay(row)">重放</el-button></template></el-table-column>
     </el-table>
-    <el-card v-if="!rows.length" v-loading="loading" shadow="never">
+    <el-card v-if="route.name === 'ResumeConfig' && summary" v-loading="loading" shadow="never" class="resume-config-card">
+      <template #header>
+        <div class="config-heading">
+          <div>
+            <strong>运行配置</strong>
+            <span>JSON Resume {{ summary.schema?.version }} · {{ summary.renderer?.name }} {{ summary.renderer?.version }}</span>
+          </div>
+          <el-switch v-model="resumeForm.enabled" active-text="启用" inactive-text="停用" />
+        </div>
+      </template>
+      <el-form label-position="top">
+        <el-form-item label="启用母版">
+          <el-checkbox-group v-model="resumeForm.enabled_templates" class="template-options">
+            <el-checkbox v-for="item in summary.templates || []" :key="item.key" :value="item.key">
+              {{ item.name?.['zh-CN'] || item.key }}
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <div class="config-grid">
+          <el-form-item label="渲染器版本">
+            <el-input v-model="resumeForm.renderer_version" disabled />
+          </el-form-item>
+          <el-form-item label="ATS 规则版本">
+            <el-input v-model="resumeForm.ats_rules_version" maxlength="40" />
+          </el-form-item>
+          <el-form-item label="渲染超时（秒）">
+            <el-input-number v-model="resumeForm.render_timeout_seconds" :min="5" :max="60" />
+          </el-form-item>
+          <el-form-item label="最大结构化内容（字节）">
+            <el-input-number v-model="resumeForm.max_input_bytes" :min="100000" :max="2000000" :step="100000" />
+          </el-form-item>
+        </div>
+        <el-alert type="info" :closable="false" :title="summary.privacy_contract" />
+        <div class="config-actions">
+          <el-button type="primary" :loading="saving" :disabled="!resumeForm.enabled_templates.length" @click="saveResumeConfig">
+            保存配置
+          </el-button>
+        </div>
+      </el-form>
+    </el-card>
+    <el-card v-else-if="!rows.length" v-loading="loading" shadow="never">
       <pre>{{ JSON.stringify(summary, null, 2) }}</pre>
     </el-card>
   </section>
@@ -101,4 +187,14 @@ h1 { margin: 0 0 6px; font-size: 24px; }
 p { margin: 0; color: #667085; }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #344054; font: 13px/1.65 ui-monospace, monospace; }
 .dead-table { margin-bottom: 18px; }
+.resume-config-card { max-width: 960px; }
+.config-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.config-heading > div { display: grid; gap: 4px; }
+.config-heading span { color: #667085; font-size: 13px; }
+.template-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 20px; }
+.config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+.config-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+@media (max-width: 760px) {
+  .template-options, .config-grid { grid-template-columns: 1fr; }
+}
 </style>

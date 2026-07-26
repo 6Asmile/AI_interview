@@ -196,11 +196,45 @@ class StaffOperationsReadSmokeTests(TestCase):
             '/api/admin/v1/feature-flags/',
             '/api/admin/v1/maintenance-notices/',
             '/api/admin/v1/audit-logs/',
+            '/api/admin/v1/resume-config/',
         ]
         for path in paths:
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200, response.data)
+
+    def test_resume_config_write_is_validated_audited_and_idempotent(self):
+        payload = {
+            'operation_reason': '启用经过渲染验证的五套简历母版。',
+            'enabled': True,
+            'config': {
+                'enabled_templates': [
+                    'ats-classic', 'modern-professional', 'engineering',
+                    'graduate', 'management-consulting',
+                ],
+                'renderer_version': '2.8',
+                'ats_rules_version': '1.1.0',
+                'render_timeout_seconds': 25,
+                'max_input_bytes': 1_500_000,
+            },
+        }
+        first = self.client.post(
+            '/api/admin/v1/resume-config/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='resume-config-once',
+        )
+        second = self.client.post(
+            '/api/admin/v1/resume-config/',
+            payload,
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='resume-config-once',
+        )
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(second['X-Idempotent-Replay'], 'true')
+        detail = self.client.get('/api/admin/v1/resume-config/')
+        self.assertEqual(detail.data['policy']['config']['render_timeout_seconds'], 25)
 
     def test_limited_staff_cannot_open_model_gateway(self):
         role = StaffRole.objects.create(slug='readonly-candidate', name='Candidate Support', permissions=['candidate.support'])

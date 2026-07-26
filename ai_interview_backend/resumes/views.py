@@ -8,7 +8,6 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from .fit_score import calculate_resume_fit
 from .json_resume import legacy_resume_to_json_resume
 from .models import Education, ProjectExperience, Resume, ResumeImportJob, ResumeSuggestion, ResumeVersion, Skill, WorkExperience
 from .serializers import (
@@ -51,11 +50,17 @@ class ResumeViewSet(viewsets.ModelViewSet):
             serializer = ResumeCreateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             with transaction.atomic():
-                resume = serializer.save(user=request.user)
+                resume = Resume.objects.create(
+                    user=request.user,
+                    title=serializer.validated_data['title'],
+                    status=serializer.validated_data.get('status', Resume.Status.DRAFT),
+                )
                 create_resume_version(
                     resume=resume,
-                    resume_json=legacy_resume_to_json_resume(resume),
-                    layout_json=resume.content_json or {},
+                    resume_json=legacy_resume_to_json_resume(
+                        resume,
+                        serializer.validated_data.get('content_json'),
+                    ),
                     user=request.user,
                     source=ResumeVersion.Source.EDITOR,
                     change_summary='创建简历',
@@ -117,18 +122,19 @@ class ResumeViewSet(viewsets.ModelViewSet):
             change_summary=f'恢复自 v{source.version_number}',
             parent=resume.current_version,
         )
-        resume.content_json = source.layout_json or resume.content_json
-        resume.save(update_fields=['content_json', 'updated_at'])
         return Response(ResumeVersionSerializer(restored).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='fit-score')
     def fit_score(self, request, pk=None):
-        jd_text = str(request.data.get('jd_text') or '').strip()
-        if not jd_text:
-            raise ValidationError({'jd_text': '请提供真实岗位 JD。'})
         resume = self.get_object()
         version = ensure_resume_version(resume, request.user)
-        return Response(calculate_resume_fit(version.resume_json, jd_text, version.evidence_snapshot))
+        from .legacy import legacy_job_match_response
+        return legacy_job_match_response(
+            request,
+            resume_version=version,
+            jd_text=request.data.get('jd_text'),
+            scope=f'legacy.resume.fit_score:{resume.pk}',
+        )
 
 
 class ResumeImportJobViewSet(viewsets.ReadOnlyModelViewSet):
@@ -211,6 +217,25 @@ class BaseResumeDetailViewSet(viewsets.ModelViewSet):
         if not resume:
             raise ValidationError('简历不存在。')
         serializer.save(resume=resume)
+
+    def _retired_write(self):
+        return Response({
+            'code': 'legacy_resume_relation_write_retired',
+            'message': '旧关系表写入已冻结，请使用统一 Resume Studio。',
+            'migration_url': f'/dashboard/resumes/{self.kwargs.get("resume_pk")}',
+        }, status=status.HTTP_410_GONE)
+
+    def create(self, request, *args, **kwargs):
+        return self._retired_write()
+
+    def update(self, request, *args, **kwargs):
+        return self._retired_write()
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._retired_write()
+
+    def destroy(self, request, *args, **kwargs):
+        return self._retired_write()
 
 
 class EducationViewSet(BaseResumeDetailViewSet):

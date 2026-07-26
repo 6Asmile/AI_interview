@@ -1,6 +1,6 @@
 # iFaceoff
 
-> 以可信职业事实为起点，连接简历、岗位、模拟面试、评估报告和求职进度的 AI 求职平台。
+> 以可信职业事实为起点，连接智能简历、岗位匹配、模拟面试、成长计划、投递进度和求职社区的可信 AI 求职平台。
 
 [![Vue 3](https://img.shields.io/badge/Vue-3.4-42b883)](https://vuejs.org/)
 [![Django](https://img.shields.io/badge/Django-5.2-092e20)](https://www.djangoproject.com/)
@@ -11,7 +11,7 @@
 
 ![iFaceoff current landing page](docs/images/landing-latest.png)
 
-iFaceoff 不是单独的“AI 出题器”。系统围绕可验证的职业事实建立完整链路：简历内容必须来自用户确认的数据，面试问题可以引用经过审批的知识库证据，评分必须引用候选人的真实回答，模型不可用时明确降级而不是伪造结果。
+iFaceoff 不再只是“AI 面试工具”。系统围绕可验证的职业事实建立求职闭环：简历内容来自用户确认的数据，岗位分析冻结真实 JD 和简历版本，面试问题可以引用经过审批的知识库证据，评分必须引用候选人的真实回答，模型不可用时明确降级而不是伪造结果。
 
 ## 产品闭环
 
@@ -19,11 +19,14 @@ iFaceoff 不是单独的“AI 出题器”。系统围绕可验证的职业事�
 flowchart LR
     FACT["职业事实库"] --> RESUME["主简历与版本"]
     RESUME --> JOB["目标岗位与真实 JD"]
-    JOB --> MATCH["简历诊断与定制"]
-    MATCH --> INTERVIEW["自适应模拟面试"]
+    JOB --> MATCH["岗位匹配与能力 Gap"]
+    MATCH --> PLAN["补强计划"]
+    PLAN --> INTERVIEW["岗位专项模拟面试"]
     INTERVIEW --> REPORT["证据化评估报告"]
-    REPORT --> PLAN["投递进度与补强任务"]
-    PLAN --> FACT
+    REPORT --> APPLY["投递与 Offer 进度"]
+    APPLY --> PROFILE["能力画像与成长趋势"]
+    PROFILE --> PLAN
+    REPORT -.-> COMMUNITY["用户确认并脱敏<br/>原生求职社区"]
 ```
 
 - **事实优先**：AI 只能使用已确认的教育、工作、项目、技能、成果和真实 JD。
@@ -48,11 +51,60 @@ flowchart LR
 
 以上截图由 Playwright 在当前版本、真实本地服务和现有业务数据上重新生成，不使用前端 Mock 数据。
 
+## Resume Intelligence
+
+简历模块已经从旧编辑器和分散 AI 接口收敛为统一 Resume Intelligence。新写入只使用仓库内固化的 **JSON Resume 1.3.1**，内容版本、设计版本、证据和导出文件彼此独立且可追溯。
+
+```mermaid
+flowchart LR
+    FACT["已确认 CareerFact"] --> DRAFT["ResumeDraft<br/>ETag 自动保存"]
+    IMPORT["PDF / DOCX / JSON<br/>OCR 与人工确认"] --> DRAFT
+    DRAFT --> VERSION["不可变 ResumeVersion"]
+    VERSION --> EVIDENCE["JSON Pointer<br/>ResumeEvidenceLink"]
+    VERSION --> QUALITY["Schema / ATS / 证据<br/>多视角质量报告"]
+    VERSION --> VARIANT["JD 定制 ResumeVariant"]
+    VERSION --> RENDER["RenderCV 2.8 / Typst"]
+    DESIGN["ResumeDesignRevision"] --> RENDER
+    RENDER --> ARTIFACT["PDF / PNG / DOCX / JSON"]
+    VERSION --> SHARE["私密分享快照"]
+    SHARE --> REDACT["字段脱敏 / 密码 / 过期<br/>撤销 / 限流 / 审计"]
+```
+
+### 六套精品母版
+
+| 母版 | 推荐场景 | 共同能力 |
+| --- | --- | --- |
+| ATS 经典 | 通用社招、招聘系统投递 | 单栏、稳定阅读顺序 |
+| 现代专业 | 产品、运营、职能岗位 | 克制色彩、清晰层级 |
+| 技术工程 | 研发、数据、基础设施 | 强化项目与技能证据 |
+| 校招成长 | 实习、校招、转行 | 强化教育和成长经历 |
+| 管理咨询 | 咨询、战略、管理岗位 | 强化成果与结构表达 |
+| 学术研究 | 研究、算法、学术岗位 | 强化论文、项目与教育 |
+
+所有母版支持 A4/Letter、中英文栏目、有限字体与色板、紧凑度、日期格式、头像开关和栏目顺序。PDF 与预览来自同一服务端渲染源；用户文本不能执行 Typst、读取文件或加载外部资源。
+
+### 求职者操作方式
+
+1. 打开 `http://127.0.0.1:5173/dashboard/resumes`，新建简历或导入 PDF、DOCX、JSON Resume。
+2. 在解析确认页检查 OCR/结构化结果；只有用户确认后才进入可编辑草稿。
+3. 进入 `/dashboard/resumes/{id}`，编辑基本信息、经历、项目、教育、技能和证据；Studio 使用 `If-Match` 自动保存，版本冲突返回 `409`，不会覆盖另一窗口的修改。
+4. 选择母版、语言、纸张、字体、色彩和栏目顺序，使用服务端预览检查分页效果。
+5. 显式创建内容版本后运行 ATS/质量检查；AI 只返回可审阅的 JSON Patch 建议，不直接改写事实。
+6. 选择真实岗位 JD 创建定制版本，匹配分数和能力 Gap 统一保存到岗位分析。
+7. 导出 PDF、DOCX 或标准 JSON Resume；重复导出相同内容和设计时复用已验证 Artifact。
+8. 创建私密分享链接，按需开启邮箱、电话、地址、头像和下载权限，并可设置密码、有效期、次数限制或随时撤销。
+
+### 管理员操作方式
+
+打开 `http://127.0.0.1:5174/resume-config` 管理母版启用状态、RenderCV 版本、ATS 规则、渲染超时和输入大小。管理写操作必须提供 `Idempotency-Key` 与操作原因，并进入审计记录；该管理接口不会返回用户简历正文。
+
+详细模型、渲染隔离和放量方式见 [Resume Intelligence 运维说明](docs/resume-intelligence.md)。
+
 ## 核心能力
 
 | 模块 | 已实现能力 |
 | --- | --- |
-| 简历与职业事实 | JSON Resume 兼容结构、职业事实库、不可变 `ResumeVersion`、异步导入、人工确认、真实 JD 分析、证据来源与历史快照 |
+| Resume Intelligence | JSON Resume 1.3.1 单一事实源、ETag 草稿、不可变内容/设计版本、逐字段事实证据、ATS 与多视角质量检查、JD Variant、六套 Typst 母版、PDF/DOCX/JSON 导出及可撤销私密分享 |
 | 求职工作台 | 目标岗位、JD、投递管道、面试安排、Offer、补强任务；模块独立加载，局部接口失败不会导致整页白屏 |
 | Composite Agent V4 | 外部只有一个综合面试官；内部业务子图使用 LangGraph 编排，Pydantic 校验边界，PostgreSQL Checkpointer 负责恢复 |
 | 自适应面试 | 目标时长与能力覆盖共同决定结束；依据回答证据执行澄清、验证、深挖、挑战、迁移、换题或收尾；支持主题栈与自然承接 |
@@ -80,6 +132,7 @@ flowchart TB
         AGENT["Composite Agent V4 / LangGraph"]
         TOOLS["Agent Tool Executor"]
         MEMORY["Session / Event / Evidence Memory"]
+        RESUME["Resume Intelligence"]
     end
 
     subgraph DATA["数据与检索层"]
@@ -93,6 +146,7 @@ flowchart TB
 
     subgraph AI["模型与异步层"]
         WORKER["Celery Worker / Beat"]
+        RENDER["Isolated RenderCV / Typst Worker"]
         GATEWAY["LiteLLM Proxy"]
         PGLITELLM[(PostgreSQL / litellm)]
         SCAN["ClamAV"]
@@ -102,6 +156,7 @@ flowchart TB
     WEB <--> WS
     WEB --> SPEECH
     API --> AGENT
+    API --> RESUME
     AGENT --> TOOLS
     AGENT <--> MEMORY
     TOOLS --> GATEWAY
@@ -114,6 +169,8 @@ flowchart TB
     WORKER --> MQ
     WORKER --> PGAPP
     WORKER --> QDRANT
+    RESUME --> RENDER
+    RENDER --> PGAPP
     GATEWAY --> PGLITELLM
 ```
 
@@ -201,7 +258,7 @@ AI_interview/
 ├── ai-interview-admin/             # 独立 Vue 3 员工管理端
 ├── ai_interview_backend/
 │   ├── careers/                    # 职业事实、岗位、投递和学习任务
-│   ├── resumes/                    # 简历版本、导入、建议和分析
+│   ├── resumes/                    # Canonical Schema、Studio、版本、证据、渲染、分享与 AI 建议
 │   ├── interviews/                 # Composite Agent、评估、语音和 Trace
 │   ├── knowledge/                  # 审批、修订、切块、索引和混合检索
 │   ├── system/                     # AI 设置、模型网关和 readiness
@@ -250,6 +307,16 @@ Copy-Item .env.infra.example .env.infra
 | Meilisearch | `http://127.0.0.1:7700` |
 | ClamAV | `127.0.0.1:3310` |
 
+使用 **Git Bash** 时执行：
+
+```bash
+git clone https://github.com/6Asmile/AI_interview.git
+cd AI_interview
+cp .env.infra.example .env.infra
+docker compose --env-file .env.infra -f docker-compose.infra.yml up -d
+docker compose --env-file .env.infra -f docker-compose.infra.yml ps
+```
+
 ### 2. 安装应用依赖并迁移
 
 ```powershell
@@ -260,13 +327,35 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 python manage.py migrate
 python manage.py setup_agent_checkpoint
+python manage.py migrate_resume_intelligence
+python manage.py migrate_resume_intelligence --check-only
 
 cd ..\ai-interview-frontend
+npm ci
+cd ..\ai-interview-admin
 npm ci
 cd ..
 ```
 
 请根据 `.env.infra` 修改后端 `.env` 中的数据库、消息队列和服务地址。不要提交真实 API Key、JWT Secret 或数据库密码。
+
+Git Bash 对应命令：
+
+```bash
+cd ai_interview_backend
+python -m venv venv
+source venv/Scripts/activate
+pip install -r requirements.txt
+cp .env.example .env
+python manage.py migrate
+python manage.py setup_agent_checkpoint
+python manage.py migrate_resume_intelligence
+python manage.py migrate_resume_intelligence --check-only
+
+cd ../ai-interview-frontend && npm ci
+cd ../ai-interview-admin && npm ci
+cd ..
+```
 
 ### 3. 一键启动本地应用
 
@@ -327,6 +416,16 @@ Readiness 会分别报告 Database、Redis、RabbitMQ、Celery Worker、Qdrant�
 
 两种启动方式不要混用同一组端口。更多说明见 [基础设施部署](docs/docker-ifaceoff-infra.md)、[完整容器部署](docs/docker-ifaceoff.md) 与 [Agent 持久化、双 Redis 和容量验收](docs/agent-resilience.md)。
 
+Git Bash 可直接使用 Compose 启动完整栈：
+
+```bash
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker up -d --build
+docker compose --env-file .env.docker exec backend python manage.py migrate
+docker compose --env-file .env.docker exec backend python manage.py migrate_resume_intelligence
+docker compose --env-file .env.docker ps
+```
+
 ## 关键配置
 
 ```dotenv
@@ -367,8 +466,9 @@ docker compose --env-file .env.observability -f docker-compose.observability.yml
 ## API 入口
 
 - `/api/v2/career-facts/`, `/job-targets/`, `/applications/`, `/learning-tasks/`
-- `/api/v2/resumes/`, `/resume-imports/`, `/resume-suggestions/`
-- `/api/v1/analyze-resume/`
+- `/api/v2/resumes/`, `/resumes/{id}/draft/`, `/resumes/{id}/versions/`, `/resumes/{id}/versions/{version_id}/diff/`
+- `/api/v2/resumes/{id}/preview/`, `/suggestions/`, `/quality-reports/`, `/exports/`, `/share-links/`, `/avatar/`
+- `/api/v2/resume-imports/`, `/resume-templates/`, `/resume-artifacts/{id}/`, `/resume-shares/{token}/`
 - `/api/v1/interviews/`, `/api/v1/interviews/{id}/abandon/`
 - `/api/v1/knowledge/documents/`, `/revisions/`, `/chunk-drafts/`, `/publish/`
 - `/api/v1/community/feed/`, `/community/search/`
@@ -379,10 +479,11 @@ docker compose --env-file .env.observability -f docker-compose.observability.yml
 - `/api/v1/ws-tickets/`, `/tasks/`, `/tasks/{id}/retry/`, `/tasks/{id}/cancel/`
 - `/api/admin/v1/auth/invitations/{token}/`, `/auth/register/`, `/staff-invitations/`
 - `/api/admin/v1/candidates/`, `/interviews/`, `/agent-runs/`, `/interview-config/`
+- `/api/admin/v1/resume-config/`
 - `/api/admin/v1/knowledge-reviews/`, `/model-gateway/`, `/tasks/`, `/moderation/`, `/audit-logs/`
 - `/api/admin/v1/analytics/`, `/feature-flags/`, `/maintenance-notices/`, `/notifications/operations/`
 
-旧简历和 AI 设置 API 保留兼容层，新增流程优先使用版本化 `/api/v2` 资源。
+旧简历读取和部分分析 API 在放量期保留兼容适配器；旧关系表写入与整包 AI 生成不再作为事实源，新流程统一使用版本化 `/api/v2` 资源。
 
 ## 数据一致性与运维
 
@@ -404,7 +505,8 @@ python manage.py reconcile_interview_sessions --apply
 cd ai_interview_backend
 python manage.py check
 python manage.py makemigrations --check --dry-run
-python manage.py test interviews.tests knowledge.tests system.tests resumes.tests community.tests careers.tests --noinput
+python manage.py test resumes staff_admin
+python manage.py migrate_resume_intelligence --check-only
 
 cd ..\ai-interview-frontend
 npm run build
@@ -415,13 +517,14 @@ npm run test:e2e
 
 当前发布前实测结果：
 
-- Django 全量回归：**149 tests passed**
-- Agent / Checkpoint / Memory 定向回归：**50 tests passed**
+- Resume Intelligence 与管理端定向回归：**27 tests passed**
+- Django 全量回归：**179 项中 177 项通过**；另 2 项需要可连接的 Agent PostgreSQL Checkpoint 数据库
 - Django system check：**0 issues**
 - Migration drift：**No changes detected**
 - 候选人端与独立管理端 production build：**passed**
-- Playwright 登录、核心页面、管理端跳转和移动端边界：**3 suites passed**
-- Readiness：业务 PostgreSQL、Agent Checkpoint PostgreSQL、Redis、RabbitMQ、Celery、Qdrant、Meilisearch、LiteLLM **all healthy**
+- 六套 RenderCV 模板英文 Golden Render 与中文 PDF 文本抽取：**passed**
+- 基础与生产韧性 Compose 配置校验：**passed**
+- 当前验证机器的 Docker daemon 未运行，因此后端镜像构建、离线 Typst 缓存与完整健康检查需要在发布环境补跑
 
 测试业务数据来自本地真实或匿名化样例；provider boundary fake 仅用于超时、异常和降级故障注入，不作为简历、知识库、评分或社区内容。
 
