@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import random
+import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from django.core.cache import caches
 from django_redis import get_redis_connection
+
+from .redis_keys import build_redis_key
 
 
 @dataclass(frozen=True)
@@ -37,9 +40,63 @@ def jittered_ttl(policy: CachePolicy) -> int:
     return max(policy.soft_ttl_seconds + 1, policy.ttl_seconds + random.randint(-spread, spread))
 
 
+_SINGLEFLIGHT_RELEASE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+
+class CoordinationSingleFlight:
+    """Short owner-token lease used to serialize a cache rebuild."""
+
+    def __init__(self, key: str, policy_name: str, *, ttl_seconds: int, wait_seconds: float):
+        self.redis = get_redis_connection('coordination')
+        self.key = build_redis_key(
+            domain='coordination',
+            resource='singleflight',
+            parts=(policy_name,),
+            opaque_parts=(key,),
+        )
+        self.owner = secrets.token_urlsafe(24)
+        self.ttl_ms = max(1_000, int(ttl_seconds * 1000))
+        self.wait_seconds = max(0.0, float(wait_seconds))
+        self.acquired = False
+
+    def acquire(self) -> bool:
+        deadline = time.monotonic() + self.wait_seconds
+        while True:
+            if self.redis.set(self.key, self.owner, nx=True, px=self.ttl_ms):
+                self.acquired = True
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.025, remaining))
+
+    def release(self) -> bool:
+        if not self.acquired:
+            return False
+        released = bool(self.redis.eval(
+            _SINGLEFLIGHT_RELEASE_SCRIPT,
+            1,
+            self.key,
+            self.owner,
+        ))
+        self.acquired = False
+        return released
+
+
 def _metric(name: str) -> None:
     try:
-        get_redis_connection('default').incr(f'ifaceoff:cache-metric:{name}')
+        metric_parts = tuple(part for part in name.split(':') if part)
+        metric_key = build_redis_key(
+            domain='cache',
+            resource='cache-metric',
+            parts=metric_parts,
+        )
+        get_redis_connection('default').incr(metric_key)
     except Exception:
         pass
 
@@ -83,13 +140,13 @@ def get_or_load(
 
     _metric(f'{policy_name}:miss')
     try:
-        redis = get_redis_connection(alias)
-        lock = redis.lock(
-            f'ifaceoff:singleflight:{key}',
-            timeout=policy.lock_ttl_seconds,
-            blocking_timeout=policy.lock_wait_seconds,
+        lock = CoordinationSingleFlight(
+            key,
+            policy_name,
+            ttl_seconds=policy.lock_ttl_seconds,
+            wait_seconds=policy.lock_wait_seconds,
         )
-        acquired = lock.acquire(blocking=True)
+        acquired = lock.acquire()
     except Exception:
         acquired = False
         lock = None
@@ -117,7 +174,7 @@ def get_or_load(
         return value, 'source'
     finally:
         try:
-            if lock and lock.owned():
+            if lock:
                 lock.release()
         except Exception:
             pass

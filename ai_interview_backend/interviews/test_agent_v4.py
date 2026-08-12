@@ -1,6 +1,9 @@
 import json
+import os
+from datetime import timedelta
 from uuid import uuid4
 from types import SimpleNamespace
+from unittest import skipUnless
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -8,11 +11,14 @@ from django.utils import timezone
 from pydantic import ValidationError
 from rest_framework.test import APIClient
 
+from core.models import AsyncOperation, OperationDispatchOutbox
+from core.operations import request_operation_cancel
 from users.models import User
 
 from .agent import get_interview_agent_engine
 from .agent_v4.contracts import AgentEvent, AgentTurnInput, EvidenceItem, QuestionPlan
 from .agent_v4.engine import CompositeV4InterviewAgentEngine
+from .execution import cas_transition, claim_execution, heartbeat_execution
 from .models import (
     InterviewAgentDispatch,
     InterviewAgentExecution,
@@ -21,7 +27,7 @@ from .models import (
     InterviewQuestionGenerationJob,
     InterviewSession,
 )
-from .tasks import run_composite_v4_turn
+from .tasks import run_composite_v4_turn, run_interview_execution
 
 
 class AgentV4ContractTests(SimpleTestCase):
@@ -128,8 +134,66 @@ class AgentV4ExecutionTests(TestCase):
         self.assertEqual(execution.run_id, first.id)
         self.assertNotIn('answer', execution.__dict__)
 
+    def test_execution_lease_and_fencing_reject_stale_worker(self):
+        run = CompositeV4InterviewAgentEngine()._get_or_create_run(
+            session=self.session,
+            question=self.question,
+            answer_text='我负责订单缓存模块。',
+            event='submit_answer_stream',
+        )
+        execution = InterviewAgentExecution.objects.get(run_id=run.id)
+        execution.status = InterviewAgentExecution.Status.ANSWER_PERSISTED
+        execution.save(update_fields=['status', 'updated_at'])
+
+        first = claim_execution(
+            execution.id,
+            lease_owner='worker-a',
+            from_statuses=(InterviewAgentExecution.Status.ANSWER_PERSISTED,),
+            to_status=InterviewAgentExecution.Status.EVALUATING,
+            lease_seconds=60,
+        )
+        self.assertIsNotNone(first)
+        self.assertEqual(first.fencing_token, 1)
+        self.assertIsNone(claim_execution(
+            execution.id,
+            lease_owner='worker-b',
+            from_statuses=(InterviewAgentExecution.Status.EVALUATING,),
+            to_status=InterviewAgentExecution.Status.EVALUATING,
+            lease_seconds=60,
+        ))
+        self.assertFalse(heartbeat_execution(
+            execution.id,
+            lease_owner='worker-b',
+            fencing_token=first.fencing_token,
+        ))
+
+        InterviewAgentExecution.objects.filter(id=execution.id).update(
+            status=InterviewAgentExecution.Status.FAILED_RETRYABLE,
+            lease_expires_at=timezone.now() - timedelta(seconds=1),
+        )
+        second = claim_execution(
+            execution.id,
+            lease_owner='worker-b',
+            from_statuses=(InterviewAgentExecution.Status.FAILED_RETRYABLE,),
+            to_status=InterviewAgentExecution.Status.EVALUATING,
+            lease_seconds=60,
+        )
+        self.assertIsNotNone(second)
+        self.assertGreater(second.fencing_token, first.fencing_token)
+        self.assertFalse(cas_transition(
+            execution.id,
+            from_statuses=(InterviewAgentExecution.Status.EVALUATING,),
+            to_status=InterviewAgentExecution.Status.COMPLETED,
+            lease_owner='worker-a',
+            fencing_token=first.fencing_token,
+        ))
+
     @patch('interviews.agent.search_knowledge_context')
     @patch('interviews.agent_v2.resolve_ai_config')
+    @skipUnless(
+        os.getenv('AGENT_POSTGRES_CHECKPOINT_TESTS') == '1',
+        'requires AGENT_POSTGRES_CHECKPOINT_TESTS=1 and a reachable AGENT_DATABASE_URL',
+    )
     def test_prepare_turn_runs_real_postgres_checkpoint_graph(self, resolve_config, search):
         resolve_config.return_value = SimpleNamespace(api_key='', model=None, source='unavailable')
         search.return_value = {
@@ -166,6 +230,10 @@ class AgentV4ExecutionTests(TestCase):
 
     @patch('interviews.agent.search_knowledge_context')
     @patch('interviews.agent_v2.resolve_ai_config')
+    @skipUnless(
+        os.getenv('AGENT_POSTGRES_CHECKPOINT_TESTS') == '1',
+        'requires AGENT_POSTGRES_CHECKPOINT_TESTS=1 and a reachable AGENT_DATABASE_URL',
+    )
     def test_completed_prepare_checkpoint_replays_without_rerunning_nodes(self, resolve_config, search):
         resolve_config.return_value = SimpleNamespace(api_key='', model=None, source='unavailable')
         search.return_value = {
@@ -242,12 +310,46 @@ class DurableSubmissionApiTests(TestCase):
         execution = InterviewAgentExecution.objects.get(trigger_question=self.question)
         self.assertEqual(execution.status, InterviewAgentExecution.Status.ANSWER_PERSISTED)
         self.assertEqual(str(execution.run_id), response.data['run_id'])
+        self.assertIsNotNone(execution.operation_id)
+        self.assertEqual(str(execution.operation_id), response.data['operation_id'])
+        self.assertEqual(
+            response.data['events_url'],
+            f'/api/v2/operations/{execution.operation_id}/events/',
+        )
+        self.assertEqual(execution.operation.status, AsyncOperation.Status.PENDING)
+        self.assertEqual(execution.operation.input_id, str(execution.id))
+        self.assertEqual(execution.operation.input_hash, execution.request_hash)
+        self.assertFalse(OperationDispatchOutbox.objects.filter(operation=execution.operation).exists())
         self.assertTrue(InterviewAgentDispatch.objects.filter(execution=execution).exists())
         self.assertTrue(InterviewQuestionGenerationJob.objects.filter(
             session=self.session,
             answered_question=self.question,
             status=InterviewQuestionGenerationJob.Status.PENDING,
         ).exists())
+
+    def test_public_operation_cancel_fences_the_agent_execution(self):
+        response = self.client.post(
+            f'/api/v1/interviews/{self.session.id}/submit-answer-stream/?async=true',
+            {'question_id': self.question.id, 'answer_text': '我负责订单缓存和故障降级。'},
+            format='json',
+            HTTP_PREFER='respond-async',
+            HTTP_IDEMPOTENCY_KEY='answer-cancel-operation',
+        )
+        self.assertEqual(response.status_code, 202, response.data)
+        execution = InterviewAgentExecution.objects.get(trigger_question=self.question)
+
+        request_operation_cancel(execution.operation_id, user=self.user)
+        result = run_interview_execution.run(str(execution.id))
+
+        execution.refresh_from_db()
+        execution.operation.refresh_from_db()
+        self.assertEqual(execution.status, InterviewAgentExecution.Status.CANCELED)
+        self.assertEqual(execution.operation.status, AsyncOperation.Status.CANCELED)
+        self.assertEqual(result['status'], InterviewAgentExecution.Status.CANCELED)
+        self.assertEqual(
+            InterviewAgentDispatch.objects.get(execution=execution).status,
+            InterviewAgentDispatch.Status.CANCELED,
+        )
 
     def test_resume_state_uses_postgresql_without_agent_stream(self):
         submit = self.client.post(

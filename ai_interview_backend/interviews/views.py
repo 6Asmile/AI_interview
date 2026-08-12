@@ -257,16 +257,80 @@ class EvaluationRunViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.none()
 
-    def perform_create(self, serializer):
-        if not can_manage_interview_system(self.request.user):
-            raise PermissionDenied('只有管理员或HR可以运行离线评估。')
-        run = serializer.save(created_by=self.request.user)
-        try:
-            from .tasks import run_evaluation_run
-            run_evaluation_run.delay(run.id)
-        except Exception:
-            from .evaluation import run_offline_rule_evaluation
-            run_offline_rule_evaluation(run)
+    def create(self, request, *args, **kwargs):
+        if not can_manage_interview_system(request.user):
+            raise PermissionDenied('只有管理员或 HR 可以运行离线评估。')
+        operation_reason = str(
+            request.data.get('operation_reason')
+            or request.headers.get('Operation-Reason')
+            or ''
+        ).strip()
+        if not operation_reason:
+            return Response({
+                'code': 'operation_reason_required',
+                'message': '创建离线评估必须填写 operation_reason。',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        def create_run():
+            payload = request.data.copy()
+            if hasattr(payload, 'pop'):
+                payload.pop('operation_reason', None)
+            serializer = self.get_serializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            with transaction.atomic():
+                run = serializer.save(created_by=request.user)
+                snapshot = {
+                    'evaluation_run_id': run.id,
+                    'dataset_id': run.dataset_id,
+                    'template_id': run.template_id,
+                    'config_snapshot': run.config_snapshot,
+                }
+                input_hash = hashlib.sha256(json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(',', ':'),
+                    default=str,
+                ).encode('utf-8')).hexdigest()
+                from core.operations import create_operation_with_dispatch
+
+                operation = create_operation_with_dispatch(
+                    user=request.user,
+                    operation_type='interview.evaluation',
+                    source_app='interviews',
+                    source_model='EvaluationRun',
+                    source_id=str(run.id),
+                    title=f'离线评估：{run.dataset.name}',
+                    input_type='EvaluationRun',
+                    input_id=str(run.id),
+                    input_version='1',
+                    input_hash=input_hash,
+                    metadata={
+                        'evaluation_run_id': run.id,
+                        'dataset_id': run.dataset_id,
+                        'operation_reason': operation_reason,
+                    },
+                    max_attempts=3,
+                    queue=getattr(settings, 'CELERY_CAREER_QUEUE', 'ifaceoff.v2.career.analysis'),
+                    routing_key='career.analysis',
+                )
+                run.operation = operation
+                run.save(update_fields=['operation'])
+            response_data = self.get_serializer(run).data
+            response_data.update({
+                'operation_id': str(operation.id),
+                'operation_status': 'accepted',
+                'events_url': f'/api/v2/operations/{operation.id}/events/',
+                'result_url': f'/api/v2/operations/{operation.id}/',
+            })
+            return Response(response_data, status=status.HTTP_202_ACCEPTED)
+
+        return run_idempotent(
+            request,
+            'interview_evaluation_run',
+            create_run,
+            required=True,
+        )
 
 
 class InterviewSessionViewSet(viewsets.ModelViewSet):
@@ -1364,7 +1428,10 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 def enqueue_dispatch():
                     try:
                         from .tasks import publish_pending_agent_dispatches
-                        publish_pending_agent_dispatches.apply_async(queue='notifications')
+                        publish_pending_agent_dispatches.apply_async(
+                            queue=getattr(settings, 'CELERY_PUBLISHER_QUEUE', 'ifaceoff.v2.publisher'),
+                            mandatory=True,
+                        )
                     except Exception:
                         pass
 
@@ -1384,14 +1451,27 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             raise
 
         response = Response({
+            'operation_id': str(execution.operation_id) if execution.operation_id else None,
             'run_id': str(execution.run_id),
             'status': execution.status,
-            'events_url': f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/',
+            'events_url': (
+                f'/api/v2/operations/{execution.operation_id}/events/'
+                if execution.operation_id else
+                f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/'
+            ),
+            'result_url': (
+                f'/api/v2/operations/{execution.operation_id}/'
+                if execution.operation_id else
+                f'/api/v1/interviews/{session.id}/resume-state/'
+            ),
+            'agent_events_url': f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/',
             'resume_url': f'/api/v1/interviews/{session.id}/resume-state/',
             'generation_job': InterviewQuestionGenerationJobSerializer(generation_job).data,
         }, status=status.HTTP_202_ACCEPTED)
         response['X-Agent-Run-Id'] = str(execution.run_id)
-        response['Access-Control-Expose-Headers'] = 'X-Agent-Run-Id'
+        if execution.operation_id:
+            response['X-Operation-Id'] = str(execution.operation_id)
+        response['Access-Control-Expose-Headers'] = 'X-Agent-Run-Id, X-Operation-Id'
         return response
 
     def _complete_recovered_execution(self, session, answered_question, result_question=None):
@@ -1887,17 +1967,10 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 video_status = 'transcoding'
                 progress = 0
                 if upload_task.merged_file_path:
-                    try:
-                        from video_uploads.tasks import transcode_video_task
-                        if not transcode_task.original_file:
-                            transcode_task.original_file = upload_task.merged_file_path
-                        transcode_task.status = 'processing'
-                        transcode_task.started_at = timezone.now()
-                        transcode_task.save(update_fields=['original_file', 'status', 'started_at'])
-                        transcode_video_task.delay(str(transcode_task.id))
-                    except Exception as e:
-                        error_message = f'转码任务调度失败: {str(e)[:300]}'
-                        transcode_error_message = error_message
+                    # Read endpoints never dispatch expensive work. New merge
+                    # requests create a durable media Operation + Dispatch in
+                    # the write transaction; a reconciler owns legacy recovery.
+                    error_message = '录像已合并，正在等待后台转码调度。'
             elif transcode_task.status == 'processing':
                 video_status = 'transcoding'
                 progress = transcode_task.progress or 0

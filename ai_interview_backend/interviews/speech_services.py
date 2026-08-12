@@ -1,6 +1,4 @@
 import mimetypes
-import os
-import tempfile
 import uuid
 import hashlib
 from dataclasses import dataclass
@@ -9,10 +7,7 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from openai import OpenAI
-
-from system.ai_config import resolve_ai_config
-from system.models import AIModel
+from system.model_gateway import ModelGateway
 
 from .models import InterviewMediaArtifact, InterviewQuestion, InterviewSession
 
@@ -27,26 +22,13 @@ class SpeechResult:
     error: str = ''
 
 
-def _model_snapshot(model):
-    if not model:
-        return {'provider': '', 'model_slug': ''}
-    return {'provider': model.provider or '', 'model_slug': model.model_slug or ''}
+def _public_speech_error(exc: Exception, capability: str) -> str:
+    """Keep the stable media error contract while the gateway owns routing."""
 
-
-def _openai_client(api_key: str, model) -> OpenAI:
-    return OpenAI(api_key=api_key, base_url=model.base_url or None)
-
-
-def _response_text(response) -> str:
-    if isinstance(response, str):
-        return response.strip()
-    for attr in ('text', 'content'):
-        value = getattr(response, attr, None)
-        if value:
-            return str(value).strip()
-    if isinstance(response, dict):
-        return str(response.get('text') or response.get('content') or '').strip()
-    return ''
+    error = str(exc or '')[:1000]
+    if error.startswith(f'no_available_deployment:speech.{capability}'):
+        return f'{capability}_model_or_api_key_missing'
+    return error
 
 
 def create_answer_audio_artifact(
@@ -74,19 +56,9 @@ def create_answer_audio_artifact(
 
 
 def transcribe_artifact(artifact: InterviewMediaArtifact, *, user=None) -> SpeechResult:
-    resolved = resolve_ai_config(user or artifact.user, AIModel.ModelType.ASR)
-    snapshot = _model_snapshot(resolved.model)
-    artifact.provider = snapshot['provider']
-    artifact.model_slug = snapshot['model_slug']
     artifact.status = InterviewMediaArtifact.Status.PROCESSING
     artifact.error_message = ''
-    artifact.save(update_fields=['provider', 'model_slug', 'status', 'error_message', 'updated_at'])
-
-    if not resolved.model or not resolved.api_key:
-        artifact.status = InterviewMediaArtifact.Status.FAILED
-        artifact.error_message = 'asr_model_or_api_key_missing'
-        artifact.save(update_fields=['status', 'error_message', 'updated_at'])
-        return SpeechResult(ok=False, artifact=artifact, error=artifact.error_message)
+    artifact.save(update_fields=['status', 'error_message', 'updated_at'])
 
     if not artifact.source_file:
         artifact.status = InterviewMediaArtifact.Status.FAILED
@@ -95,28 +67,34 @@ def transcribe_artifact(artifact: InterviewMediaArtifact, *, user=None) -> Speec
         return SpeechResult(ok=False, artifact=artifact, error=artifact.error_message)
 
     try:
-        client = _openai_client(resolved.api_key, resolved.model)
         artifact.source_file.open('rb')
         try:
-            response = client.audio.transcriptions.create(
-                model=resolved.model.model_slug,
-                file=artifact.source_file.file,
+            text, gateway_metadata = ModelGateway(user or artifact.user).transcribe_audio(
+                artifact.source_file.file,
+                filename=(artifact.source_file.name or 'audio.webm').replace('\\', '/').rsplit('/', 1)[-1],
+                content_type=artifact.mime_type or 'application/octet-stream',
+                alias_slug='speech.asr',
             )
         finally:
             artifact.source_file.close()
-        text = _response_text(response)
         if not text:
             raise RuntimeError('asr_empty_transcript')
+        artifact.provider = str(gateway_metadata.get('provider') or '')[:50]
+        artifact.model_slug = str(gateway_metadata.get('model') or '')[:100]
         artifact.transcript_text = text
         artifact.asr_confidence = None
         artifact.transcript_segments = []
         artifact.status = InterviewMediaArtifact.Status.COMPLETED
         artifact.metadata = {
             **(artifact.metadata or {}),
-            'asr_source': resolved.source,
+            'asr_source': 'model_gateway',
+            'gateway_alias': gateway_metadata.get('alias', 'speech.asr'),
+            'gateway_deployment': gateway_metadata.get('deployment', ''),
             'transcribed_at': timezone.now().isoformat(),
         }
         artifact.save(update_fields=[
+            'provider',
+            'model_slug',
             'transcript_text',
             'asr_confidence',
             'transcript_segments',
@@ -127,7 +105,7 @@ def transcribe_artifact(artifact: InterviewMediaArtifact, *, user=None) -> Speec
         return SpeechResult(ok=True, artifact=artifact, text=text, confidence=artifact.asr_confidence)
     except Exception as exc:
         artifact.status = InterviewMediaArtifact.Status.FAILED
-        artifact.error_message = str(exc)[:1000]
+        artifact.error_message = _public_speech_error(exc, 'asr')
         artifact.save(update_fields=['status', 'error_message', 'updated_at'])
         return SpeechResult(ok=False, artifact=artifact, error=artifact.error_message)
 
@@ -186,58 +164,43 @@ def synthesize_question_tts(
         status=InterviewMediaArtifact.Status.PROCESSING,
         mime_type='audio/mpeg',
     )
-    resolved = resolve_ai_config(user, AIModel.ModelType.TTS)
-    snapshot = _model_snapshot(resolved.model)
-    artifact.provider = snapshot['provider']
-    artifact.model_slug = snapshot['model_slug']
-    artifact.save(update_fields=['provider', 'model_slug', 'updated_at'])
-
-    if not resolved.model or not resolved.api_key:
-        artifact.status = InterviewMediaArtifact.Status.FAILED
-        artifact.error_message = 'tts_model_or_api_key_missing'
-        artifact.save(update_fields=['status', 'error_message', 'updated_at'])
-        return SpeechResult(ok=False, artifact=artifact, error=artifact.error_message)
-
     try:
-        client = _openai_client(resolved.api_key, resolved.model)
         voice = getattr(settings, 'TTS_DEFAULT_VOICE', 'alloy')
         response_format = getattr(settings, 'TTS_RESPONSE_FORMAT', 'mp3')
-        response = client.audio.speech.create(
-            model=resolved.model.model_slug,
+        content, gateway_metadata = ModelGateway(user).synthesize_speech(
+            text,
             voice=voice,
-            input=text,
             response_format=response_format,
+            alias_slug='speech.tts',
         )
         suffix = response_format if response_format.startswith('.') else f'.{response_format}'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            temp_path = tmp.name
-        try:
-            if hasattr(response, 'write_to_file'):
-                response.write_to_file(temp_path)
-                with open(temp_path, 'rb') as audio_file:
-                    content = audio_file.read()
-            elif hasattr(response, 'read'):
-                content = response.read()
-            else:
-                content = bytes(response)
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
         if not content:
             raise RuntimeError('tts_empty_audio')
+        artifact.provider = str(gateway_metadata.get('provider') or '')[:50]
+        artifact.model_slug = str(gateway_metadata.get('model') or '')[:100]
         artifact.source_file.save(f'question-{question.id}-{uuid.uuid4().hex}{suffix}', ContentFile(content), save=False)
         artifact.mime_type = mimetypes.types_map.get(suffix, 'audio/mpeg')
         artifact.status = InterviewMediaArtifact.Status.COMPLETED
         artifact.metadata = {
-            'tts_source': resolved.source,
+            'tts_source': 'model_gateway',
+            'gateway_alias': gateway_metadata.get('alias', 'speech.tts'),
+            'gateway_deployment': gateway_metadata.get('deployment', ''),
             'voice': voice,
             'synthesized_at': timezone.now().isoformat(),
             'text_hash': text_hash,
         }
-        artifact.save(update_fields=['source_file', 'mime_type', 'status', 'metadata', 'updated_at'])
+        artifact.save(update_fields=[
+            'provider',
+            'model_slug',
+            'source_file',
+            'mime_type',
+            'status',
+            'metadata',
+            'updated_at',
+        ])
         return SpeechResult(ok=True, artifact=artifact, file_url=artifact.source_file.url)
     except Exception as exc:
         artifact.status = InterviewMediaArtifact.Status.FAILED
-        artifact.error_message = str(exc)[:1000]
+        artifact.error_message = _public_speech_error(exc, 'tts')
         artifact.save(update_fields=['status', 'error_message', 'updated_at'])
         return SpeechResult(ok=False, artifact=artifact, error=artifact.error_message)

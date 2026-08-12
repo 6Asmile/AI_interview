@@ -684,6 +684,14 @@ class InterviewAgentExecution(models.Model):
         CANCELED = 'canceled', '已取消'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation = models.OneToOneField(
+        'core.AsyncOperation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='interview_agent_execution',
+        verbose_name='平台异步操作',
+    )
     session = models.ForeignKey(
         InterviewSession,
         on_delete=models.CASCADE,
@@ -716,6 +724,10 @@ class InterviewAgentExecution(models.Model):
     state_schema_version = models.PositiveSmallIntegerField(default=4)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
     version = models.PositiveIntegerField(default=0, verbose_name='状态版本')
+    fencing_token = models.PositiveBigIntegerField(default=0, verbose_name='执行栅栏令牌')
+    lease_owner = models.CharField(max_length=128, blank=True, db_index=True, verbose_name='租约持有者')
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True, verbose_name='租约过期时间')
+    heartbeat_at = models.DateTimeField(null=True, blank=True, verbose_name='最近心跳时间')
     retry_count = models.PositiveSmallIntegerField(default=0, verbose_name='重试次数')
     last_durable_sequence = models.PositiveIntegerField(default=0, verbose_name='最后持久化事件序号')
     state_metadata = models.JSONField(default=dict, blank=True, verbose_name='持久化状态摘要')
@@ -748,6 +760,7 @@ class InterviewAgentExecution(models.Model):
         indexes = [
             models.Index(fields=['session', 'status', 'updated_at']),
             models.Index(fields=['thread_id', 'created_at']),
+            models.Index(fields=['status', 'lease_expires_at'], name='interviews_status_lease_idx'),
         ]
 
     def __str__(self):
@@ -1148,6 +1161,14 @@ class EvaluationRun(models.Model):
         SUCCEEDED = 'succeeded', '已完成'
         FAILED = 'failed', '失败'
 
+    operation = models.OneToOneField(
+        'core.AsyncOperation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='evaluation_run',
+        verbose_name='平台异步操作',
+    )
     dataset = models.ForeignKey(EvaluationDataset, on_delete=models.CASCADE, related_name='runs')
     template = models.ForeignKey(InterviewTemplate, on_delete=models.SET_NULL, null=True, blank=True, related_name='evaluation_runs')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)

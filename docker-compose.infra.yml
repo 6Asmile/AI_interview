@@ -37,17 +37,49 @@ services:
     networks:
       - ifaceoff_infra_network
 
-  redis:
-    image: redis:7-alpine
-    container_name: Ifaceoff-infra-redis
+  redis-cache:
+    image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
+    container_name: Ifaceoff-infra-redis-cache
     restart: unless-stopped
-    command: redis-server --appendonly yes --appendfsync everysec
+    command: redis-server --save "" --appendonly no --maxmemory ${REDIS_CACHE_MAXMEMORY:-1gb} --maxmemory-policy allkeys-lfu
     ports:
       - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - ifaceoff_redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && test \"$$(redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1)\" = allkeys-lfu && test $$(redis-cli --raw CONFIG GET maxmemory | tail -n 1) -gt 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ifaceoff_infra_network
+
+  redis-coordination:
+    image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
+    container_name: Ifaceoff-infra-redis-coordination
+    restart: unless-stopped
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_COORDINATION_MAXMEMORY:-512mb} --maxmemory-policy noeviction
+    ports:
+      - "${REDIS_COORDINATION_PORT:-6380}:6379"
+    volumes:
+      - ifaceoff_redis_coordination_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && test \"$$(redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1)\" = noeviction && test \"$$(redis-cli --raw CONFIG GET appendonly | tail -n 1)\" = yes && test $$(redis-cli --raw CONFIG GET maxmemory | tail -n 1) -gt 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ifaceoff_infra_network
+
+  redis-realtime:
+    image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
+    container_name: Ifaceoff-infra-redis-realtime
+    restart: unless-stopped
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_REALTIME_MAXMEMORY:-1gb} --maxmemory-policy noeviction
+    ports:
+      - "${REDIS_REALTIME_PORT:-6381}:6379"
+    volumes:
+      - ifaceoff_redis_realtime_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && test \"$$(redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1)\" = noeviction && test \"$$(redis-cli --raw CONFIG GET appendonly | tail -n 1)\" = yes && test $$(redis-cli --raw CONFIG GET maxmemory | tail -n 1) -gt 0"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -68,8 +100,9 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - ifaceoff_rabbitmq_data:/var/lib/rabbitmq
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_local_alarms"]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -160,8 +193,10 @@ services:
 volumes:
   ifaceoff_postgres_data:
     name: Ifaceoff-infra-postgres-data
-  ifaceoff_redis_data:
-    name: Ifaceoff-infra-redis-data
+  ifaceoff_redis_coordination_data:
+    name: Ifaceoff-infra-redis-coordination-data
+  ifaceoff_redis_realtime_data:
+    name: Ifaceoff-infra-redis-realtime-data
   ifaceoff_rabbitmq_data:
     name: Ifaceoff-infra-rabbitmq-data
   ifaceoff_qdrant_data:

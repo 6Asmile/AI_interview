@@ -1,5 +1,6 @@
 import os
 import logging
+from django.db import transaction
 from django.utils import timezone
 from celery import shared_task
 from .models import FileUploadTask, FileChunk, VideoTranscodeTask
@@ -89,10 +90,33 @@ def start_transcode_after_merge(merge_result: dict, transcode_task_id: str):
         _mark_transcode_failed(transcode_task, error)
         return {"success": False, "error": error}
 
-    transcode_task.original_file = merged_file
-    transcode_task.save(update_fields=['original_file'])
-    transcode_video_task.delay(str(transcode_task.id))
-    return {"success": True, "transcode_task_id": str(transcode_task.id)}
+    with transaction.atomic():
+        transcode_task = VideoTranscodeTask.objects.select_for_update().select_related('upload_task').get(
+            id=transcode_task.id,
+        )
+        transcode_task.original_file = merged_file
+        transcode_task.save(update_fields=['original_file'])
+        from core.models import AsyncOperation
+        from .operation_handlers import create_video_operation
+
+        operation = AsyncOperation.objects.filter(
+            user=transcode_task.user,
+            operation_type='media.video_process',
+            source_app='video_uploads',
+            source_model='FileUploadTask',
+            source_id=str(transcode_task.upload_task_id),
+        ).exclude(status=AsyncOperation.Status.CANCELED).order_by('-created_at').first()
+        if operation is None:
+            operation = create_video_operation(
+                user=transcode_task.user,
+                upload_task=transcode_task.upload_task,
+                transcode_task=transcode_task,
+            )
+    return {
+        "success": True,
+        "transcode_task_id": str(transcode_task.id),
+        "operation_id": str(operation.id),
+    }
 
 
 @shared_task(bind=True, max_retries=2)

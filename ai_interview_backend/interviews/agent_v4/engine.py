@@ -263,7 +263,14 @@ class CompositeV4InterviewAgentEngine(CompositeV3InterviewAgentEngine):
             InterviewAgentExecution.Status.RUNNING,
             InterviewAgentExecution.Status.WAITING,
         )
-        InterviewAgentExecution.objects.filter(run_id=run_id, status__in=active_statuses).update(
+        # A leased durable execution is owned by the Celery state machine.  The
+        # engine may calculate a result, but must not advance the authoritative
+        # lifecycle behind the worker's fencing token.
+        InterviewAgentExecution.objects.filter(
+            run_id=run_id,
+            status__in=active_statuses,
+            lease_owner='',
+        ).update(
             **updates,
             updated_at=timezone.now(),
         )

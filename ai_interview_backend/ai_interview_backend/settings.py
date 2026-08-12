@@ -345,36 +345,56 @@ REDIS_CACHE_URL = os.getenv('REDIS_CACHE_URL', f'redis://{REDIS_HOST}:{REDIS_POR
 REDIS_COORDINATION_URL = os.getenv('REDIS_COORDINATION_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/2')
 REDIS_REALTIME_URL = os.getenv('REDIS_REALTIME_URL', f'redis://{REDIS_HOST}:{REDIS_PORT}/3')
 IFACEOFF_ENV = os.getenv('IFACEOFF_ENV', 'dev')
+REDIS_KEY_HMAC_SECRET = os.getenv('REDIS_KEY_HMAC_SECRET', '').strip() or SECRET_KEY
+ADMISSION_TRUSTED_PROXY_IPS = tuple(
+    value.strip()
+    for value in os.getenv('ADMISSION_TRUSTED_PROXY_IPS', '').split(',')
+    if value.strip()
+)
+EMAIL_VERIFICATION_CODE_TTL_SECONDS = int(
+    os.getenv('EMAIL_VERIFICATION_CODE_TTL_SECONDS', '300')
+)
+WS_TICKET_TTL_SECONDS = int(os.getenv('WS_TICKET_TTL_SECONDS', '45'))
+REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+    os.getenv('REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS', '2')
+)
+REDIS_SOCKET_TIMEOUT_SECONDS = float(os.getenv('REDIS_SOCKET_TIMEOUT_SECONDS', '2'))
+REDIS_HEALTH_CHECK_INTERVAL_SECONDS = int(
+    os.getenv('REDIS_HEALTH_CHECK_INTERVAL_SECONDS', '30')
+)
+
+
+def _redis_options(*, ignore_exceptions):
+    return {
+        'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        'IGNORE_EXCEPTIONS': ignore_exceptions,
+        'SOCKET_CONNECT_TIMEOUT': REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
+        'SOCKET_TIMEOUT': REDIS_SOCKET_TIMEOUT_SECONDS,
+        'CONNECTION_POOL_KWARGS': {
+            'health_check_interval': REDIS_HEALTH_CHECK_INTERVAL_SECONDS,
+        },
+    }
 
 
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": REDIS_CACHE_URL,
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "IGNORE_EXCEPTIONS": True,
-        },
+        "OPTIONS": _redis_options(ignore_exceptions=True),
         "TIMEOUT": 3600,
         "KEY_PREFIX": "ifaceoff-cache",
     },
     "realtime": {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": REDIS_REALTIME_URL,
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "IGNORE_EXCEPTIONS": False,
-        },
+        "OPTIONS": _redis_options(ignore_exceptions=False),
         "TIMEOUT": 300,
         "KEY_PREFIX": "ifaceoff-realtime",
     },
     "coordination": {
         "BACKEND": "django_redis.cache.RedisCache",
         "LOCATION": REDIS_COORDINATION_URL,
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            "IGNORE_EXCEPTIONS": False,
-        },
+        "OPTIONS": _redis_options(ignore_exceptions=False),
         "TIMEOUT": 300,
         "KEY_PREFIX": "ifaceoff-coordination",
     },
@@ -452,8 +472,14 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_DEFAULT_DELIVERY_MODE = 2
+CELERY_TASK_CREATE_MISSING_QUEUES = False
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
-CELERY_BROKER_TRANSPORT_OPTIONS = {'confirm_publish': True, 'max_retries': 5}
+CELERY_BROKER_HEARTBEAT = int(os.getenv('CELERY_BROKER_HEARTBEAT', '30'))
+CELERY_BROKER_POOL_LIMIT = int(os.getenv('CELERY_BROKER_POOL_LIMIT', '20'))
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'confirm_publish': True,
+    'max_retries': 5,
+}
 CELERY_TASK_PUBLISH_RETRY = True
 CELERY_TASK_PUBLISH_RETRY_POLICY = {
     'max_retries': 5,
@@ -463,24 +489,78 @@ CELERY_TASK_PUBLISH_RETRY_POLICY = {
 }
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', '840'))
 CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '900'))
+AGENT_EXECUTION_LEASE_SECONDS = int(os.getenv('AGENT_EXECUTION_LEASE_SECONDS', '360'))
+OPERATION_LEASE_SECONDS = int(os.getenv('OPERATION_LEASE_SECONDS', '300'))
+OPERATION_DISPATCH_BATCH_SIZE = int(os.getenv('OPERATION_DISPATCH_BATCH_SIZE', '100'))
+ASYNC_OPERATION_V2_DOMAINS = tuple(
+    domain.strip().lower()
+    for domain in os.getenv(
+        'ASYNC_OPERATION_V2_DOMAINS',
+        'resume,career,knowledge,media,community',
+    ).split(',')
+    if domain.strip()
+)
+CELERY_TASK_RESULT_EXPIRES = int(os.getenv('CELERY_TASK_RESULT_EXPIRES', '86400'))
+CELERY_WORKER_MAX_TASKS_PER_CHILD = int(os.getenv('CELERY_WORKER_MAX_TASKS_PER_CHILD', '200'))
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = int(os.getenv('CELERY_WORKER_MAX_MEMORY_PER_CHILD', '524288'))
+CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
 CELERY_INSPECT_TIMEOUT_SECONDS = float(os.getenv('CELERY_INSPECT_TIMEOUT_SECONDS', '2'))
 
 from kombu import Exchange, Queue
 
-_commands_exchange = Exchange('ifaceoff.commands', type='direct', durable=True)
-_events_exchange = Exchange('ifaceoff.events', type='topic', durable=True)
-_dead_exchange = Exchange('ifaceoff.dlx', type='topic', durable=True)
+CELERY_TOPOLOGY_VERSION = os.getenv('CELERY_TOPOLOGY_VERSION', 'v2').strip().lower()
+if not CELERY_TOPOLOGY_VERSION.replace('-', '').replace('_', '').isalnum():
+    raise ValueError('CELERY_TOPOLOGY_VERSION must contain only letters, digits, dashes or underscores')
+CELERY_TOPOLOGY_PREFIX = f'ifaceoff.{CELERY_TOPOLOGY_VERSION}'
+
+CELERY_DEFAULT_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.default'
+CELERY_AGENT_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.agent.interactive'
+CELERY_CAREER_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.career.analysis'
+CELERY_DOCUMENT_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.documents'
+CELERY_RESUME_RENDER_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.resume.render'
+CELERY_MEDIA_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.media'
+CELERY_COMMUNITY_MODERATION_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.community.moderation'
+CELERY_NOTIFICATION_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.notifications'
+CELERY_SEARCH_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.search.index'
+CELERY_EVENT_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.events'
+CELERY_PUBLISHER_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.publisher'
+
+# Stable public names consumed by publisher tasks and operational checks.
+CELERY_EVENTS_QUEUE = CELERY_EVENT_QUEUE
+
+CELERY_COMMAND_EXCHANGE = 'ifaceoff.commands'
+CELERY_EVENT_EXCHANGE = 'ifaceoff.events'
+CELERY_DEAD_EXCHANGE = 'ifaceoff.dlx'
+CELERY_COMMANDS_EXCHANGE = CELERY_COMMAND_EXCHANGE
+CELERY_EVENTS_EXCHANGE = CELERY_EVENT_EXCHANGE
+CELERY_DLX_EXCHANGE = CELERY_DEAD_EXCHANGE
+
+_commands_exchange = Exchange(CELERY_COMMAND_EXCHANGE, type='direct', durable=True)
+_events_exchange = Exchange(CELERY_EVENT_EXCHANGE, type='topic', durable=True)
+_dead_exchange = Exchange(CELERY_DEAD_EXCHANGE, type='topic', durable=True)
 
 
-def _durable_queue(name, routing_key, *, exchange=_commands_exchange, quorum=False):
+def _durable_queue(
+    name,
+    routing_key,
+    *,
+    exchange=_commands_exchange,
+    quorum=False,
+    dead_routing_key=None,
+):
     arguments = {
-        'x-dead-letter-exchange': 'ifaceoff.dlx',
-        'x-dead-letter-routing-key': f'dead.{name}',
+        'x-dead-letter-exchange': CELERY_DEAD_EXCHANGE,
+        'x-dead-letter-routing-key': f'dead.{dead_routing_key or routing_key}',
     }
     if quorum:
         arguments.update({
             'x-queue-type': 'quorum',
             'x-delivery-limit': int(os.getenv('RABBITMQ_DELIVERY_LIMIT', '12')),
+            'x-overflow': 'reject-publish',
+            'x-max-length': int(os.getenv('RABBITMQ_QUORUM_MAX_LENGTH', '100000')),
+            'x-max-length-bytes': int(
+                os.getenv('RABBITMQ_QUORUM_MAX_LENGTH_BYTES', str(1024 * 1024 * 1024))
+            ),
         })
     return Queue(
         name,
@@ -491,61 +571,88 @@ def _durable_queue(name, routing_key, *, exchange=_commands_exchange, quorum=Fal
     )
 
 
-def _retry_queue(name, routing_key):
+def _dead_letter_queue(name, routing_key):
     return Queue(
-        f'{name}.retry',
-        exchange=_commands_exchange,
-        routing_key=f'{routing_key}.retry',
+        f'{name}.dlq',
+        exchange=_dead_exchange,
+        routing_key=f'dead.{routing_key}',
         durable=True,
         queue_arguments={
-            'x-message-ttl': int(os.getenv('RABBITMQ_RETRY_DELAY_MS', '30000')),
-            'x-dead-letter-exchange': 'ifaceoff.commands',
-            'x-dead-letter-routing-key': routing_key,
-            'x-expires': int(os.getenv('RABBITMQ_RETRY_QUEUE_EXPIRES_MS', '86400000')),
+            'x-queue-type': 'quorum',
+            'x-overflow': 'reject-publish',
+            'x-max-length': int(os.getenv('RABBITMQ_DLQ_MAX_LENGTH', '10000')),
+            'x-max-length-bytes': int(
+                os.getenv('RABBITMQ_DLQ_MAX_LENGTH_BYTES', str(256 * 1024 * 1024))
+            ),
         },
     )
 
 
-CELERY_TASK_DEFAULT_QUEUE = 'celery'
-CELERY_TASK_QUEUES = (
-    _durable_queue('celery', 'celery'),
-    _durable_queue('agent', 'agent', quorum=True),
-    _durable_queue('career.analysis', 'career.analysis', quorum=True),
-    _durable_queue('documents', 'documents', quorum=True),
-    _durable_queue('resume.render', 'resume.render', quorum=True),
-    _durable_queue('media', 'media', quorum=True),
-    _durable_queue('community.moderation', 'community.moderation', quorum=True),
-    _retry_queue('agent', 'agent'),
-    _retry_queue('career.analysis', 'career.analysis'),
-    _retry_queue('documents', 'documents'),
-    _retry_queue('resume.render', 'resume.render'),
-    _retry_queue('media', 'media'),
-    _retry_queue('community.moderation', 'community.moderation'),
-    _durable_queue('notifications', 'notifications'),
-    _durable_queue('search.index', 'search.index'),
-    _durable_queue('events', '#', exchange=_events_exchange),
-    Queue(
-        'ifaceoff.dead',
-        exchange=_dead_exchange,
-        routing_key='dead.#',
-        durable=True,
-        queue_arguments={'x-queue-type': 'quorum'},
+_queue_specs = (
+    (CELERY_DEFAULT_QUEUE, 'default', 'default', _commands_exchange, False),
+    (CELERY_AGENT_QUEUE, 'agent.interactive', 'agent.interactive', _commands_exchange, True),
+    (CELERY_CAREER_QUEUE, 'career.analysis', 'career.analysis', _commands_exchange, True),
+    (CELERY_DOCUMENT_QUEUE, 'documents', 'documents', _commands_exchange, True),
+    (CELERY_RESUME_RENDER_QUEUE, 'resume.render', 'resume.render', _commands_exchange, True),
+    (CELERY_MEDIA_QUEUE, 'media', 'media', _commands_exchange, True),
+    (
+        CELERY_COMMUNITY_MODERATION_QUEUE,
+        'community.moderation',
+        'community.moderation',
+        _commands_exchange,
+        True,
     ),
+    (CELERY_NOTIFICATION_QUEUE, 'notifications', 'notifications', _commands_exchange, False),
+    (CELERY_SEARCH_QUEUE, 'search.index', 'search.index', _commands_exchange, False),
+    (CELERY_EVENT_QUEUE, '#', 'events', _events_exchange, False),
+    (CELERY_PUBLISHER_QUEUE, 'publisher', 'publisher', _commands_exchange, True),
 )
+_work_queues = tuple(
+    _durable_queue(
+        name,
+        routing_key,
+        exchange=exchange,
+        quorum=quorum,
+        dead_routing_key=dead_routing_key,
+    )
+    for name, routing_key, dead_routing_key, exchange, quorum in _queue_specs
+)
+_dead_letter_queues = tuple(
+    _dead_letter_queue(name, dead_routing_key)
+    for name, _routing_key, dead_routing_key, _exchange, _quorum in _queue_specs
+)
+CELERY_MAIN_QUEUE_NAMES = tuple(queue.name for queue in _work_queues)
+CELERY_DLQ_NAMES = tuple(queue.name for queue in _dead_letter_queues)
+
+CELERY_TASK_DEFAULT_QUEUE = CELERY_DEFAULT_QUEUE
+CELERY_TASK_DEFAULT_EXCHANGE = CELERY_COMMAND_EXCHANGE
+CELERY_TASK_DEFAULT_EXCHANGE_TYPE = 'direct'
+CELERY_TASK_DEFAULT_ROUTING_KEY = 'default'
+CELERY_TASK_QUEUES = _work_queues + _dead_letter_queues
 CELERY_TASK_ROUTES = {
-    'interviews.tasks.run_interview_execution': {'queue': 'agent'},
-    'interviews.tasks.run_composite_v4_turn': {'queue': 'agent'},
-    'knowledge.tasks.*': {'queue': 'documents'},
-    'resumes.tasks.render_resume_artifact': {'queue': 'resume.render'},
-    'resumes.tasks.*': {'queue': 'documents'},
-    'video_uploads.tasks.*': {'queue': 'media'},
-    'notifications.tasks.*': {'queue': 'notifications'},
-    'chat.tasks.*': {'queue': 'notifications'},
-    'careers.tasks.*': {'queue': 'career.analysis'},
-    'community.tasks.moderate_community_content': {'queue': 'community.moderation'},
-    'community.tasks.*': {'queue': 'search.index'},
-    'core.tasks.consume_integration_event': {'queue': 'events'},
-    'core.tasks.publish_integration_outbox': {'queue': 'notifications'},
+    # Publisher tasks must precede broad domain wildcards so durable outbox
+    # delivery remains isolated from user-facing notification workloads.
+    'core.tasks.publish_operation_dispatch_outbox': {'queue': CELERY_PUBLISHER_QUEUE},
+    'core.tasks.publish_integration_outbox': {'queue': CELERY_PUBLISHER_QUEUE},
+    'core.tasks.recover_stale_operations_task': {'queue': CELERY_PUBLISHER_QUEUE},
+    'interviews.tasks.publish_pending_agent_dispatches': {'queue': CELERY_PUBLISHER_QUEUE},
+    'interviews.tasks.recover_stale_agent_executions': {'queue': CELERY_PUBLISHER_QUEUE},
+    'chat.tasks.publish_pending_chat_outbox': {'queue': CELERY_PUBLISHER_QUEUE},
+    'notifications.tasks.publish_notification_outbox': {'queue': CELERY_PUBLISHER_QUEUE},
+    'staff_admin.tasks.publish_staff_email_outbox': {'queue': CELERY_PUBLISHER_QUEUE},
+    'interviews.tasks.run_interview_execution': {'queue': CELERY_AGENT_QUEUE},
+    'interviews.tasks.run_composite_v4_turn': {'queue': CELERY_AGENT_QUEUE},
+    'interviews.tasks.run_evaluation_run': {'queue': CELERY_AGENT_QUEUE},
+    'knowledge.tasks.*': {'queue': CELERY_DOCUMENT_QUEUE},
+    'resumes.tasks.render_resume_artifact': {'queue': CELERY_RESUME_RENDER_QUEUE},
+    'resumes.tasks.*': {'queue': CELERY_DOCUMENT_QUEUE},
+    'video_uploads.tasks.*': {'queue': CELERY_MEDIA_QUEUE},
+    'notifications.tasks.*': {'queue': CELERY_NOTIFICATION_QUEUE},
+    'chat.tasks.*': {'queue': CELERY_NOTIFICATION_QUEUE},
+    'careers.tasks.*': {'queue': CELERY_CAREER_QUEUE},
+    'community.tasks.moderate_community_content': {'queue': CELERY_COMMUNITY_MODERATION_QUEUE},
+    'community.tasks.*': {'queue': CELERY_SEARCH_QUEUE},
+    'core.tasks.consume_integration_event': {'queue': CELERY_EVENT_QUEUE},
 }
 
 # --- CELERY BEAT SETTINGS (定时任务调度器) ---
@@ -566,10 +673,12 @@ CELERY_BEAT_SCHEDULE = {
     'publish-chat-outbox-every-minute': {
         'task': 'chat.tasks.publish_pending_chat_outbox',
         'schedule': 60,
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
     },
     'publish-notification-outbox-every-minute': {
         'task': 'notifications.tasks.publish_notification_outbox',
         'schedule': 60,
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
     },
     'mark-stale-resume-imports': {
         'task': 'resumes.tasks.mark_stale_resume_import_jobs',
@@ -582,22 +691,33 @@ CELERY_BEAT_SCHEDULE = {
     'publish-agent-dispatch-outbox': {
         'task': 'interviews.tasks.publish_pending_agent_dispatches',
         'schedule': 2,
-        'options': {'queue': 'notifications'},
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
     },
     'recover-stale-agent-executions': {
         'task': 'interviews.tasks.recover_stale_agent_executions',
         'schedule': 60,
-        'options': {'queue': 'notifications'},
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
     },
     'publish-integration-outbox': {
         'task': 'core.tasks.publish_integration_outbox',
         'schedule': 2,
-        'options': {'queue': 'notifications'},
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
+    },
+    'publish-operation-dispatch-outbox': {
+        'task': 'core.tasks.publish_operation_dispatch_outbox',
+        'schedule': 2,
+        'args': (OPERATION_DISPATCH_BATCH_SIZE,),
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
+    },
+    'recover-stale-operations': {
+        'task': 'core.tasks.recover_stale_operations_task',
+        'schedule': 60,
+        'options': {'queue': CELERY_PUBLISHER_QUEUE},
     },
     'generate-weekly-career-reports': {
         'task': 'careers.tasks.generate_weekly_career_reports',
         'schedule': crontab(hour=8, minute=0, day_of_week='monday'),
-        'options': {'queue': 'career.analysis'},
+        'options': {'queue': CELERY_CAREER_QUEUE},
     },
 }
 #celery -A ai_interview_backend worker -l info -P gevent
@@ -611,6 +731,14 @@ CHANNEL_LAYERS = {
             # 【核心修改】使用 redis://host:port/db 的格式
             # 注意：这里假设您的 REDIS_HOST 和 REDIS_PORT 变量已经定义好了
             "hosts": [REDIS_REALTIME_URL],
+            "capacity": int(os.getenv('CHANNEL_LAYER_CAPACITY', '1000')),
+            "expiry": int(os.getenv('CHANNEL_LAYER_EXPIRY_SECONDS', '60')),
+            "group_expiry": int(os.getenv('CHANNEL_LAYER_GROUP_EXPIRY_SECONDS', '86400')),
+            "channel_capacity": {
+                "http.request": int(os.getenv('CHANNEL_HTTP_CAPACITY', '200')),
+                "http.response!*": int(os.getenv('CHANNEL_HTTP_RESPONSE_CAPACITY', '200')),
+                "websocket.send!*": int(os.getenv('CHANNEL_WEBSOCKET_SEND_CAPACITY', '500')),
+            },
         },
     },
 }

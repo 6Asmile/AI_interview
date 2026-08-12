@@ -22,7 +22,6 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from core.admission import admit_expensive_operation
 from core.idempotency import run_idempotent
-from core.models import AsyncOperation
 from core.throttles import UploadRateThrottle
 from core.uploads import validate_uploaded_file
 
@@ -32,6 +31,7 @@ from .models import (
     ResumeShareAccess, ResumeShareLink, ResumeSuggestion, ResumeVersion,
 )
 from .rendering import RENDERER_NAME, RENDERER_VERSION, artifact_cache_key
+from .operation_service import create_resume_operation
 from .schema import sha256_json, strip_internal_metadata, validate_resume
 from .serializers_v2 import (
     DraftPatchSerializer, ResumeArtifactSerializer, ResumeDraftSerializer,
@@ -41,10 +41,7 @@ from .serializers_v2 import (
 )
 from .sharing import create_share_link, redact_shared_resume, resolve_share, shared_render_snapshot
 from .studio import commit_draft, ensure_studio, update_draft
-from .tasks import (
-    confirm_resume_import, generate_resume_suggestion_task, process_resume_import_job,
-    render_resume_artifact, review_resume_quality,
-)
+from .tasks import confirm_resume_import
 from .templates import default_design, design_hash, template_catalog
 from .versioning import accept_suggestion, create_resume_version
 
@@ -61,31 +58,6 @@ def operation_response(operation, *, http_status=status.HTTP_202_ACCEPTED, extra
     }
     data.update(extra or {})
     return Response(data, status=http_status)
-
-
-def _create_operation(*, user, operation_type, source_model, source_id, title, metadata=None):
-    return AsyncOperation.objects.create(
-        user=user,
-        operation_type=operation_type,
-        source_app='resumes',
-        source_model=source_model,
-        source_id=str(source_id),
-        title=title,
-        metadata=metadata or {},
-    )
-
-
-def _dispatch(task, args, operation):
-    try:
-        task.delay(*args, str(operation.id))
-    except Exception as exc:
-        operation.metadata = {
-            **(operation.metadata or {}),
-            'dispatch_status': 'waiting_for_broker',
-            'dispatch_error': str(exc)[:500],
-        }
-        operation.retryable = True
-        operation.save(update_fields=['metadata', 'retryable', 'updated_at'])
 
 
 def _json_diff(before, after, path=''):
@@ -328,33 +300,26 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
                 'etag': draft.etag, 'format': ResumeArtifact.Format.PREVIEW,
                 'renderer': RENDERER_VERSION,
             })
-            artifact, _ = ResumeArtifact.objects.get_or_create(
-                cache_key=key,
-                defaults={
-                    'resume': resume,
-                    'draft_etag': draft.etag,
-                    'preview_input': draft.resume_json,
-                    'preview_design': draft.design_json,
-                    'format': ResumeArtifact.Format.PREVIEW,
-                    'renderer_name': RENDERER_NAME,
-                    'renderer_version': RENDERER_VERSION,
-                },
-            )
-            operation, created = AsyncOperation.objects.get_or_create(
-                user=request.user,
-                source_app='resumes',
-                source_model='ResumeArtifact',
-                source_id=str(artifact.id),
-                defaults={'operation_type': 'resume.preview', 'title': f'生成预览：{resume.title}'},
-            )
-            if artifact.status == ResumeArtifact.Status.READY:
-                operation.status = AsyncOperation.Status.SUCCEEDED
-                operation.progress = 100
-                operation.metadata = {'artifact_id': str(artifact.id), 'reused': True}
-                operation.completed_at = timezone.now()
-                operation.save()
-            elif created:
-                _dispatch(render_resume_artifact, [str(artifact.id)], operation)
+            with transaction.atomic():
+                artifact, _ = ResumeArtifact.objects.get_or_create(
+                    cache_key=key,
+                    defaults={
+                        'resume': resume,
+                        'draft_etag': draft.etag,
+                        'preview_input': draft.resume_json,
+                        'preview_design': draft.design_json,
+                        'format': ResumeArtifact.Format.PREVIEW,
+                        'renderer_name': RENDERER_NAME,
+                        'renderer_version': RENDERER_VERSION,
+                    },
+                )
+                operation, _ = create_resume_operation(
+                    user=request.user,
+                    resume=resume,
+                    operation_type='resume.preview',
+                    title=f'生成预览：{resume.title}',
+                    artifact=artifact,
+                )
             return operation_response(operation, extra={'artifact_id': str(artifact.id), 'etag': draft.etag})
 
         return run_idempotent(request, f'resume.preview:{resume.id}', execute, required=True)
@@ -386,29 +351,22 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
                 output_format,
                 namespace=f'resume:{resume.pk}:owner',
             )
-            artifact, _ = ResumeArtifact.objects.get_or_create(
-                cache_key=key,
-                defaults={
-                    'resume': resume, 'content_version': version, 'design_revision': design,
-                    'format': output_format, 'renderer_name': RENDERER_NAME,
-                    'renderer_version': RENDERER_VERSION,
-                },
-            )
-            operation, created = AsyncOperation.objects.get_or_create(
-                user=request.user,
-                source_app='resumes',
-                source_model='ResumeArtifact',
-                source_id=str(artifact.id),
-                defaults={'operation_type': 'resume.export', 'title': f'导出简历：{resume.title}'},
-            )
-            if artifact.status == ResumeArtifact.Status.READY:
-                operation.status = AsyncOperation.Status.SUCCEEDED
-                operation.progress = 100
-                operation.metadata = {'artifact_id': str(artifact.id), 'reused': True}
-                operation.completed_at = timezone.now()
-                operation.save()
-            elif created:
-                _dispatch(render_resume_artifact, [str(artifact.id)], operation)
+            with transaction.atomic():
+                artifact, _ = ResumeArtifact.objects.get_or_create(
+                    cache_key=key,
+                    defaults={
+                        'resume': resume, 'content_version': version, 'design_revision': design,
+                        'format': output_format, 'renderer_name': RENDERER_NAME,
+                        'renderer_version': RENDERER_VERSION,
+                    },
+                )
+                operation, _ = create_resume_operation(
+                    user=request.user,
+                    resume=resume,
+                    operation_type='resume.export',
+                    title=f'导出简历：{resume.title}',
+                    artifact=artifact,
+                )
             return operation_response(operation, extra={'artifact_id': str(artifact.id)})
 
         return run_idempotent(request, f'resume.export:{resume.id}', execute, required=True)
@@ -427,33 +385,26 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
             if not version:
                 raise ValidationError({'version_id': '简历版本不存在。'})
             config_hash = sha256_json({'rules': 'resume-quality-1.0.0', 'content_hash': version.content_hash})
-            report = ResumeQualityReport.objects.filter(
-                resume=resume,
-                content_version=version,
-                config_hash=config_hash,
-                status=ResumeQualityReport.Status.COMPLETED,
-            ).first()
-            if not report:
-                report = ResumeQualityReport.objects.create(
+            with transaction.atomic():
+                report = ResumeQualityReport.objects.filter(
                     resume=resume,
                     content_version=version,
                     config_hash=config_hash,
+                    status=ResumeQualityReport.Status.COMPLETED,
+                ).first()
+                if not report:
+                    report = ResumeQualityReport.objects.create(
+                        resume=resume,
+                        content_version=version,
+                        config_hash=config_hash,
+                    )
+                operation, _ = create_resume_operation(
+                    user=request.user,
+                    resume=resume,
+                    operation_type='resume.quality_review',
+                    title=f'评审简历：{resume.title}',
+                    quality_report=report,
                 )
-            operation, created = AsyncOperation.objects.get_or_create(
-                user=request.user,
-                source_app='resumes',
-                source_model='ResumeQualityReport',
-                source_id=str(report.id),
-                defaults={'operation_type': 'resume.quality_review', 'title': f'评审简历：{resume.title}'},
-            )
-            if report.status == ResumeQualityReport.Status.COMPLETED:
-                operation.status = AsyncOperation.Status.SUCCEEDED
-                operation.progress = 100
-                operation.metadata = {'quality_report_id': report.id, 'reused': True}
-                operation.completed_at = timezone.now()
-                operation.save()
-            elif created:
-                _dispatch(review_resume_quality, [report.id], operation)
             return operation_response(operation, extra={'quality_report_id': report.id})
 
         return run_idempotent(request, f'resume.quality:{resume.id}', execute, required=True)
@@ -474,23 +425,25 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
             version = resume.versions.filter(pk=version_id).first() if version_id else resume.current_version
             if not version:
                 raise ValidationError({'base_version_id': '简历版本不存在。'})
-            operation = _create_operation(
+            job_target_id = request.data.get('job_target_id')
+            if job_target_id not in (None, ''):
+                try:
+                    job_target_id = int(job_target_id)
+                except (TypeError, ValueError):
+                    raise ValidationError({'job_target_id': '岗位目标 ID 无效。'})
+                if job_target_id < 1:
+                    raise ValidationError({'job_target_id': '岗位目标 ID 无效。'})
+            else:
+                job_target_id = None
+            operation, _ = create_resume_operation(
                 user=request.user,
-                operation_type=task_key,
-                source_model='ResumeVersion',
-                source_id=f'{version.pk}:{task_key}:{timezone.now().timestamp()}',
+                resume=resume,
+                operation_type='resume.suggestion',
                 title=f'生成简历建议：{resume.title}',
-                metadata={'resume_id': resume.pk, 'base_version_id': version.pk, 'task_key': task_key},
-            )
-            _dispatch(
-                generate_resume_suggestion_task,
-                [
-                    version.pk,
-                    task_key,
-                    str(request.data.get('instruction') or '')[:4000],
-                    request.data.get('job_target_id'),
-                ],
-                operation,
+                base_version=version,
+                task_key=task_key,
+                instruction=str(request.data.get('instruction') or '')[:4000],
+                job_target_id=job_target_id,
             )
             return operation_response(operation)
 
@@ -539,49 +492,56 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
         download_limit = request.data.get('download_limit')
         if download_limit is not None and (not isinstance(download_limit, int) or download_limit < 1):
             raise ValidationError({'download_limit': '下载次数必须为正整数。'})
-        link, token = create_share_link(
-            resume=resume,
-            content_version=version,
-            design_revision=design,
-            user=request.user,
-            password=str(request.data.get('password') or ''),
-            field_policy=field_policy,
-            expires_at=expires_at,
-            allow_download=bool(request.data.get('allow_download', False)),
-            download_limit=download_limit,
-        )
-        if link.allow_download:
-            shared_json, shared_design, key = shared_render_snapshot(
+        operation = None
+        with transaction.atomic():
+            link, token = create_share_link(
                 resume=resume,
                 content_version=version,
                 design_revision=design,
-                field_policy=link.field_policy,
-            )
-            artifact, artifact_created = ResumeArtifact.objects.get_or_create(
-                cache_key=key,
-                defaults={
-                    'resume': resume,
-                    'design_revision': design,
-                    'draft_etag': f'share-{link.id}',
-                    'preview_input': shared_json,
-                    'preview_design': shared_design,
-                    'format': ResumeArtifact.Format.PDF,
-                    'renderer_name': RENDERER_NAME,
-                    'renderer_version': RENDERER_VERSION,
-                },
-            )
-            operation, operation_created = AsyncOperation.objects.get_or_create(
                 user=request.user,
-                source_app='resumes',
-                source_model='ResumeArtifact',
-                source_id=str(artifact.id),
-                defaults={'operation_type': 'resume.share_export', 'title': f'准备分享下载：{resume.title}'},
+                password=str(request.data.get('password') or ''),
+                field_policy=field_policy,
+                expires_at=expires_at,
+                allow_download=bool(request.data.get('allow_download', False)),
+                download_limit=download_limit,
             )
-            if artifact.status != ResumeArtifact.Status.READY and operation_created:
-                _dispatch(render_resume_artifact, [str(artifact.id)], operation)
+            if link.allow_download:
+                shared_json, shared_design, key = shared_render_snapshot(
+                    resume=resume,
+                    content_version=version,
+                    design_revision=design,
+                    field_policy=link.field_policy,
+                )
+                artifact, _ = ResumeArtifact.objects.get_or_create(
+                    cache_key=key,
+                    defaults={
+                        'resume': resume,
+                        'design_revision': design,
+                        'draft_etag': f'share-{link.id}',
+                        'preview_input': shared_json,
+                        'preview_design': shared_design,
+                        'format': ResumeArtifact.Format.PDF,
+                        'renderer_name': RENDERER_NAME,
+                        'renderer_version': RENDERER_VERSION,
+                    },
+                )
+                operation, _ = create_resume_operation(
+                    user=request.user,
+                    resume=resume,
+                    operation_type='resume.share_export',
+                    title=f'准备分享下载：{resume.title}',
+                    artifact=artifact,
+                )
         data = ResumeShareLinkSerializer(link).data
         data['token'] = token
         data['share_url'] = f'/resume-shares/{token}'
+        if operation:
+            data.update({
+                'operation_id': str(operation.id),
+                'operation_status': 'accepted',
+                'events_url': f'/api/v2/operations/{operation.id}/events/',
+                'result_url': f'/api/v2/operations/{operation.id}/',
+            })
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path=r'share-links/(?P<share_id>\d+)/revoke')
@@ -647,15 +607,13 @@ class ResumeImportV2ViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vi
                     checksum_sha256=checksum.hexdigest(),
                     metadata={'legacy_file_pointer': resume.file.name},
                 )
-                operation = _create_operation(
+                operation, _ = create_resume_operation(
                     user=request.user,
+                    resume=resume,
                     operation_type='resume.import',
-                    source_model='ResumeImportJob',
-                    source_id=job.id,
                     title=f'导入简历：{resume.title}',
-                    metadata={'resume_id': resume.id, 'import_job_id': job.id},
+                    import_job=job,
                 )
-            _dispatch(process_resume_import_job, [job.id], operation)
             return operation_response(operation, extra={'resume_id': resume.id, 'import_job_id': job.id})
 
         return run_idempotent(request, 'resume.import', execute, required=True)
@@ -673,21 +631,6 @@ class ResumeImportV2ViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vi
                 raise NotFound('导入任务不存在。')
             except ValueError as exc:
                 raise ValidationError({'code': str(exc), 'message': '当前导入任务不可确认。'})
-            AsyncOperation.objects.filter(
-                user=request.user,
-                source_app='resumes',
-                source_model='ResumeImportJob',
-                source_id=str(job.id),
-            ).exclude(status=AsyncOperation.Status.SUCCEEDED).update(
-                status=AsyncOperation.Status.SUCCEEDED,
-                progress=100,
-                completed_at=timezone.now(),
-                metadata={
-                    'resume_id': job.resume_id,
-                    'import_job_id': job.id,
-                    'version_id': version.id,
-                },
-            )
             version = ResumeVersion.objects.prefetch_related('evidence_links').get(pk=version.pk)
             return Response(
                 ResumeVersionV2Serializer(version, context={'request': request}).data,
@@ -702,19 +645,18 @@ class ResumeImportV2ViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vi
             job = self.get_object()
             if job.status not in {ResumeImportJob.Status.FAILED, ResumeImportJob.Status.PENDING}:
                 raise ValidationError({'status': '只有等待中或失败的任务可以重试。'})
-            job.status = ResumeImportJob.Status.PENDING
-            job.error_message = ''
-            job.completed_at = None
-            job.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
-            operation = _create_operation(
-                user=request.user,
-                operation_type='resume.import.retry',
-                source_model='ResumeImportJob',
-                source_id=job.id,
-                title=f'重试导入简历：{job.resume.title}',
-                metadata={'resume_id': job.resume_id, 'import_job_id': job.id},
-            )
-            _dispatch(process_resume_import_job, [job.id], operation)
+            with transaction.atomic():
+                job.status = ResumeImportJob.Status.PENDING
+                job.error_message = ''
+                job.completed_at = None
+                job.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+                operation, _ = create_resume_operation(
+                    user=request.user,
+                    resume=job.resume,
+                    operation_type='resume.import.retry',
+                    title=f'重试导入简历：{job.resume.title}',
+                    import_job=job,
+                )
             return operation_response(
                 operation,
                 extra={'resume_id': job.resume_id, 'import_job_id': job.id},

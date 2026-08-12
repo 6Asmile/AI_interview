@@ -38,3 +38,10 @@ ai_interview-frontend/.npm
 ai_interview_backend/media/
 ai_interview_backend/staticfiles/
 ai_interview_backend/celerybeat-schedule*
+ai_interview_backend/.ifaceoff-test.sqlite3*
+
+# Obsidian personal workspace state
+docs/ifaceoff-vault/.obsidian/workspace.json
+docs/ifaceoff-vault/.obsidian/workspace-mobile.json
+docs/ifaceoff-vault/.obsidian/cache/
+docs/ifaceoff-vault/.trash/

@@ -1,6 +1,51 @@
+x-worker-environment: &worker-environment
+  IFACEOFF_RUN_MIGRATIONS: "0"
+  IFACEOFF_COLLECTSTATIC: "0"
+  IFACEOFF_SETUP_AGENT_CHECKPOINT: "0"
+  IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+  AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
+  REDIS_CACHE_URL: redis://redis-cache:6379/0
+  REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
+  REDIS_REALTIME_URL: redis://redis-realtime:6379/0
+  CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
+  CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
+  RABBITMQ_HOST: rabbitmq
+  QDRANT_URL: http://qdrant:6333
+  MEILISEARCH_URL: http://meilisearch:7700
+  MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+
+x-worker-depends: &worker-depends
+  postgres:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+  redis-coordination:
+    condition: service_healthy
+  celery-topology:
+    condition: service_completed_successfully
+
+x-worker-base: &worker-base
+  image: ifaceoff/backend:latest
+  env_file:
+    - ./.env.docker
+  environment: *worker-environment
+  restart: unless-stopped
+  stop_grace_period: 60s
+  mem_limit: ${CELERY_WORKER_MEMORY_LIMIT:-2g}
+  cpus: ${CELERY_WORKER_CPUS:-2.0}
+  pids_limit: ${CELERY_WORKER_PIDS_LIMIT:-256}
+  healthcheck:
+    test: ["CMD-SHELL", "celery -A ai_interview_backend inspect ping -d \"$${CELERY_WORKER_ROLE}@$${HOSTNAME}\" --timeout=5 | grep -q pong"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 60s
+  depends_on: *worker-depends
+  networks:
+    - ifaceoff_network
+
 services:
-  # Remove the local single-Redis service inherited from docker-compose.yml.
-  # Production uses two explicit fault domains below.
+  # Production uses three Redis fault domains instead of the local all-in-one.
   redis: !reset null
 
   backend:
@@ -9,11 +54,14 @@ services:
       REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
     depends_on: !override
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      celery-topology:
+        condition: service_completed_successfully
       qdrant:
         condition: service_started
       meilisearch:
@@ -31,6 +79,7 @@ services:
       REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
     depends_on: !override
       backend:
         condition: service_healthy
@@ -38,94 +87,94 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      celery-topology:
+        condition: service_completed_successfully
       redis-realtime:
         condition: service_healthy
 
-  celery-worker:
-    command: celery -A ai_interview_backend worker -l info -Q celery,notifications --concurrency=4
+  celery-topology:
     environment:
       REDIS_CACHE_URL: redis://redis-cache:6379/0
       REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
       REDIS_REALTIME_URL: redis://redis-realtime:6379/0
       CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
+
+  # Short default work remains separate from every long-running domain.
+  celery-worker:
+    command: celery -A ai_interview_backend worker -l info --hostname=default@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.default --concurrency=${DEFAULT_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: default
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: ${CELERY_WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${CELERY_WORKER_CPUS:-2.0}
+    pids_limit: ${CELERY_WORKER_PIDS_LIMIT:-256}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A ai_interview_backend inspect ping -d \"default@$${HOSTNAME}\" --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   celery-beat:
+    environment: *worker-environment
+    restart: unless-stopped
+
+  celery-publisher-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=publisher@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.publisher --concurrency=${PUBLISHER_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
     environment:
-      REDIS_CACHE_URL: redis://redis-cache:6379/0
-      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
-      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
-      CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: publisher
 
   celery-agent-worker:
-    image: ifaceoff/backend:latest
-    command: celery -A ai_interview_backend worker -l info -Q agent --concurrency=${AGENT_WORKER_CONCURRENCY:-8} --prefetch-multiplier=1
-    env_file:
-      - ./.env.docker
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=agent@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.agent.interactive --concurrency=${AGENT_WORKER_CONCURRENCY:-8} --prefetch-multiplier=1
     environment:
-      IFACEOFF_RUN_MIGRATIONS: "0"
-      IFACEOFF_COLLECTSTATIC: "0"
-      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
-      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
-      REDIS_CACHE_URL: redis://redis-cache:6379/0
-      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
-      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
-      CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
-      RABBITMQ_HOST: rabbitmq
-      QDRANT_URL: http://qdrant:6333
-      MEILISEARCH_URL: http://meilisearch:7700
-      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: agent
     depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis-realtime:
-        condition: service_healthy
+      <<: *worker-depends
       meilisearch:
         condition: service_healthy
-    networks:
-      - ifaceoff_network
+
+  celery-career-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=career@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.career.analysis --concurrency=${CAREER_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: career
 
   celery-document-worker:
-    image: ifaceoff/backend:latest
-    command: celery -A ai_interview_backend worker -l info -Q documents,media --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
-    env_file:
-      - ./.env.docker
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=document@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.documents --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
     environment:
-      IFACEOFF_RUN_MIGRATIONS: "0"
-      IFACEOFF_COLLECTSTATIC: "0"
-      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
-      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
-      REDIS_CACHE_URL: redis://redis-cache:6379/0
-      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
-      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
-      RABBITMQ_HOST: rabbitmq
-      QDRANT_URL: http://qdrant:6333
-      MEILISEARCH_URL: http://meilisearch:7700
-      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: document
     depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      <<: *worker-depends
       meilisearch:
         condition: service_healthy
-    networks:
-      - ifaceoff_network
+    volumes:
+      - media_volume:/app/media
+
+  celery-media-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=media@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.media --concurrency=${MEDIA_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: media
+    volumes:
+      - media_volume:/app/media
 
   celery-resume-render-worker:
-    image: ifaceoff/backend:latest
-    command: celery -A ai_interview_backend worker -l info -Q resume.render --concurrency=${RESUME_RENDER_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
-    env_file:
-      - ./.env.docker
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=resume-render@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.resume.render --concurrency=${RESUME_RENDER_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
     environment:
-      IFACEOFF_RUN_MIGRATIONS: "0"
-      IFACEOFF_COLLECTSTATIC: "0"
-      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
-      REDIS_CACHE_URL: redis://redis-cache:6379/0
-      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
-      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
-      RABBITMQ_HOST: rabbitmq
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: resume-render
       HOME: /tmp
     read_only: true
     tmpfs:
@@ -139,53 +188,45 @@ services:
     mem_limit: 768m
     cpus: 1.5
     pids_limit: 128
-    stop_grace_period: 30s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis-coordination:
-        condition: service_healthy
-    networks:
-      - ifaceoff_network
 
-  celery-platform-worker:
-    image: ifaceoff/backend:latest
-    command: celery -A ai_interview_backend worker -l info -Q career.analysis,community.moderation,events,search.index --concurrency=${PLATFORM_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1
-    env_file:
-      - ./.env.docker
+  celery-community-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=community@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.community.moderation --concurrency=${COMMUNITY_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
     environment:
-      IFACEOFF_RUN_MIGRATIONS: "0"
-      IFACEOFF_COLLECTSTATIC: "0"
-      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
-      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
-      REDIS_CACHE_URL: redis://redis-cache:6379/0
-      REDIS_COORDINATION_URL: redis://redis-coordination:6379/0
-      REDIS_REALTIME_URL: redis://redis-realtime:6379/0
-      CELERY_RESULT_BACKEND: redis://redis-cache:6379/1
-      RABBITMQ_HOST: rabbitmq
-      QDRANT_URL: http://qdrant:6333
-      MEILISEARCH_URL: http://meilisearch:7700
-      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-ifaceoff-local-search-key}
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: community
+
+  celery-notification-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=notification@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.notifications --concurrency=${NOTIFICATION_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: notification
+
+  celery-search-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=search@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.search.index --concurrency=${SEARCH_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: search
     depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis-coordination:
-        condition: service_healthy
+      <<: *worker-depends
       meilisearch:
         condition: service_healthy
-    networks:
-      - ifaceoff_network
+
+  celery-events-worker:
+    <<: *worker-base
+    command: celery -A ai_interview_backend worker -l info --hostname=events@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.events --concurrency=${EVENT_WORKER_CONCURRENCY:-4} --prefetch-multiplier=1
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: events
 
   redis-cache:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
     command: redis-server --save "" --appendonly no --maxmemory ${REDIS_CACHE_MAXMEMORY:-1gb} --maxmemory-policy allkeys-lfu
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && test \"$$(redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1)\" = allkeys-lfu && test $$(redis-cli --raw CONFIG GET maxmemory | tail -n 1) -gt 0"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -194,12 +235,12 @@ services:
 
   redis-coordination:
     image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
-    command: redis-server --appendonly yes --appendfsync everysec --maxmemory-policy noeviction
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_COORDINATION_MAXMEMORY:-512mb} --maxmemory-policy noeviction
     restart: unless-stopped
     volumes:
       - redis_coordination_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && test \"$$(redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1)\" = noeviction && test \"$$(redis-cli --raw CONFIG GET appendonly | tail -n 1)\" = yes && test $$(redis-cli --raw CONFIG GET maxmemory | tail -n 1) -gt 0"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -207,13 +248,13 @@ services:
       - ifaceoff_network
 
   redis-realtime:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes --appendfsync everysec --maxmemory-policy noeviction
+    image: ${REDIS_IMAGE:-redis:7.4.5-alpine}
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory ${REDIS_REALTIME_MAXMEMORY:-1gb} --maxmemory-policy noeviction
     restart: unless-stopped
     volumes:
       - redis_realtime_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG && test \"$$(redis-cli --raw CONFIG GET maxmemory-policy | tail -n 1)\" = noeviction && test \"$$(redis-cli --raw CONFIG GET appendonly | tail -n 1)\" = yes && test $$(redis-cli --raw CONFIG GET maxmemory | tail -n 1) -gt 0"]
       interval: 10s
       timeout: 5s
       retries: 10

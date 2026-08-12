@@ -11,6 +11,36 @@ from .models import BreakGlassGrant, MaintenanceNotice, PlatformFeatureFlag
 from .views import StaffProtectedView, audit
 
 
+def operation_envelope(operation, **compatibility_fields):
+    """Return the public Operation identity while preserving legacy fields."""
+
+    payload = {
+        'operation_id': str(operation.pk),
+        'status': 'accepted',
+        'events_url': f'/api/v2/operations/{operation.pk}/events/',
+        'result_url': f'/api/v2/operations/{operation.pk}/',
+    }
+    payload.update(compatibility_fields)
+    return payload
+
+
+def staff_operation_principal(staff_account):
+    """Resolve an explicitly linked business principal for global commands.
+
+    Staff accounts intentionally live in a separate authentication domain. We
+    only use a same-email, privileged business account as Operation owner and
+    never silently borrow an unrelated superuser.
+    """
+
+    from users.models import User
+
+    return User.objects.filter(
+        email__iexact=staff_account.email,
+        role=User.Role.ADMIN,
+        is_active=True,
+    ).first()
+
+
 def operation_reason(request, message='该操作必须填写原因。'):
     reason = str(request.data.get('operation_reason') or '').strip()
     return reason, None if reason else Response({'code': 'operation_reason_required', 'message': message}, status=400)
@@ -241,6 +271,7 @@ class InterviewConfigAdminView(StaffProtectedView):
             return error
 
         def execute():
+            operation = None
             if resource == 'rubrics':
                 item = InterviewRubric.objects.create(
                     name=str(request.data.get('name') or '').strip(), description=request.data.get('description') or '',
@@ -265,15 +296,68 @@ class InterviewConfigAdminView(StaffProtectedView):
                 dataset = EvaluationDataset.objects.filter(pk=request.data.get('dataset_id')).first()
                 if not dataset:
                     return Response({'code': 'dataset_required', 'message': '请选择有效评估数据集。'}, status=400)
-                item = EvaluationRun.objects.create(
-                    dataset=dataset, template_id=request.data.get('template_id') or None,
-                    config_snapshot={'triggered_by_staff': str(request.user.id)},
-                )
-                from interviews.tasks import run_evaluation_run
-                transaction.on_commit(lambda: run_evaluation_run.delay(item.id))
+                principal = staff_operation_principal(request.user)
+                if not principal:
+                    return Response({
+                        'code': 'staff_operation_principal_missing',
+                        'message': '当前员工账号未绑定同邮箱的平台管理员业务账号，无法创建离线评估 Operation。',
+                    }, status=409)
+                import hashlib
+                import json
+                from core.operations import create_operation_with_dispatch
+
+                with transaction.atomic():
+                    item = EvaluationRun.objects.create(
+                        dataset=dataset,
+                        template_id=request.data.get('template_id') or None,
+                        config_snapshot={'triggered_by_staff': str(request.user.id)},
+                        created_by=principal,
+                    )
+                    snapshot = {
+                        'evaluation_run_id': item.id,
+                        'dataset_id': item.dataset_id,
+                        'template_id': item.template_id,
+                        'config_snapshot': item.config_snapshot,
+                    }
+                    input_hash = hashlib.sha256(json.dumps(
+                        snapshot,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(',', ':'),
+                        default=str,
+                    ).encode('utf-8')).hexdigest()
+                    operation = create_operation_with_dispatch(
+                        user=principal,
+                        operation_type='interview.evaluation',
+                        source_app='interviews',
+                        source_model='EvaluationRun',
+                        source_id=str(item.id),
+                        title=f'离线评估：{dataset.name}',
+                        input_type='EvaluationRun',
+                        input_id=str(item.id),
+                        input_version='1',
+                        input_hash=input_hash,
+                        metadata={
+                            'evaluation_run_id': item.id,
+                            'dataset_id': item.dataset_id,
+                            'triggered_by_staff_id': str(request.user.id),
+                            'operation_reason': reason,
+                        },
+                        max_attempts=3,
+                        queue=getattr(settings, 'CELERY_CAREER_QUEUE', 'ifaceoff.v2.career.analysis'),
+                        routing_key='career.analysis',
+                    )
+                    item.operation = operation
+                    item.save(update_fields=['operation'])
             else:
                 return Response({'code': 'config_resource_invalid', 'message': '不支持的配置资源。'}, status=404)
             audit(request, action=f'interview_config.{resource}.create', resource_type=item.__class__.__name__, resource_id=item.pk, reason=reason, after={'name': getattr(item, 'name', str(item))})
+            if operation:
+                return Response(operation_envelope(
+                    operation,
+                    id=item.pk,
+                    created=True,
+                ), status=202)
             return Response({'id': item.pk, 'created': True}, status=201)
 
         return run_staff_idempotent(request, f'interview_config_create:{resource}', execute)
@@ -401,33 +485,77 @@ class KnowledgeDocumentAdminActionView(StaffProtectedView):
 
     def post(self, request, document_id, action):
         from knowledge.models import KnowledgeDocument
-        from knowledge.tasks import reindex_knowledge_document, reparse_knowledge_document
+        from knowledge.operation_handlers import (
+            REINDEX_OPERATION,
+            REPARSE_OPERATION,
+            create_knowledge_operation,
+        )
         reason, error = operation_reason(request, '知识文档操作必须填写原因。')
         if error:
             return error
 
         def execute():
-            document = KnowledgeDocument.objects.filter(pk=document_id).first()
-            if not document:
-                return Response({'code': 'knowledge_not_found', 'message': '知识文档不存在。'}, status=404)
-            if action == 'reparse':
-                document.parse_status = KnowledgeDocument.ParseStatus.PENDING
-                document.parser_fallback_reason = ''
-                document.save(update_fields=['parse_status', 'parser_fallback_reason', 'updated_at'])
-                transaction.on_commit(lambda: reparse_knowledge_document.delay(str(document.id)))
-            elif action == 'reindex':
-                if document.approval_status != KnowledgeDocument.ApprovalStatus.APPROVED or not document.published_revision_id:
-                    return Response({'code': 'knowledge_not_published', 'message': '仅能重建已审批发布版本的索引。'}, status=409)
-                document.status = KnowledgeDocument.Status.INDEXING
-                document.save(update_fields=['status', 'updated_at'])
-                transaction.on_commit(lambda: reindex_knowledge_document.delay(str(document.id), str(document.published_revision_id)))
-            elif action == 'archive':
-                document.approval_status = KnowledgeDocument.ApprovalStatus.ARCHIVED
-                document.save(update_fields=['approval_status', 'updated_at'])
-            else:
-                return Response({'code': 'knowledge_action_invalid', 'message': '不支持的知识文档操作。'}, status=400)
+            operation = None
+            with transaction.atomic():
+                # Lock only the document row; created_by is nullable and must
+                # not be pulled into a PostgreSQL FOR UPDATE outer join.
+                document = KnowledgeDocument.objects.select_for_update().filter(
+                    pk=document_id,
+                ).first()
+                if not document:
+                    return Response({'code': 'knowledge_not_found', 'message': '知识文档不存在。'}, status=404)
+                if action in {'reparse', 'reindex'} and not document.created_by:
+                    return Response({
+                        'code': 'knowledge_operation_owner_missing',
+                        'message': '该知识文档缺少可审计的业务所有者，无法创建异步 Operation。',
+                    }, status=409)
+                if action == 'reparse':
+                    document.parse_status = KnowledgeDocument.ParseStatus.PENDING
+                    document.parser_fallback_reason = ''
+                    document.save(update_fields=['parse_status', 'parser_fallback_reason', 'updated_at'])
+                    operation = create_knowledge_operation(
+                        user=document.created_by,
+                        operation_type=REPARSE_OPERATION,
+                        source_model='KnowledgeDocument',
+                        source_id=document.id,
+                        title=f'重新解析知识文档：{document.title}',
+                        metadata={
+                            'triggered_by_staff_id': str(request.user.id),
+                            'operation_reason': reason,
+                        },
+                    )
+                elif action == 'reindex':
+                    if document.approval_status != KnowledgeDocument.ApprovalStatus.APPROVED or not document.published_revision_id:
+                        return Response({'code': 'knowledge_not_published', 'message': '仅能重建已审批发布版本的索引。'}, status=409)
+                    document.status = KnowledgeDocument.Status.INDEXING
+                    document.save(update_fields=['status', 'updated_at'])
+                    operation = create_knowledge_operation(
+                        user=document.created_by,
+                        operation_type=REINDEX_OPERATION,
+                        source_model='KnowledgeDocument',
+                        source_id=document.id,
+                        input_version=str(document.published_revision_id),
+                        title=f'重建知识文档索引：{document.title}',
+                        metadata={
+                            'triggered_by_staff_id': str(request.user.id),
+                            'operation_reason': reason,
+                        },
+                    )
+                elif action == 'archive':
+                    document.approval_status = KnowledgeDocument.ApprovalStatus.ARCHIVED
+                    document.save(update_fields=['approval_status', 'updated_at'])
+                else:
+                    return Response({'code': 'knowledge_action_invalid', 'message': '不支持的知识文档操作。'}, status=400)
             audit(request, action=f'knowledge.{action}', resource_type='KnowledgeDocument', resource_id=document.id, reason=reason, after={'approval_status': document.approval_status, 'index_status': document.status})
-            return Response({'id': str(document.id), 'approval_status': document.approval_status, 'index_status': document.status})
+            response = {
+                'id': str(document.id),
+                'approval_status': document.approval_status,
+                'index_status': document.status,
+            }
+            if operation:
+                response.update(operation_envelope(operation))
+                return Response(response, status=202)
+            return Response(response)
 
         return run_staff_idempotent(request, f'knowledge_document:{document_id}:{action}', execute)
 
@@ -437,6 +565,11 @@ class AdminTaskActionView(StaffProtectedView):
 
     def post(self, request, operation_id, action):
         from core.models import AsyncOperation
+        from core.operations import (
+            OperationConflict,
+            request_operation_cancel,
+            request_operation_retry,
+        )
         reason, error = operation_reason(request, '任务操作必须填写原因。')
         if error:
             return error
@@ -447,25 +580,40 @@ class AdminTaskActionView(StaffProtectedView):
                 return Response({'code': 'task_not_found', 'message': '任务不存在。'}, status=404)
             before = {'status': operation.status, 'error_code': operation.error_code}
             if action == 'retry':
-                if not operation.retryable and operation.status != AsyncOperation.Status.FAILED:
-                    return Response({'code': 'task_not_retryable', 'message': '当前任务不可重试。'}, status=409)
-                from core.task_registry import retry_operation
+                from core.task_registry import (
+                    can_retry_legacy_source,
+                    retry_legacy_operation_source,
+                )
+
+                uses_generic_dispatch = operation.dispatches.exists()
+                is_agent_dispatch = operation.operation_type == 'interview.agent_turn'
                 try:
-                    retry_operation(operation)
-                except (ValueError, ObjectDoesNotExist) as exc:
+                    if uses_generic_dispatch:
+                        operation = request_operation_retry(operation.pk)
+                    elif is_agent_dispatch:
+                        operation = request_operation_retry(
+                            operation.pk,
+                            dispatch_retry=False,
+                        )
+                        operation = retry_legacy_operation_source(operation)
+                    elif can_retry_legacy_source(operation):
+                        forwarded = retry_legacy_operation_source(operation)
+                        operation = forwarded[0] if isinstance(forwarded, list) else forwarded
+                    else:
+                        raise OperationConflict('operation_not_retryable')
+                except (OperationConflict, ValueError) as exc:
                     return Response({'code': 'task_retry_unsupported', 'message': str(exc)}, status=409)
             elif action == 'cancel':
-                if operation.status not in {AsyncOperation.Status.PENDING, AsyncOperation.Status.RUNNING}:
-                    return Response({'code': 'task_not_cancelable', 'message': '当前任务不可取消。'}, status=409)
-                operation.status = AsyncOperation.Status.CANCELED
-                operation.completed_at = timezone.now()
-                operation.save(update_fields=['status', 'completed_at', 'updated_at'])
+                operation = request_operation_cancel(operation.pk)
             else:
                 return Response({'code': 'task_action_invalid', 'message': '不支持的任务操作。'}, status=400)
             audit(request, action=f'task.{action}', resource_type='AsyncOperation', resource_id=operation.id, reason=reason, before=before, after={'status': operation.status})
-            return Response({'id': str(operation.id), 'status': operation.status})
+            return Response(operation_envelope(
+                operation,
+                id=str(operation.id),
+                status=operation.status,
+            ))
 
-        from django.core.exceptions import ObjectDoesNotExist
         return run_staff_idempotent(request, f'task:{operation_id}:{action}', execute)
 
 
@@ -659,15 +807,32 @@ class ContentOperationsAdminView(StaffProtectedView):
         })
 
     def post(self, request):
-        from community.tasks import rebuild_public_search_indexes
+        from community.operation_handlers import create_search_rebuild_operation
         reason, error = operation_reason(request, '内容索引操作必须填写原因。')
         if error:
             return error
 
         def execute():
-            task = rebuild_public_search_indexes.delay()
-            audit(request, action='content.search.rebuild', resource_type='Meilisearch', reason=reason, after={'task_id': task.id})
-            return Response({'queued': True, 'task_id': task.id}, status=202)
+            principal = staff_operation_principal(request.user)
+            if not principal:
+                return Response({
+                    'code': 'staff_operation_principal_missing',
+                    'message': '当前员工账号未绑定同邮箱的平台管理员业务账号，无法创建全局异步 Operation。',
+                }, status=409)
+            with transaction.atomic():
+                operation = create_search_rebuild_operation(user=principal)
+                audit(
+                    request,
+                    action='content.search.rebuild',
+                    resource_type='Meilisearch',
+                    reason=reason,
+                    after={'operation_id': str(operation.pk)},
+                )
+            return Response(operation_envelope(
+                operation,
+                queued=True,
+                task_id=str(operation.pk),
+            ), status=202)
 
         return run_staff_idempotent(request, 'content_search_rebuild', execute)
 

@@ -1,3 +1,6 @@
+import json
+
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count
 from django.utils import timezone
@@ -5,12 +8,19 @@ from rest_framework.response import Response
 
 from careers.models import Company, CompanyVerification, JobPosting, SkillTaxonomy
 from community.models import CommunityContent, ModerationCase, ModerationDecision, ReputationLedger
-from core.models import ConsumerInbox, IntegrationOutbox, RuntimePolicy
+from core.models import (
+    AsyncOperation,
+    ConsumerInbox,
+    IntegrationOutbox,
+    OperationDispatchOutbox,
+    RuntimePolicy,
+)
 from core.events import enqueue_integration_event
 from resumes.models import ResumeArtifact
 from resumes.rendering import RENDERER_NAME, RENDERER_VERSION
 from resumes.schema import JSON_RESUME_SCHEMA_VERSION, schema_snapshot_hash
 from resumes.templates import RESUME_TEMPLATES, template_catalog
+from system.observability import operational_queue_snapshot
 
 from .idempotency import run_staff_idempotent
 from .operations_views import operation_reason
@@ -363,16 +373,49 @@ class PlatformEventsAdminView(StaffProtectedView):
     def get(self, request):
         outbox_status = dict(IntegrationOutbox.objects.values('status').annotate(total=Count('id')).values_list('status', 'total'))
         inbox_status = dict(ConsumerInbox.objects.values('status').annotate(total=Count('id')).values_list('status', 'total'))
+        dispatch_status = dict(
+            OperationDispatchOutbox.objects.values('status')
+            .annotate(total=Count('id'))
+            .values_list('status', 'total')
+        )
+        operation_status = dict(
+            AsyncOperation.objects.values('status')
+            .annotate(total=Count('id'))
+            .values_list('status', 'total')
+        )
         oldest = IntegrationOutbox.objects.filter(
             status__in=[IntegrationOutbox.Status.PENDING, IntegrationOutbox.Status.FAILED],
         ).order_by('available_at').first()
+        database_dead = list(IntegrationOutbox.objects.filter(
+            status=IntegrationOutbox.Status.DEAD,
+        ).values('id', 'event_id', 'event_type', 'attempts', 'created_at')[:200])
+        dispatch_dead = list(OperationDispatchOutbox.objects.filter(
+            status=OperationDispatchOutbox.Status.DEAD,
+        ).values(
+            'id', 'operation_id', 'queue', 'routing_key', 'attempts', 'created_at',
+        )[:200])
         return Response({
-            'outbox': outbox_status,
-            'inbox': inbox_status,
+            'database_outbox': outbox_status,
+            'consumer_inbox': inbox_status,
+            'operation_dispatch': dispatch_status,
+            'operations': operation_status,
             'oldest_pending_at': oldest.available_at if oldest else None,
-            'dead_letters': list(IntegrationOutbox.objects.filter(
-                status=IntegrationOutbox.Status.DEAD,
-            ).values('id', 'event_id', 'event_type', 'attempts', 'last_error', 'created_at')[:200]),
+            'database_outbox_dead_letters': database_dead,
+            'operation_dispatch_dead_letters': dispatch_dead,
+            # Compatibility alias. These are PostgreSQL outbox rows, not
+            # RabbitMQ messages; the explicit source prevents a false DLQ claim.
+            'dead_letters': [
+                {**row, 'source': 'postgresql_integration_outbox'}
+                for row in database_dead
+            ],
+            'broker_dead_letters': {
+                'source': 'rabbitmq',
+                'queues': list(getattr(settings, 'CELERY_DLQ_NAMES', ())),
+                'metrics_source': 'rabbitmq_prometheus',
+                'replay_supported': False,
+                'status': 'pending_verification',
+                'message': '管理端尚未消费 Broker DLQ；请在 Prometheus 查看深度与 Unacked，不将数据库 Dead 冒充为 Broker 死信。',
+            },
         })
 
     def post(self, request, event_id):
@@ -391,7 +434,7 @@ class PlatformEventsAdminView(StaffProtectedView):
             event.last_error = ''
             event.save(update_fields=['status', 'available_at', 'locked_at', 'last_error', 'updated_at'])
             audit(
-                request, action='platform_event.replay', resource_type='IntegrationOutbox',
+                request, action='platform_event.database_outbox_replay', resource_type='IntegrationOutbox',
                 resource_id=event.event_id, reason=reason, before=before,
                 after={'status': event.status, 'attempts': event.attempts},
             )
@@ -404,6 +447,11 @@ class ReliabilityAdminView(StaffProtectedView):
     required_permissions = ['reliability.manage']
 
     def get(self, request):
+        now = timezone.now()
+        stale_operation_leases = AsyncOperation.objects.filter(
+            status__in=[AsyncOperation.Status.CLAIMED, AsyncOperation.Status.RUNNING],
+            lease_expires_at__lte=now,
+        ).count()
         return Response({
             'policies': list(RuntimePolicy.objects.filter(
                 key__startswith='reliability-',
@@ -414,6 +462,25 @@ class ReliabilityAdminView(StaffProtectedView):
                 'realtime_redis': 'postgres_snapshot_and_polling',
                 'rabbitmq': 'retain_outbox',
                 'postgresql': 'stop_business_writes',
+            },
+            'redis_domains': {
+                'cache': {'capability': 'ordinary_reads', 'failure': 'bypass_cache', 'eviction': 'allkeys-lfu'},
+                'coordination': {'capability': 'security_and_expensive_work', 'failure': 'fail_closed', 'eviction': 'noeviction'},
+                'realtime': {'capability': 'sse_and_websocket', 'failure': 'postgres_snapshot_and_polling', 'eviction': 'noeviction'},
+            },
+            'celery_topology': {
+                'version': getattr(settings, 'CELERY_TOPOLOGY_VERSION', 'unknown'),
+                'main_queues': list(getattr(settings, 'CELERY_MAIN_QUEUE_NAMES', ())),
+                'dead_letter_queues': list(getattr(settings, 'CELERY_DLQ_NAMES', ())),
+                'publisher_queue': getattr(settings, 'CELERY_PUBLISHER_QUEUE', ''),
+                'broker_dlq_replay': 'pending-verification',
+            },
+            'durable_async': operational_queue_snapshot(),
+            'stale_operation_leases': stale_operation_leases,
+            'runtime_verification': {
+                'compose_contract': 'implemented',
+                'single_node_semantics': 'pending-verification',
+                'production_ha': 'external-managed-service-required',
             },
         })
 
@@ -426,10 +493,28 @@ class ReliabilityAdminView(StaffProtectedView):
             key = str(request.data.get('key') or '')
             if not key.startswith('reliability-'):
                 return Response({'code': 'invalid_policy_key'}, status=400)
+            config = request.data.get('config') or {}
+            if not isinstance(config, dict):
+                return Response({'code': 'invalid_policy_config'}, status=400)
+            if len(config) > 50 or len(json.dumps(config, ensure_ascii=False, default=str).encode('utf-8')) > 16 * 1024:
+                return Response({'code': 'policy_config_too_large'}, status=400)
+            numeric_limits = {
+                'max_concurrency': (1, 10_000),
+                'queue_depth_limit': (1, 1_000_000),
+                'oldest_message_seconds': (1, 86_400),
+                'retry_after_ms': (100, 3_600_000),
+                'lease_seconds': (15, 3_600),
+            }
+            for field, (minimum, maximum) in numeric_limits.items():
+                if field not in config:
+                    continue
+                value = config[field]
+                if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                    return Response({'code': 'invalid_policy_value', 'field': field}, status=400)
             row, created = RuntimePolicy.objects.get_or_create(key=key, defaults={'name': request.data.get('name', key)})
             before = {'version': row.version, 'config': row.config}
             row.name = request.data.get('name', row.name)
-            row.config = request.data.get('config') or {}
+            row.config = config
             row.enabled = bool(request.data.get('enabled', True))
             row.version = row.version if created else row.version + 1
             row.updated_by_staff_id = request.user.pk

@@ -6,6 +6,8 @@ from django.conf import settings
 from django.core.mail import send_mail
 from django_redis import get_redis_connection
 
+from core.redis_keys import build_redis_key
+
 
 def generate_email_code() -> str:
     return f'{secrets.randbelow(1_000_000):06d}'
@@ -21,7 +23,31 @@ def _code_hmac(email: str, code: str) -> str:
 
 
 def email_code_key(email: str) -> str:
-    return f'ifaceoff:{getattr(settings, "IFACEOFF_ENV", "dev")}:coordination:auth:email-code:{_email_digest(email)}'
+    return build_redis_key(
+        domain='coordination',
+        resource='email-verification',
+        parts=('registration',),
+        opaque_parts=(email.strip().lower(),),
+    )
+
+
+_STORE_CODE_SCRIPT = """
+redis.call(
+  'HSET', KEYS[1],
+  'code_hmac', ARGV[1],
+  'attempts', 0,
+  'generation', ARGV[2]
+)
+redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[3]))
+return ARGV[2]
+"""
+
+_DELETE_GENERATION_SCRIPT = """
+if redis.call('HGET', KEYS[1], 'generation') == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
 
 
 _VERIFY_SCRIPT = """
@@ -59,11 +85,21 @@ def send_verification_code(email: str) -> bool:
     code = generate_email_code()
     redis = get_redis_connection('coordination')
     key = email_code_key(normalized_email)
-    redis.hset(key, mapping={
-        'code_hmac': _code_hmac(normalized_email, code),
-        'attempts': 0,
-    })
-    redis.expire(key, 300)
+    generation = secrets.token_urlsafe(18)
+    ttl_seconds = max(
+        60,
+        min(900, int(getattr(settings, 'EMAIL_VERIFICATION_CODE_TTL_SECONDS', 300))),
+    )
+    # HSET and TTL are one Redis operation.  The generation token ensures that
+    # a failed, slower resend cannot delete a newer code issued concurrently.
+    redis.eval(
+        _STORE_CODE_SCRIPT,
+        1,
+        key,
+        _code_hmac(normalized_email, code),
+        generation,
+        ttl_seconds * 1000,
+    )
 
     # 【核心修正】
     subject = '【IFaceOff】您的注册验证码'
@@ -79,5 +115,8 @@ def send_verification_code(email: str) -> bool:
         )
         return True
     except Exception:
-        redis.delete(key)
+        try:
+            redis.eval(_DELETE_GENERATION_SCRIPT, 1, key, generation)
+        except Exception:
+            pass
         return False

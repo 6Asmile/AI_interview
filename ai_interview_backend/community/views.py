@@ -7,6 +7,9 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.admission import admit_expensive_operation
+from core.idempotency import run_idempotent
+
 from .models import CommunityIdentity, CommunityTopicLink, CommunityWebhookEvent
 from .services import CommunityIntegrationError, build_discourse_sso_response, database_public_content, search_public_content, verify_signature
 
@@ -142,6 +145,25 @@ class CommunityIndexStatusView(APIView):
     def post(self, request):
         if not can_manage_community(request.user):
             return Response({'detail': '无权重建搜索索引。'}, status=status.HTTP_403_FORBIDDEN)
-        from .tasks import rebuild_public_search_indexes
-        result = rebuild_public_search_indexes.delay()
-        return Response({'status': 'queued', 'task_id': result.id}, status=status.HTTP_202_ACCEPTED)
+        def create():
+            # The idempotency claim is established by run_idempotent before
+            # scarce search capacity is consumed.
+            admit_expensive_operation(request, scope='community-search-rebuild')
+            from .operation_handlers import create_search_rebuild_operation, operation_envelope
+            operation = create_search_rebuild_operation(user=request.user)
+            return Response(
+                {
+                    **operation_envelope(operation),
+                    # v1 compatibility alias; it deliberately exposes the
+                    # same authoritative Operation UUID.
+                    'task_id': str(operation.pk),
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        return run_idempotent(
+            request,
+            'community.search_rebuild',
+            create,
+            required=True,
+        )

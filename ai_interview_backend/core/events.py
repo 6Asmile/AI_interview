@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -16,6 +17,12 @@ from .models import ConsumerInbox, IntegrationOutbox
 
 EventHandler = Callable[[dict[str, Any]], dict[str, Any] | None]
 _handlers: dict[str, list['RegisteredHandler']] = defaultdict(list)
+
+
+class ConsumerInboxLeaseActive(RuntimeError):
+    def __init__(self, retry_after_ms: int):
+        self.retry_after_ms = max(1, int(retry_after_ms))
+        super().__init__('consumer_inbox_lease_active')
 
 
 @dataclass(frozen=True)
@@ -40,9 +47,33 @@ def _safe_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     encoded = json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     if len(encoded) > 64 * 1024:
         raise ValueError('integration_event_payload_too_large')
-    forbidden = {'resume_content', 'answer_text', 'document_content', 'api_key', 'secret'}
-    if forbidden.intersection(value):
-        raise ValueError('integration_event_contains_forbidden_sensitive_field')
+    forbidden = {
+        'answer', 'answer_text', 'api_key', 'document_content', 'password',
+        'prompt', 'resume', 'resume_content', 'secret', 'token',
+    }
+    safe_technical_token_keys = {
+        'fencing_token', 'input_tokens', 'output_tokens', 'token_count', 'total_tokens',
+    }
+
+    def inspect(item, depth=0):
+        if depth > 8:
+            raise ValueError('integration_event_payload_too_deep')
+        if isinstance(item, dict):
+            for raw_key, child in item.items():
+                key = str(raw_key).strip().lower()
+                forbidden_suffix = key.endswith(('_password', '_secret', '_api_key')) or (
+                    key.endswith('_token') and key not in safe_technical_token_keys
+                )
+                if key in forbidden or forbidden_suffix:
+                    raise ValueError('integration_event_contains_forbidden_sensitive_field')
+                inspect(child, depth + 1)
+        elif isinstance(item, list):
+            if len(item) > 200:
+                raise ValueError('integration_event_payload_too_many_items')
+            for child in item:
+                inspect(child, depth + 1)
+
+    inspect(value)
     return value
 
 
@@ -105,14 +136,20 @@ def _payload_hash(envelope: dict[str, Any]) -> str:
 
 
 def consume_event(envelope: dict[str, Any]) -> dict[str, Any]:
-    """Run all registered projectors with one inbox fence per projector."""
+    """Run projectors with an expiring database lease per consumer/event."""
 
     event_type = str(envelope.get('event_type') or '')
     event_id = uuid.UUID(str(envelope['event_id']))
     handlers = [*_handlers.get(event_type, []), *_handlers.get('*', [])]
     outcomes: dict[str, Any] = {}
+    retry_after_ms = 0
     for handler in handlers:
         payload_hash = _payload_hash(envelope)
+        now = timezone.now()
+        claim_token = uuid.uuid4()
+        lease_owner = f'{handler.consumer_name}:{claim_token}'[:160]
+        lease_seconds = max(15, min(int(getattr(settings, 'CONSUMER_INBOX_LEASE_SECONDS', 300)), 3600))
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
         with transaction.atomic():
             inbox, created = ConsumerInbox.objects.select_for_update().get_or_create(
                 consumer_name=handler.consumer_name,
@@ -121,6 +158,10 @@ def consume_event(envelope: dict[str, Any]) -> dict[str, Any]:
                     'event_type': event_type,
                     'event_version': int(envelope.get('event_version') or 1),
                     'payload_hash': payload_hash,
+                    'claim_token': claim_token,
+                    'lease_owner': lease_owner,
+                    'lease_expires_at': lease_expires_at,
+                    'fencing_token': 1,
                 },
             )
             if not created:
@@ -129,25 +170,81 @@ def consume_event(envelope: dict[str, Any]) -> dict[str, Any]:
                 if inbox.status == ConsumerInbox.Status.PROCESSED:
                     outcomes[handler.consumer_name] = {'replayed': True, **(inbox.result or {})}
                     continue
+                lease_active = (
+                    inbox.status == ConsumerInbox.Status.PROCESSING
+                    and inbox.lease_expires_at
+                    and inbox.lease_expires_at > now
+                )
+                if lease_active:
+                    remaining_ms = max(1, int((inbox.lease_expires_at - now).total_seconds() * 1000))
+                    outcomes[handler.consumer_name] = {
+                        'in_progress': True,
+                        'retry_after_ms': remaining_ms,
+                    }
+                    retry_after_ms = max(retry_after_ms, remaining_ms)
+                    continue
+                retry_delayed = (
+                    inbox.status == ConsumerInbox.Status.FAILED
+                    and inbox.next_attempt_at
+                    and inbox.next_attempt_at > now
+                )
+                if retry_delayed:
+                    remaining_ms = max(1, int((inbox.next_attempt_at - now).total_seconds() * 1000))
+                    outcomes[handler.consumer_name] = {
+                        'retry_scheduled': True,
+                        'retry_after_ms': remaining_ms,
+                    }
+                    retry_after_ms = max(retry_after_ms, remaining_ms)
+                    continue
                 inbox.status = ConsumerInbox.Status.PROCESSING
                 inbox.attempts += 1
+                inbox.claim_token = claim_token
+                inbox.lease_owner = lease_owner
+                inbox.lease_expires_at = lease_expires_at
+                inbox.fencing_token += 1
+                inbox.next_attempt_at = None
                 inbox.last_error = ''
-                inbox.save(update_fields=['status', 'attempts', 'last_error', 'updated_at'])
+                inbox.save(update_fields=[
+                    'status', 'attempts', 'claim_token', 'lease_owner', 'lease_expires_at',
+                    'fencing_token', 'next_attempt_at', 'last_error', 'updated_at',
+                ])
+            fencing_token = inbox.fencing_token
         try:
-            result = handler.callback(envelope) or {}
+            result = _safe_payload(handler.callback(envelope) or {})
         except Exception as exc:
-            ConsumerInbox.objects.filter(pk=inbox.pk).update(
+            ConsumerInbox.objects.filter(
+                pk=inbox.pk,
+                status=ConsumerInbox.Status.PROCESSING,
+                claim_token=claim_token,
+                fencing_token=fencing_token,
+            ).update(
                 status=ConsumerInbox.Status.FAILED,
                 last_error=f'{type(exc).__name__}: {exc}'[:2000],
+                lease_owner='',
+                lease_expires_at=None,
+                next_attempt_at=timezone.now() + retry_delay(inbox.attempts),
             )
             raise
-        ConsumerInbox.objects.filter(pk=inbox.pk).update(
+        updated = ConsumerInbox.objects.filter(
+            pk=inbox.pk,
+            status=ConsumerInbox.Status.PROCESSING,
+            claim_token=claim_token,
+            fencing_token=fencing_token,
+            lease_expires_at__gt=timezone.now(),
+        ).update(
             status=ConsumerInbox.Status.PROCESSED,
             result=result,
             processed_at=timezone.now(),
             last_error='',
+            lease_owner='',
+            lease_expires_at=None,
+            next_attempt_at=None,
         )
+        if updated != 1:
+            raise ConsumerInboxLeaseActive(1)
         outcomes[handler.consumer_name] = result
+    if retry_after_ms:
+        raise ConsumerInboxLeaseActive(retry_after_ms)
     return outcomes
 
 
