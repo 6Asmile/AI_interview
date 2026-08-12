@@ -1,0 +1,177 @@
+{
+  "vault": "docs/ifaceoff-vault",
+  "changelog": "docs/ifaceoff-vault/12-项目变更日志.md",
+  "facts_index": "docs/ifaceoff-vault/09-代码-API-数据事实索引.md",
+  "ignored": [
+    "docs/ifaceoff-vault/**",
+    "docs/.ifaceoff-vault-rebuild/**",
+    "logs/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/*.sqlite3",
+    "ai-interview-frontend/dist/**",
+    "ai-interview-admin/dist/**",
+    "staticfiles/**",
+    "media/**"
+  ],
+  "tracked_root_files": [
+    "AGENTS.md",
+    "README.md",
+    "docker-compose.yml",
+    "docker-compose.infra.yml",
+    "docker-compose.observability.yml"
+  ],
+  "rules": [
+    {
+      "name": "celery-topology",
+      "patterns": [
+        "ai_interview_backend/ai_interview_backend/settings.py",
+        "ai_interview_backend/core/tasks.py",
+        "ai_interview_backend/interviews/tasks.py",
+        "ai_interview_backend/interviews/execution.py"
+      ],
+      "targets": [
+        {
+          "document": "docs/ifaceoff-vault/03-卷二-全栈架构与一次请求.md",
+          "sections": ["## 12. RabbitMQ/Celery 拓扑", "## 16. 测试这条全栈链"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/05-卷四-Interview与评估实现.md",
+          "sections": ["## 16. 可靠性与容量", "## 17. 测试证据与缺口", "## 27. Worker 恢复演练"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/06-卷五-Agent-RAG与Model-Gateway实现.md",
+          "sections": ["## 6. Execution、Dispatch 与 fencing", "## 24. 当前状态和真实缺口", "## 25. 测试"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md",
+          "sections": ["## 7. Outbox/Inbox", "## 15. RabbitMQ 与 Celery", "## 21. 可观测性", "## 23. 测试策略", "## 25. 当前生产差距", "## 30. Outbox/Inbox 的数据库视角", "## 33. RabbitMQ 406 的现场含义和安全处理"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/10-运行与故障手册.md",
+          "sections": ["## 6. 启动 Celery", "## 7. RabbitMQ 406：队列声明不兼容", "## 17. 发布与回滚", "## 20. 发布验收清单"]
+        }
+      ]
+    },
+    {
+      "name": "platform-events-admin",
+      "patterns": [
+        "ai_interview-admin/src/views/PlatformDomain.vue",
+        "ai-interview-admin/src/views/Operations.vue",
+        "ai_interview_backend/staff_admin/platform_views.py",
+        "ai_interview_backend/staff_admin/operations_views.py"
+      ],
+      "targets": [
+        {
+          "document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md",
+          "sections": ["## 6. Core Platform：幂等与异步操作", "## 7. Outbox/Inbox", "## 21. 可观测性"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/10-运行与故障手册.md",
+          "sections": ["## 17. 发布与回滚", "## 20. 发布验收清单"]
+        }
+      ]
+    },
+    {
+      "name": "mq-infrastructure",
+      "patterns": [
+        "docker-compose*.yml",
+        "docker/rabbitmq/**",
+        "docker/prometheus/**",
+        "docker/grafana/**"
+      ],
+      "targets": [
+        {
+          "document": "docs/ifaceoff-vault/03-卷二-全栈架构与一次请求.md",
+          "sections": ["## 12. RabbitMQ/Celery 拓扑", "## 13. Redis 三个故障域"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md",
+          "sections": ["## 14. Redis", "## 15. RabbitMQ 与 Celery", "## 21. 可观测性", "## 25. 当前生产差距"]
+        },
+        {
+          "document": "docs/ifaceoff-vault/10-运行与故障手册.md",
+          "sections": ["## 2. 仅启动基础设施", "## 6. 启动 Celery", "## 7. RabbitMQ 406：队列声明不兼容", "## 17. 发布与回滚", "## 20. 发布验收清单"]
+        }
+      ]
+    },
+    {
+      "name": "career-model",
+      "patterns": ["ai_interview_backend/careers/models.py", "ai_interview_backend/careers/migrations/**"],
+      "document": "docs/ifaceoff-vault/04-卷三-Career与Resume实现.md",
+      "sections": ["## 2. Career 数据模型", "## 16. 并发、一致性与恢复"]
+    },
+    {
+      "name": "career-runtime",
+      "patterns": ["ai_interview_backend/careers/**"],
+      "document": "docs/ifaceoff-vault/04-卷三-Career与Resume实现.md",
+      "sections": ["## 3. Career 页面到 API", "## 4. Job Match 与 Learning Plan"]
+    },
+    {
+      "name": "resume",
+      "patterns": ["ai_interview_backend/resumes/**", "ai_interview_backend/reports/**"],
+      "document": "docs/ifaceoff-vault/04-卷三-Career与Resume实现.md",
+      "sections": ["## 5. Resume 的聚合根与兼容字段", "## 9. 文件导入", "## 10. 设计与渲染隔离", "## 11. ATS/JD 智能分析", "## 14. `resumes.0008` 历史迁移修复"]
+    },
+    {
+      "name": "agent-runtime",
+      "patterns": ["ai_interview_backend/interviews/agent_v4/**", "ai_interview_backend/interviews/agent_runtime.py", "ai_interview_backend/interviews/configuration.py", "ai_interview_backend/interviews/tasks.py"],
+      "document": "docs/ifaceoff-vault/06-卷五-Agent-RAG与Model-Gateway实现.md",
+      "sections": ["## 2. V4 的输入输出契约", "## 3. V4 如何在 V3 行为上增加持久化", "## 6. Execution、Dispatch 与 fencing", "## 9. Agent Control Plane"]
+    },
+    {
+      "name": "interview",
+      "patterns": ["ai_interview_backend/interviews/**", "ai_interview_backend/video_uploads/**"],
+      "document": "docs/ifaceoff-vault/05-卷四-Interview与评估实现.md",
+      "sections": ["## 2. 模板、Rubric 与配置版本", "## 5. Session、Run 与 Execution", "## 6. 提交一轮回答", "## 9. 媒体与语音", "## 12. Rubric 评估"]
+    },
+    {
+      "name": "knowledge",
+      "patterns": ["ai_interview_backend/knowledge/**"],
+      "document": "docs/ifaceoff-vault/06-卷五-Agent-RAG与Model-Gateway实现.md",
+      "sections": ["## 10. RAG 数据版本", "## 11. 文档导入与结构化切块", "## 14. 在线检索", "## 17. RAG 一致性与重建"]
+    },
+    {
+      "name": "gateway",
+      "patterns": ["ai_interview_backend/system/**", "docker/litellm/**"],
+      "document": "docs/ifaceoff-vault/06-卷五-Agent-RAG与Model-Gateway实现.md",
+      "sections": ["## 19. Model Gateway 数据模型", "## 20. 一次模型请求", "## 21. 重试、降级和幂等"]
+    },
+    {
+      "name": "identity-staff",
+      "patterns": ["ai_interview_backend/users/**", "ai_interview_backend/staff_admin/**", "ai-interview-admin/**"],
+      "document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md",
+      "sections": ["## 2. Candidate Identity", "## 3. Staff 独立认证、MFA 与 RBAC", "## 4. 审计与防篡改"]
+    },
+    {
+      "name": "platform-domains",
+      "patterns": ["ai_interview_backend/core/**", "ai_interview_backend/community/**", "ai_interview_backend/blog/**", "ai_interview_backend/chat/**", "ai_interview_backend/notifications/**", "ai_interview_backend/interactions/**", "ai_interview_backend/questions/**"],
+      "document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md",
+      "sections": ["## 6. Core Platform：幂等与异步操作", "## 7. Outbox/Inbox", "## 9. Community 与 Revision", "## 11. Chat", "## 12. Notifications"]
+    },
+    {
+      "name": "candidate-ui",
+      "patterns": ["ai-interview-frontend/**"],
+      "document": "docs/ifaceoff-vault/03-卷二-全栈架构与一次请求.md",
+      "sections": ["## 2. 前端路由与认证守卫", "## 3. Axios、Cookie、CSRF 与 API 基址", "## 16. 测试这条全栈链"]
+    },
+    {
+      "name": "backend-platform",
+      "patterns": ["ai_interview_backend/**"],
+      "document": "docs/ifaceoff-vault/03-卷二-全栈架构与一次请求.md",
+      "sections": ["## 4. Django URL 的版本边界", "## 5. View、Serializer、Service、Task 各自做什么"]
+    },
+    {
+      "name": "infrastructure",
+      "patterns": ["docker/**", "nginx/**", "scripts/ifaceoff-*.ps1"],
+      "document": "docs/ifaceoff-vault/10-运行与故障手册.md",
+      "sections": ["## 2. 仅启动基础设施", "## 6. 启动 Celery", "## 7. RabbitMQ 406：队列声明不兼容", "## 17. 发布与回滚"]
+    },
+    {
+      "name": "documentation-tooling",
+      "patterns": ["AGENTS.md", "README.md", ".github/**", "scripts/**"],
+      "document": "docs/ifaceoff-vault/00-开始这里.md",
+      "sections": ["## 这本书如何组织", "## 使用截图的规则"]
+    }
+  ]
+}

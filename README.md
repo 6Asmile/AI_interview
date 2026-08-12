@@ -9,21 +9,31 @@
 [![LiteLLM](https://img.shields.io/badge/Gateway-LiteLLM-16a34a)](https://docs.litellm.ai/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](LICENSE)
 
-![iFaceoff current landing page](docs/images/landing-latest.png)
+![iFaceoff current landing page](docs/ifaceoff-vault/assets/screenshots/landing-current.png)
 
 iFaceoff 不再只是“AI 面试工具”。系统围绕可验证的职业事实建立求职闭环：简历内容来自用户确认的数据，岗位分析冻结真实 JD 和简历版本，面试问题可以引用经过审批的知识库证据，评分必须引用候选人的真实回答，模型不可用时明确降级而不是伪造结果。
+
+完整的产品、架构、代码、数据、故障恢复和面试复盘资料位于扁平化的
+[iFaceoff Obsidian“一书六卷”知识库](docs/ifaceoff-vault/00-开始这里.md)。
+建议先读
+[项目全解](docs/ifaceoff-vault/01-iFaceoff项目全解.md)、
+[产品定位与求职闭环](docs/ifaceoff-vault/02-卷一-产品定位与求职闭环.md)和
+[全栈架构与一次请求](docs/ifaceoff-vault/03-卷二-全栈架构与一次请求.md)，
+再沿 Career/Resume、Interview、Agent/RAG/Gateway 和平台工程六卷深入。
+代码、模型、接口、基础设施或测试发生变化时，必须在同一变更中同步对应文档和
+[项目变更日志](docs/ifaceoff-vault/12-项目变更日志.md)。
 
 ## 产品闭环
 
 ```mermaid
 flowchart LR
     FACT["职业事实库"] --> RESUME["主简历与版本"]
-    RESUME --> JOB["目标岗位与真实 JD"]
-    JOB --> MATCH["岗位匹配与能力 Gap"]
+    RESUME --> JOB["目标岗位与真实 JD（岗位描述）"]
+    JOB --> MATCH["岗位匹配与能力 Gap（差距）"]
     MATCH --> PLAN["补强计划"]
     PLAN --> INTERVIEW["岗位专项模拟面试"]
     INTERVIEW --> REPORT["证据化评估报告"]
-    REPORT --> APPLY["投递与 Offer 进度"]
+    REPORT --> APPLY["投递与 Offer（录用）进度"]
     APPLY --> PROFILE["能力画像与成长趋势"]
     PROFILE --> PLAN
     REPORT -.-> COMMUNITY["用户确认并脱敏<br/>原生求职社区"]
@@ -38,18 +48,20 @@ flowchart LR
 
 <table>
   <tr>
-    <td width="50%"><strong>求职工作台</strong><br><img src="docs/images/career-workspace-latest.png" alt="求职工作台"></td>
-    <td width="50%"><strong>自适应面试入口</strong><br><img src="docs/images/interview-setup-latest.png" alt="模拟面试入口"></td>
+    <td width="50%"><strong>求职工作台</strong><br><img src="docs/ifaceoff-vault/assets/screenshots/career-workspace-current.png" alt="求职工作台"></td>
+    <td width="50%"><strong>自适应面试入口</strong><br><img src="docs/ifaceoff-vault/assets/screenshots/interview-setup-current.png" alt="模拟面试入口"></td>
   </tr>
   <tr>
-    <td width="50%"><strong>解析后知识块编辑</strong><br><img src="docs/images/knowledge-chunks-latest.png" alt="知识块编辑器"></td>
-    <td width="50%"><strong>真实简历与 JD 诊断</strong><br><img src="docs/images/resume-diagnosis-latest.png" alt="简历诊断"></td>
+    <td width="50%"><strong>知识库入口</strong><br><img src="docs/ifaceoff-vault/assets/screenshots/knowledge-current.png" alt="知识库入口"></td>
+    <td width="50%"><strong>简历与 JD 诊断</strong><br><img src="docs/ifaceoff-vault/assets/screenshots/resume-diagnosis-current.png" alt="简历诊断"></td>
   </tr>
 </table>
 
-![技术社区真实内容 Feed](docs/images/community-feed-latest.png)
+![技术社区当前 Feed](docs/ifaceoff-vault/assets/screenshots/community-current.png)
 
-以上截图由 Playwright 在当前版本、真实本地服务和现有业务数据上重新生成，不使用前端 Mock 数据。
+以上截图由 Playwright 连接当前前端、Django 与独立 PostgreSQL，以合成数据重新生成，不使用旧图。
+部分页面的当前缺口按 `current-partial` 如实登记，详见
+[截图证据清单](docs/ifaceoff-vault/13-截图证据清单.md)。
 
 ## Resume Intelligence
 
@@ -57,15 +69,15 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    FACT["已确认 CareerFact"] --> DRAFT["ResumeDraft<br/>ETag 自动保存"]
-    IMPORT["PDF / DOCX / JSON<br/>OCR 与人工确认"] --> DRAFT
-    DRAFT --> VERSION["不可变 ResumeVersion"]
-    VERSION --> EVIDENCE["JSON Pointer<br/>ResumeEvidenceLink"]
-    VERSION --> QUALITY["Schema / ATS / 证据<br/>多视角质量报告"]
-    VERSION --> VARIANT["JD 定制 ResumeVariant"]
-    VERSION --> RENDER["RenderCV 2.8 / Typst"]
-    DESIGN["ResumeDesignRevision"] --> RENDER
-    RENDER --> ARTIFACT["PDF / PNG / DOCX / JSON"]
+    FACT["已确认 CareerFact（职业事实）"] --> DRAFT["ResumeDraft（简历草稿）<br/>ETag（实体标签）自动保存"]
+    IMPORT["PDF / DOCX / JSON（文档格式）<br/>OCR（光学识别）与人工确认"] --> DRAFT
+    DRAFT --> VERSION["不可变 ResumeVersion（简历版本）"]
+    VERSION --> EVIDENCE["JSON Pointer（字段指针）<br/>ResumeEvidenceLink（证据关联）"]
+    VERSION --> QUALITY["Schema（结构）/ ATS（招聘系统）/ 证据<br/>多视角质量报告"]
+    VERSION --> VARIANT["JD（岗位描述）定制版本"]
+    VERSION --> RENDER["RenderCV / Typst（排版渲染）"]
+    DESIGN["ResumeDesignRevision（设计版本）"] --> RENDER
+    RENDER --> ARTIFACT["PDF / PNG / DOCX / JSON（导出物）"]
     VERSION --> SHARE["私密分享快照"]
     SHARE --> REDACT["字段脱敏 / 密码 / 过期<br/>撤销 / 限流 / 审计"]
 ```
@@ -98,7 +110,8 @@ flowchart LR
 
 打开 `http://127.0.0.1:5174/resume-config` 管理母版启用状态、RenderCV 版本、ATS 规则、渲染超时和输入大小。管理写操作必须提供 `Idempotency-Key` 与操作原因，并进入审计记录；该管理接口不会返回用户简历正文。
 
-详细模型、渲染隔离和放量方式见 [Resume Intelligence 运维说明](docs/resume-intelligence.md)。
+详细模型、渲染隔离和放量方式见
+[Career 与 Resume 实现](docs/ifaceoff-vault/04-卷三-Career与Resume实现.md)。
 
 ## 核心能力
 
@@ -122,34 +135,34 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph UX["交互层"]
-        WEB["Vue 3 Web"]
-        SPEECH["ASR / TTS / Media"]
+        WEB["Vue 3 Web（网页端）"]
+        SPEECH["ASR（语音识别）/ TTS（语音合成）/ 媒体"]
     end
 
     subgraph APP["业务与 Agent 层"]
-        API["Django REST API"]
-        WS["Django Channels"]
-        AGENT["Composite Agent V4 / LangGraph"]
-        TOOLS["Agent Tool Executor"]
-        MEMORY["Session / Event / Evidence Memory"]
-        RESUME["Resume Intelligence"]
+        API["Django REST API（应用接口）"]
+        WS["Django Channels（实时通道）"]
+        AGENT["Composite Agent V4（复合智能体）/ LangGraph"]
+        TOOLS["Agent Tool Executor（工具执行器）"]
+        MEMORY["会话 / 事件 / 证据记忆"]
+        RESUME["Resume Intelligence（简历智能）"]
     end
 
     subgraph DATA["数据与检索层"]
-        PGAPP[(PostgreSQL / ifaceoff_app)]
-        PGAGENT[(PostgreSQL / ifaceoff_agent)]
-        REDIS[(Redis)]
-        MQ[(RabbitMQ)]
-        QDRANT[(Qdrant)]
-        SEARCH[(Meilisearch)]
+        PGAPP[(PostgreSQL / ifaceoff_app（业务主库）)]
+        PGAGENT[(PostgreSQL / ifaceoff_agent（检查点库）)]
+        REDIS[(Redis（三个故障域）)]
+        MQ[(RabbitMQ（消息代理）)]
+        QDRANT[(Qdrant（向量索引）)]
+        SEARCH[(Meilisearch（关键词索引）)]
     end
 
     subgraph AI["模型与异步层"]
-        WORKER["Celery Worker / Beat"]
-        RENDER["Isolated RenderCV / Typst Worker"]
-        GATEWAY["LiteLLM Proxy"]
-        PGLITELLM[(PostgreSQL / litellm)]
-        SCAN["ClamAV"]
+        WORKER["Celery Worker（任务执行器）/ Beat（调度器）"]
+        RENDER["隔离的 RenderCV / Typst 渲染 Worker（执行器）"]
+        GATEWAY["LiteLLM Proxy（模型代理）"]
+        PGLITELLM[(PostgreSQL / litellm（模型账本库）)]
+        SCAN["ClamAV（文件扫描）"]
     end
 
     WEB --> API
@@ -173,6 +186,40 @@ flowchart TB
     RENDER --> PGAPP
     GATEWAY --> PGLITELLM
 ```
+
+## 可靠异步底座
+
+高成本写操作不会在 HTTP（网络请求）进程中直接调用模型、OCR（光学识别）、Typst（排版器）或 FFmpeg（媒体处理器）。API 先在同一个 PostgreSQL 事务中保存领域输入快照、权威 `Operation`（异步操作）和 `OperationDispatchOutbox`（命令发件箱），再由独立 Publisher Worker（发布执行器）投递到版本化 RabbitMQ 队列。消息只携带 `operation_id`，Worker 必须回主库重载输入并执行 claim（认领）、lease（租约）和 fencing token（栅栏令牌）校验。
+
+```mermaid
+flowchart LR
+    API["Django API（应用接口）"] --> TX["PostgreSQL（权威事务）"]
+    TX --> SNAP["领域输入快照"]
+    TX --> OP["Operation（异步操作）"]
+    TX --> OUT["Dispatch Outbox（命令发件箱）"]
+    OUT --> PUB["Publisher Worker（发布执行器）"]
+    PUB --> MQ["RabbitMQ v2（版本化消息队列）"]
+    MQ --> WORKER["隔离 Worker（任务执行器）"]
+    WORKER --> CLAIM["数据库 Claim / Lease / Fence（认领 / 租约 / 栅栏）"]
+    CLAIM --> EXEC["模型 / RAG（检索增强）/ OCR / 渲染 / 媒体"]
+    EXEC --> RESULT["结果 + OperationEvent（耐久事件）"]
+    RESULT --> REALTIME["Redis Realtime（实时通知）"]
+    REALTIME --> CLIENT["SSE（服务端事件）/ 轮询恢复"]
+```
+
+`Operation` 状态由统一服务做条件更新，业务代码和管理端不能直接改状态。取消先成功会提高栅栏令牌，迟到 Worker 无法覆盖；Worker 崩溃后新认领者获得更高令牌；外部调用成功但数据库提交前崩溃时，以 Operation ID、输入哈希、Artifact（产物）唯一约束或领域唯一键复用结果。
+
+| 层 | 权威职责 | 明确不承担 |
+| --- | --- | --- |
+| PostgreSQL | Operation、输入/结果引用、Outbox/Inbox、耐久阶段事件、成本账本 | 不保存逐 Token 动画流 |
+| RabbitMQ | at-least-once（至少一次）运输、手工确认、崩溃重投、最终 DLQ（死信队列） | 不决定业务是否成功，不承担业务延迟重试时钟 |
+| Redis Cache（缓存域） | 公共查询和可重建结果缓存，`allkeys-lfu` | 不保存业务事实 |
+| Redis Coordination（协调域） | 原子限流、并发槽、短租约、熔断，`noeviction` | 故障时安全流程与高成本任务不能放行 |
+| Redis Realtime（实时域） | Channels（实时通道）与限长 Stream（事件流），`noeviction` | 不承诺逐 Token 永久重放 |
+
+版本化队列统一使用 `ifaceoff.v2.*`：Agent（智能体）、Career（职业分析）、Documents（文档）、Resume Render（简历渲染）、Media（媒体）、Community Moderation（社区审核）、Events（领域事件）、Notifications（通知）、Search（搜索）和 Publisher（发布）。Publisher 与通知、文档与媒体、长任务与短任务分别隔离；数据库 `available_at` 是业务重试的唯一时钟，不再把未接线的 Rabbit TTL Retry Queue（延迟重试队列）描述为已实现能力。
+
+故障时固定行为：Cache Redis 绕过缓存；Coordination Redis 故障时安全流程和高成本任务 fail closed（安全关闭）；Realtime Redis 故障时回退 PostgreSQL 快照与轮询；RabbitMQ 故障时 Outbox 保留且 API 仍返回已受理；PostgreSQL 故障时停止写入，任何缓存或队列都不能伪造成功。
 
 ### 隐藏式多 SubAgent
 
@@ -218,15 +265,15 @@ Observe
 
 ```mermaid
 flowchart LR
-    UPLOAD["PDF / DOCX / XLSX / MD / FAQ / Image"]
-    PARSE["Docling + OCR + Fallback"]
-    DRAFT["Revision + Editable Chunk Drafts"]
-    REVIEW["Human Review"]
-    PUBLISH["Freeze Published Revision"]
-    INDEX["Embedding + Qdrant"]
-    RETRIEVE["Multi Query + Vector + BM25"]
-    FUSION["RRF + Rerank"]
-    GUARD["PostgreSQL Tenant / Approval / Version Guard"]
+    UPLOAD["PDF / DOCX / XLSX / MD（文档）/ FAQ（问答）/ 图片"]
+    PARSE["Docling + OCR（光学识别）+ 固定降级链"]
+    DRAFT["Revision（修订）+ 可编辑 Chunk Draft（块草稿）"]
+    REVIEW["人工审核"]
+    PUBLISH["冻结已发布修订"]
+    INDEX["Embedding（向量化）+ Qdrant（向量索引）"]
+    RETRIEVE["Multi Query（多查询）+ 向量 + 关键词"]
+    FUSION["RRF（融合排序）+ Rerank（重排）"]
+    GUARD["PostgreSQL 租户 / 审批 / 版本校验"]
 
     UPLOAD --> PARSE --> DRAFT --> REVIEW --> PUBLISH --> INDEX
     INDEX --> RETRIEVE --> FUSION --> GUARD
@@ -299,7 +346,9 @@ Copy-Item .env.infra.example .env.infra
 
 | 服务 | 默认地址 |
 | --- | --- |
-| Redis | `127.0.0.1:6379` |
+| Redis Cache（缓存域） | `127.0.0.1:6379` |
+| Redis Coordination（协调域） | `127.0.0.1:6380` |
+| Redis Realtime（实时域） | `127.0.0.1:6381` |
 | RabbitMQ / 管理页 | `127.0.0.1:5672` / `http://127.0.0.1:15672` |
 | Qdrant | `http://127.0.0.1:6333/dashboard` |
 | LiteLLM | `http://127.0.0.1:4000` |
@@ -408,13 +457,22 @@ GITHUB_OAUTH_CALLBACK_URL=http://127.0.0.1:8000/api/v1/auth/oauth/github/callbac
 
 Readiness 会分别报告 Database、Redis、RabbitMQ、Celery Worker、Qdrant、Meilisearch 和 LiteLLM 状态。异步服务不可用时，上传页面会展示队列不可用，而不是让任务无限停留在 `pending`。
 
+声明 v2 队列并检查绑定：
+
+```powershell
+cd ai_interview_backend
+python manage.py declare_celery_topology --max-retries=10
+```
+
 完整容器化部署仍可使用：
 
 ```powershell
 .\scripts\ifaceoff-docker.ps1 up
 ```
 
-两种启动方式不要混用同一组端口。更多说明见 [基础设施部署](docs/docker-ifaceoff-infra.md)、[完整容器部署](docs/docker-ifaceoff.md) 与 [Agent 持久化、双 Redis 和容量验收](docs/agent-resilience.md)。
+两种启动方式不要混用同一组端口。更多说明见
+[运行与故障手册](docs/ifaceoff-vault/10-运行与故障手册.md)与
+[平台工程、可靠性、安全与运维](docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md)。
 
 Git Bash 可直接使用 Compose 启动完整栈：
 
@@ -434,6 +492,12 @@ IFACEOFF_DATABASE_URL=postgresql://ifaceoff_app:...@127.0.0.1:5433/ifaceoff_app
 AGENT_DATABASE_URL=postgresql://ifaceoff_agent:...@127.0.0.1:5433/ifaceoff_agent
 AGENT_CONTEXT_TOKEN_BUDGET=12000
 AGENT_MAX_GENERATION_RETRIES=2
+
+REDIS_CACHE_URL=redis://127.0.0.1:6379/0
+REDIS_COORDINATION_URL=redis://127.0.0.1:6380/0
+REDIS_REALTIME_URL=redis://127.0.0.1:6381/0
+CELERY_TOPOLOGY_VERSION=v2
+OPERATION_LEASE_SECONDS=300
 
 MODEL_CREDENTIAL_ENCRYPTION_KEY=
 LITELLM_PROXY_URL=http://127.0.0.1:4000/v1
@@ -474,6 +538,8 @@ docker compose --env-file .env.observability -f docker-compose.observability.yml
 - `/api/v1/community/feed/`, `/community/search/`
 - `/api/v1/gateway/credentials/`, `/deployments/`, `/aliases/`, `/requests/`
 - `/api/v1/system/readiness/`
+- `/api/v2/operations/{id}/`, `/api/v2/operations/{id}/events/`
+- `/api/v2/operations/{id}/retry/`, `/api/v2/operations/{id}/cancel/`
 - `/api/v1/auth/csrf/`, `/auth/session/`, `/auth/token/refresh/`, `/auth/logout-all/`
 - `/api/v1/auth/oauth/github/start/`, `/auth/oauth/github/callback/`, `/auth/oauth/github/link/confirm/`
 - `/api/v1/ws-tickets/`, `/tasks/`, `/tasks/{id}/retry/`, `/tasks/{id}/cancel/`
@@ -484,6 +550,19 @@ docker compose --env-file .env.observability -f docker-compose.observability.yml
 - `/api/admin/v1/analytics/`, `/feature-flags/`, `/maintenance-notices/`, `/notifications/operations/`
 
 旧简历读取和部分分析 API 在放量期保留兼容适配器；旧关系表写入与整包 AI 生成不再作为事实源，新流程统一使用版本化 `/api/v2` 资源。
+
+高成本接口要求 `Idempotency-Key`（幂等键），异步受理统一返回同一个 Operation UUID（异步操作标识）：
+
+```json
+{
+  "operation_id": "00000000-0000-0000-0000-000000000000",
+  "status": "accepted",
+  "events_url": "/api/v2/operations/00000000-0000-0000-0000-000000000000/events/",
+  "result_url": "/api/v2/operations/00000000-0000-0000-0000-000000000000/"
+}
+```
+
+事件使用单调递增 `sequence`（序号）续读；断线后客户端携带 `after_sequence`，不会依赖 Redis 中的瞬时消息猜测最终状态。用户/企业容量不足返回 `429 capacity_limited`，协调依赖或队列背压返回 `503 dependency_unavailable` / `503 async_backpressure`，并带 `retry_after_ms` 与 correlation ID（关联标识）。
 
 ## 数据一致性与运维
 
@@ -505,7 +584,7 @@ python manage.py reconcile_interview_sessions --apply
 cd ai_interview_backend
 python manage.py check
 python manage.py makemigrations --check --dry-run
-python manage.py test resumes staff_admin
+python manage.py test --settings=ai_interview_backend.test_settings --noinput
 python manage.py migrate_resume_intelligence --check-only
 
 cd ..\ai-interview-frontend
@@ -517,14 +596,13 @@ npm run test:e2e
 
 当前发布前实测结果：
 
-- Resume Intelligence 与管理端定向回归：**27 tests passed**
-- Django 全量回归：**179 项中 177 项通过**；另 2 项需要可连接的 Agent PostgreSQL Checkpoint 数据库
+- Django 全量回归发现 **295 项**：**293 项通过**，2 项真实 PostgreSQL Checkpoint（检查点）集成测试按环境开关明确跳过
 - Django system check：**0 issues**
 - Migration drift：**No changes detected**
 - 候选人端与独立管理端 production build：**passed**
-- 六套 RenderCV 模板英文 Golden Render 与中文 PDF 文本抽取：**passed**
-- 基础与生产韧性 Compose 配置校验：**passed**
-- 当前验证机器的 Docker daemon 未运行，因此后端镜像构建、离线 Typst 缓存与完整健康检查需要在发布环境补跑
+- Operation、Redis Lua、Gateway 熔断、领域接入与 Staff 幂等定向用例包含在上述全量回归中：**passed**
+- 基础、基础设施、生产韧性、可观测性四组 Compose 配置展开：**passed**
+- 当前验证机器的 Docker daemon（容器守护进程）未运行，因此真实 RabbitMQ/Redis/Celery 健康检查、三节点 Quorum（仲裁队列）故障演练、PostgreSQL Checkpoint 与 500 并发压测仍为 **pending-verification（待验证）**
 
 测试业务数据来自本地真实或匿名化样例；provider boundary fake 仅用于超时、异常和降级故障注入，不作为简历、知识库、评分或社区内容。
 

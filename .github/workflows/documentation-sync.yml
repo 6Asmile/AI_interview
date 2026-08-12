@@ -1,0 +1,48 @@
+name: Documentation sync
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run checker unit tests
+        run: python -m unittest discover -s scripts/tests -p "test_*.py"
+
+      - name: Validate Vault and generated inventory
+        run: |
+          python scripts/build_project_facts.py --check
+          python scripts/check_docs_sync.py --check-vault
+          python scripts/build_docs_inventory.py --check
+
+      - name: Enforce source-to-document mapping on pull requests
+        if: github.event_name == 'pull_request'
+        run: >-
+          python scripts/check_docs_sync.py
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+
+      - name: Enforce source-to-document mapping on pushes
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: >-
+          python scripts/check_docs_sync.py
+          --base "${{ github.event.before }}"
+          --head "${{ github.sha }}"
