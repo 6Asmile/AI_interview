@@ -10,7 +10,6 @@ from rest_framework.views import APIView
 from core.events import enqueue_integration_event
 from core.admission import admit_expensive_operation
 from core.idempotency import run_idempotent
-from core.models import AsyncOperation
 from resumes.models import Resume
 from resumes.models import ResumeVersion
 
@@ -50,7 +49,7 @@ from .serializers import (
     WeeklyCareerReportSerializer,
 )
 from .services import create_learning_plan, record_timeline_event, save_posting_as_target, stable_hash
-from .tasks import run_job_match_analysis
+from .operation_service import create_job_match_operation
 
 
 class OwnedModelViewSet(viewsets.ModelViewSet):
@@ -133,26 +132,20 @@ class JobTargetViewSet(OwnedModelViewSet):
             except ResumeVersion.DoesNotExist:
                 raise ValidationError({'resume_version_id': '简历版本不存在或无权访问。'})
             with transaction.atomic():
-                operation = AsyncOperation.objects.create(
-                    user=request.user,
-                    operation_type='job_match_analysis',
-                    source_app='careers',
-                    source_model='JobTarget',
-                    source_id=f'{target.pk}:{resume_version.pk}:{timezone.now().timestamp()}',
-                    title=f'分析 {target.position_name} 岗位匹配度',
-                )
                 analysis = JobMatchAnalysis.objects.create(
                     user=request.user,
                     job_target=target,
                     resume_version=resume_version,
                     job_posting_revision=target.job_posting_revision,
-                    operation=operation,
                     jd_snapshot=target.jd_text,
                     jd_snapshot_hash=target.jd_snapshot_hash or stable_hash({'jd_text': target.jd_text}),
                     config_snapshot={'engine': 'ifaceoff-resume-fit/1.0'},
                     config_hash=stable_hash({'engine': 'ifaceoff-resume-fit/1.0'}),
                 )
-                transaction.on_commit(lambda: run_job_match_analysis.delay(str(analysis.pk)))
+                operation = create_job_match_operation(
+                    analysis=analysis,
+                    title=f'分析 {target.position_name} 岗位匹配度',
+                )
             return Response({
                 'operation_id': str(operation.pk),
                 'status': 'accepted',

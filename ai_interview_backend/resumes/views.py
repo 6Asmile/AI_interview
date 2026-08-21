@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from .json_resume import legacy_resume_to_json_resume
 from .models import Education, ProjectExperience, Resume, ResumeImportJob, ResumeSuggestion, ResumeVersion, Skill, WorkExperience
+from .operation_service import create_resume_operation
 from .serializers import (
     EducationSerializer,
     ProjectExperienceSerializer,
@@ -22,7 +23,7 @@ from .serializers import (
     SkillSerializer,
     WorkExperienceSerializer,
 )
-from .tasks import confirm_resume_import, process_resume_import_job
+from .tasks import confirm_resume_import
 from .versioning import accept_suggestion, create_resume_version, ensure_resume_version
 from core.throttles import UploadRateThrottle
 from core.uploads import validate_uploaded_file
@@ -78,13 +79,21 @@ class ResumeViewSet(viewsets.ModelViewSet):
                 status=Resume.Status.PROCESSING,
             )
             job = ResumeImportJob.objects.create(resume=resume, user=request.user)
-        try:
-            process_resume_import_job.delay(job.id)
-        except Exception as exc:
-            job.error_message = f'任务队列暂不可用，可稍后重试：{str(exc)[:500]}'
-            job.save(update_fields=['error_message', 'updated_at'])
+            operation, _ = create_resume_operation(
+                user=request.user,
+                resume=resume,
+                operation_type='resume.import',
+                title=f'导入简历：{resume.title}',
+                import_job=job,
+            )
         data = ResumeDetailSerializer(resume, context={'request': request}).data
         data['import_job'] = ResumeImportJobSerializer(job).data
+        data.update({
+            'operation_id': str(operation.id),
+            'operation_status': 'accepted',
+            'events_url': f'/api/v2/operations/{operation.id}/events/',
+            'result_url': f'/api/v2/operations/{operation.id}/',
+        })
         return Response(data, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get', 'post'], url_path='versions')
@@ -149,15 +158,26 @@ class ResumeImportJobViewSet(viewsets.ReadOnlyModelViewSet):
         job = self.get_object()
         if job.status not in {ResumeImportJob.Status.FAILED, ResumeImportJob.Status.PENDING}:
             raise ValidationError('只有等待中或失败的任务可以重试。')
-        job.status = ResumeImportJob.Status.PENDING
-        job.error_message = ''
-        job.save(update_fields=['status', 'error_message', 'updated_at'])
-        try:
-            process_resume_import_job.delay(job.id)
-        except Exception as exc:
-            job.error_message = f'任务队列暂不可用：{str(exc)[:500]}'
-            job.save(update_fields=['error_message', 'updated_at'])
-        return Response(self.get_serializer(job).data, status=status.HTTP_202_ACCEPTED)
+        with transaction.atomic():
+            job.status = ResumeImportJob.Status.PENDING
+            job.error_message = ''
+            job.completed_at = None
+            job.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+            operation, _ = create_resume_operation(
+                user=request.user,
+                resume=job.resume,
+                operation_type='resume.import.retry',
+                title=f'重试导入简历：{job.resume.title}',
+                import_job=job,
+            )
+        data = dict(self.get_serializer(job).data)
+        data.update({
+            'operation_id': str(operation.id),
+            'operation_status': 'accepted',
+            'events_url': f'/api/v2/operations/{operation.id}/events/',
+            'result_url': f'/api/v2/operations/{operation.id}/',
+        })
+        return Response(data, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):

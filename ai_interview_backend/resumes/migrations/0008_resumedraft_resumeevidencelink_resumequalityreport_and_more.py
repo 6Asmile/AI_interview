@@ -325,7 +325,6 @@ class Migration(migrations.Migration):
             name='current_design_revision',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to='resumes.resumedesignrevision', verbose_name='当前设计版本'),
         ),
-        migrations.RunPython(backfill_resume_intelligence, migrations.RunPython.noop),
         migrations.AddConstraint(
             model_name='resume',
             constraint=models.UniqueConstraint(condition=models.Q(('is_default', True)), fields=('user',), name='uniq_default_resume_per_user'),
@@ -345,6 +344,10 @@ class Migration(migrations.Migration):
             name='updated_by',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='resume_drafts', to=settings.AUTH_USER_MODEL),
         ),
+        # The data migration queries ResumeDraft by resume_id and writes
+        # base_version_id.  Keep it after those fields enter the historical
+        # model state so a fresh database can migrate through 0008.
+        migrations.RunPython(backfill_resume_intelligence, migrations.RunPython.noop),
         migrations.AddField(
             model_name='resumeevidencelink',
             name='career_fact',

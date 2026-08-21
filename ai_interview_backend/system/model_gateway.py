@@ -1,16 +1,13 @@
-import json
 import os
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-import requests
 from django.conf import settings
-from openai import OpenAI
 
 from .ai_config import resolve_ai_config
 from .models import AIModel
-from .gateway_executor import GatewayBudgetExceeded, GatewayExecutionError, GatewayExecutor
+from .gateway_executor import GatewayExecutionError, GatewayExecutor
 
 
 class ModelGatewayError(RuntimeError):
@@ -96,32 +93,29 @@ class ModelGateway:
             raise ModelGatewayError(f'{model_type}_api_key_missing')
         return config
 
-    def _openai_client(self, config: GatewayConfig) -> OpenAI:
-        return OpenAI(api_key=config.api_key, base_url=config.base_url or None)
-
     def chat_json(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.3, alias_slug: str = 'chat.default') -> dict:
-        routed = self._use_alias(alias_slug, lambda executor, alias: executor.chat_json(alias, messages, task_name=alias, max_tokens=max_tokens, temperature=temperature))
-        if routed is not None:
-            return routed
-        config = self._require(AIModel.ModelType.CHAT)
-        client = self._openai_client(config)
-        params = {
-            'model': config.model_slug,
-            'messages': messages,
-            'stream': False,
-            'max_tokens': max_tokens,
-            'temperature': temperature,
-        }
-        if config.model and config.model.supports_json_mode:
-            params['response_format'] = {'type': 'json_object'}
-        response = client.chat.completions.create(**params)
-        content = response.choices[0].message.content or '{}'
-        content = content.strip()
-        if content.startswith('```json'):
-            content = content[7:]
-        if content.endswith('```'):
-            content = content[:-3]
-        return json.loads(content.strip() or '{}')
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.chat_json(
+                alias,
+                messages,
+                task_name=alias,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ),
+        )
+
+    def chat_text(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.7, alias_slug: str = 'chat.default') -> str:
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.chat_text(
+                alias,
+                messages,
+                task_name=alias,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ),
+        )
 
     def chat_stream(self, messages: list[dict], *, max_tokens: int = 1024, temperature: float = 0.7, alias_slug: str = 'chat.default'):
         yield from self.executor.chat_stream(
@@ -133,66 +127,90 @@ class ModelGateway:
         )
 
     def embed_text(self, text: str, alias_slug: str = 'embedding.default') -> tuple[list[float] | None, str, dict]:
-        routed = self._use_alias(alias_slug, lambda executor, alias: executor.embed_text(alias, text, task_name=alias))
-        if routed is not None:
-            return routed
-        config = self._require(AIModel.ModelType.EMBEDDING)
-        client = self._openai_client(config)
-        response = client.embeddings.create(model=config.model_slug, input=(text or '')[:8000])
-        vector = response.data[0].embedding
-        return vector, config.model_slug, config.snapshot()
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.embed_text(alias, text, task_name=alias),
+        )
 
-    def _rerank_url(self, config: GatewayConfig) -> str:
-        base_url = config.base_url.rstrip('/')
-        if '/services/rerank/' in base_url:
-            return base_url
-        if base_url.endswith('/api/v1'):
-            return f'{base_url}/services/rerank/text-rerank/text-rerank'
-        if 'compatible-mode' in base_url:
-            return base_url.replace('/compatible-mode/v1', '/api/v1/services/rerank/text-rerank/text-rerank')
-        return base_url
+    def transcribe_audio(
+        self,
+        audio,
+        *,
+        filename: str = 'audio.webm',
+        content_type: str = 'audio/webm',
+        language: str | None = None,
+        prompt: str | None = None,
+        alias_slug: str = 'speech.asr',
+    ) -> tuple[str, dict]:
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.transcribe_audio(
+                alias,
+                audio,
+                filename=filename,
+                content_type=content_type,
+                language=language,
+                prompt=prompt,
+                task_name=alias,
+            ),
+        )
+
+    def synthesize_speech(
+        self,
+        text: str,
+        *,
+        voice: str = 'alloy',
+        response_format: str = 'mp3',
+        speed: float | None = None,
+        alias_slug: str = 'speech.tts',
+    ) -> tuple[bytes, dict]:
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.synthesize_speech(
+                alias,
+                text,
+                voice=voice,
+                response_format=response_format,
+                speed=speed,
+                task_name=alias,
+            ),
+        )
+
+    def synthesize_speech_stream(
+        self,
+        text: str,
+        *,
+        voice: str = 'alloy',
+        response_format: str = 'pcm',
+        speed: float | None = None,
+        alias_slug: str = 'speech.tts',
+        chunk_size: int = 4096,
+    ):
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.synthesize_speech_stream(
+                alias,
+                text,
+                voice=voice,
+                response_format=response_format,
+                speed=speed,
+                task_name=alias,
+                chunk_size=chunk_size,
+            ),
+        )
 
     def rerank(self, query: str, documents: Iterable[str], *, top_n: int = 4, alias_slug: str = 'rerank.default') -> tuple[list[dict], dict]:
         docs = [str(item or '') for item in documents]
-        routed = self._use_alias(alias_slug, lambda executor, alias: executor.rerank(alias, query, docs, top_n=top_n, task_name=alias))
-        if routed is not None:
-            return routed
-        config = self._require(AIModel.ModelType.RERANK)
-        if not docs:
-            return [], config.snapshot()
-        url = self._rerank_url(config)
-        safe_top_n = min(max(int(top_n or len(docs)), 1), len(docs))
-        if 'aliyun' in config.provider or 'dashscope' in config.provider or '/api/v1/services/rerank/' in url:
-            payload = {
-                'model': config.model_slug,
-                'input': {
-                    'query': query,
-                    'documents': docs,
-                },
-                'parameters': {
-                    'top_n': safe_top_n,
-                    'return_documents': False,
-                },
-            }
-        else:
-            payload = {
-                'model': config.model_slug,
-                'query': query,
-                'documents': docs,
-                'top_n': safe_top_n,
-                'return_documents': False,
-            }
-        response = requests.post(
-            url,
-            json=payload,
-            headers={'Authorization': f'Bearer {config.api_key}', 'Content-Type': 'application/json'},
-            timeout=self.timeout,
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.rerank(
+                alias,
+                query,
+                docs,
+                top_n=top_n,
+                task_name=alias,
+            ),
         )
-        if not response.ok:
-            raise ModelGatewayError(f'rerank_http_{response.status_code}: {response.text[:500]}')
-        data = response.json()
-        results = data.get('results') or data.get('output', {}).get('results') or []
-        return results, {**config.snapshot(), 'endpoint': url}
 
     def health_check(self, model_type: str) -> dict[str, Any]:
         started = time.perf_counter()

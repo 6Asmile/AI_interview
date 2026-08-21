@@ -14,10 +14,7 @@ from django.conf import settings
 from django.db import connections, transaction
 from django.db.models import F, Max, Q
 from django.utils import timezone
-from openai import OpenAI
-from system.ai_config import resolve_ai_config
 from system.model_gateway import ModelGateway
-from system.models import AIModel
 
 from .models import KnowledgeChunk, KnowledgeChunkDraft, KnowledgeDocument, KnowledgeDocumentRevision
 
@@ -90,17 +87,6 @@ def _estimate_tokens(text: str) -> int:
     cjk = len(re.findall(r'[\u4e00-\u9fff]', text))
     non_cjk_terms = len(re.findall(r'[A-Za-z0-9_]+', text))
     return max(1, cjk + non_cjk_terms)
-
-
-def _embedding_client(user=None) -> tuple[OpenAI | None, str]:
-    resolved = resolve_ai_config(user, AIModel.ModelType.EMBEDDING)
-    model = resolved.model
-    api_key = resolved.api_key or getattr(settings, 'EMBEDDING_API_KEY', '') or os.getenv('EMBEDDING_API_KEY')
-    if not api_key:
-        return None, ''
-    base_url = (model.base_url if model else '') or getattr(settings, 'EMBEDDING_BASE_URL', '') or os.getenv('EMBEDDING_BASE_URL') or None
-    model_slug = (model.model_slug if model else '') or getattr(settings, 'EMBEDDING_MODEL', 'text-embedding-v3')
-    return OpenAI(api_key=api_key, base_url=base_url), model_slug
 
 
 def _embed_text(text: str, user=None) -> tuple[list[float] | None, str]:

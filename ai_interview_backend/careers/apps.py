@@ -8,3 +8,4 @@ class CareersConfig(AppConfig):
 
     def ready(self):
         from . import events  # noqa: F401
+        from . import operation_handlers  # noqa: F401

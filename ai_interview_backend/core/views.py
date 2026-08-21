@@ -1,13 +1,15 @@
-import hashlib
 import secrets
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import caches
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from .redis_keys import build_redis_key
 
 
 class WebSocketTicketSerializer(serializers.Serializer):
@@ -16,8 +18,50 @@ class WebSocketTicketSerializer(serializers.Serializer):
 
 
 def websocket_ticket_cache_key(ticket: str) -> str:
-    digest = hashlib.sha256(ticket.encode('utf-8')).hexdigest()
-    return f'ifaceoff:coordination:ws-ticket:{digest}'
+    return build_redis_key(
+        domain='coordination',
+        resource='websocket-ticket',
+        opaque_parts=(ticket,),
+    )
+
+
+def websocket_ticket_claim_key(ticket: str) -> str:
+    return build_redis_key(
+        domain='coordination',
+        resource='websocket-ticket-claim',
+        opaque_parts=(ticket,),
+    )
+
+
+def consume_websocket_ticket(ticket: str, *, expected_scope: str, expected_resource: str):
+    """Validate first, then atomically win the single-use ticket claim.
+
+    ``cache.add`` is the atomic fence.  Keeping the claim after deleting the
+    payload also prevents replay if payload deletion is delayed or retried.
+    A wrong path never claims or destroys an otherwise valid ticket.
+    """
+
+    try:
+        cache = caches['coordination']
+        cache_key = websocket_ticket_cache_key(ticket)
+        payload = cache.get(cache_key)
+        if not isinstance(payload, dict):
+            return None
+        if payload.get('scope') != expected_scope:
+            return None
+        if str(payload.get('resource_id')) != str(expected_resource):
+            return None
+        expires_at = parse_datetime(str(payload.get('expires_at') or ''))
+        if not expires_at or expires_at <= timezone.now():
+            return None
+        claim_ttl = max(90, int(getattr(settings, 'WS_TICKET_TTL_SECONDS', 45)) * 2)
+        if not cache.add(websocket_ticket_claim_key(ticket), '1', timeout=claim_ttl):
+            return None
+        cache.delete(cache_key)
+        return payload
+    except Exception:
+        # Coordination failures must fail closed for authentication tickets.
+        return None
 
 
 class WebSocketTicketView(APIView):

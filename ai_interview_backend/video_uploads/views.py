@@ -7,7 +7,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from django.conf import settings
-from celery import chain
+from django.db import transaction
+
+from core.admission import admit_expensive_operation
+from core.idempotency import run_idempotent
 
 from .models import FileUploadTask, FileChunk, VideoTranscodeTask
 from .serializers import (
@@ -18,7 +21,7 @@ from .serializers import (
     UploadProgressSerializer,
     VideoTranscodeTaskSerializer,
 )
-from .tasks import merge_chunks_task, start_transcode_after_merge
+from .operation_handlers import create_video_operation
 
 logger = logging.getLogger(__name__)
 
@@ -164,36 +167,56 @@ class MergeChunksView(APIView):
                 'total': task.total_chunks
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        task.status = FileUploadTask.Status.MERGING
-        task.save()
-        
-        transcode_task = None
-        if enable_transcode:
-            transcode_task = VideoTranscodeTask.objects.create(
-                user=request.user,
-                upload_task=task,
-                original_file='',
-                original_file_name=task.file_name,
-                original_size=task.file_size,
-                video_denoise=video_denoise,
-                audio_denoise=audio_denoise,
-                crf=crf,
-                status=VideoTranscodeTask.Status.PENDING
-            )
-            result = chain(
-                merge_chunks_task.s(str(task.id)),
-                start_transcode_after_merge.s(str(transcode_task.id))
-            ).delay()
-        else:
-            result = merge_chunks_task.delay(str(task.id))
+        def create():
+            # Validate/claim Idempotency-Key before consuming scarce media
+            # capacity. Invalid requests must not spend an admission token.
+            admit_expensive_operation(request, scope='video-process')
+            with transaction.atomic():
+                locked_task = FileUploadTask.objects.select_for_update().get(
+                    pk=task.pk,
+                    user=request.user,
+                )
+                locked_task.status = FileUploadTask.Status.MERGING
+                locked_task.save(update_fields=['status', 'updated_at'])
+                transcode_task = None
+                if enable_transcode:
+                    transcode_task, _created = VideoTranscodeTask.objects.get_or_create(
+                        user=request.user,
+                        upload_task=locked_task,
+                        defaults={
+                            'original_file': '',
+                            'original_file_name': locked_task.file_name,
+                            'original_size': locked_task.file_size,
+                            'video_denoise': video_denoise,
+                            'audio_denoise': audio_denoise,
+                            'crf': crf,
+                            'status': VideoTranscodeTask.Status.PENDING,
+                        },
+                    )
+                operation = create_video_operation(
+                    user=request.user,
+                    upload_task=locked_task,
+                    transcode_task=transcode_task,
+                )
+            return Response({
+                'operation_id': str(operation.pk),
+                'status': 'accepted',
+                'events_url': f'/api/v2/operations/{operation.pk}/events/',
+                'result_url': f'/api/v2/operations/{operation.pk}/',
+                # v1 aliases remain for two release cycles; they intentionally
+                # expose the same authoritative Operation UUID.
+                'task_id': str(locked_task.pk),
+                'merge_task_id': str(operation.pk),
+                'transcode_enabled': enable_transcode,
+                'transcode_task_id': str(transcode_task.pk) if transcode_task else None,
+            }, status=status.HTTP_202_ACCEPTED)
 
-        return Response({
-            'message': '合并任务已提交',
-            'task_id': str(task.id),
-            'merge_task_id': result.id,
-            'transcode_enabled': enable_transcode,
-            'transcode_task_id': str(transcode_task.id) if transcode_task else None
-        }, status=status.HTTP_202_ACCEPTED)
+        return run_idempotent(
+            request,
+            f'video.merge:{task.pk}:{int(enable_transcode)}',
+            create,
+            required=True,
+        )
 
 
 class UploadProgressView(APIView):

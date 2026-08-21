@@ -29,13 +29,14 @@ from .serializers import (
     KnowledgeDocumentSerializer,
     KnowledgeImportBatchSerializer,
 )
-from .tasks import (
-    process_import_file,
-    process_knowledge_import_file,
-    refresh_import_batch_stats,
-    reindex_knowledge_document,
-    reparse_knowledge_document,
+from .operation_handlers import (
+    IMPORT_OPERATION,
+    REINDEX_OPERATION,
+    REPARSE_OPERATION,
+    create_knowledge_operation,
+    operation_envelope,
 )
+from .tasks import refresh_import_batch_stats
 
 
 def can_manage_knowledge_review(user) -> bool:
@@ -210,29 +211,30 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
             KnowledgeDocumentRevision.Status.PUBLISHED,
         }:
             raise PermissionDenied('知识库版本必须审批通过后才能重建上线索引。')
-        document.status = KnowledgeDocument.Status.INDEXING
-        document.error_message = ''
-        document.save(update_fields=['status', 'error_message', 'updated_at'])
-        try:
-            reindex_knowledge_document.delay(str(document.id))
-        except Exception:
-            from .services import index_document
-            index_document(document, revision=revision)
+        with transaction.atomic():
+            document.status = KnowledgeDocument.Status.INDEXING
+            document.error_message = ''
+            document.save(update_fields=['status', 'error_message', 'updated_at'])
+            return create_knowledge_operation(
+                user=self.request.user,
+                operation_type=REINDEX_OPERATION,
+                source_model='KnowledgeDocument',
+                source_id=document.pk,
+                input_version=str(revision.pk),
+                title=f'重建知识索引：{document.title}',
+                metadata={'revision_id': str(revision.pk)},
+            )
 
     @action(detail=True, methods=['post'], url_path='reindex')
     def reindex(self, request, pk=None):
         document = self.get_object()
         self._ensure_can_edit(document)
-        self._schedule_reindex(document)
-        document.refresh_from_db()
-        if document.status == KnowledgeDocument.Status.INDEXING:
-            return Response(
-                {'message': '知识库索引任务已提交', 'document_id': str(document.id), 'status': document.status},
-                status=status.HTTP_202_ACCEPTED
-            )
-        else:
-            serializer = self.get_serializer(document)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+        operation = self._schedule_reindex(document)
+        return Response({
+            **operation_envelope(operation),
+            'document_id': str(document.pk),
+            'document_status': KnowledgeDocument.Status.INDEXING,
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['post'], url_path='submit-review')
     def submit_review(self, request, pk=None):
@@ -261,13 +263,22 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         self._ensure_can_edit(document)
         if not document.source_file:
             return Response({'detail': '只有文件导入的知识库可以重新解析。'}, status=status.HTTP_400_BAD_REQUEST)
-        document.parse_status = KnowledgeDocument.ParseStatus.PARSING
-        document.save(update_fields=['parse_status', 'updated_at'])
-        try:
-            reparse_knowledge_document.delay(str(document.id))
-        except Exception:
-            reparse_knowledge_document(str(document.id))
-        return Response(self.get_serializer(document).data, status=status.HTTP_202_ACCEPTED)
+        with transaction.atomic():
+            document.parse_status = KnowledgeDocument.ParseStatus.PARSING
+            document.save(update_fields=['parse_status', 'updated_at'])
+            operation = create_knowledge_operation(
+                user=request.user,
+                operation_type=REPARSE_OPERATION,
+                source_model='KnowledgeDocument',
+                source_id=document.pk,
+                input_version=str(document.draft_revision_id or document.published_revision_id or ''),
+                title=f'重新解析知识文档：{document.title}',
+            )
+        return Response({
+            **operation_envelope(operation),
+            'document_id': str(document.pk),
+            'parse_status': document.parse_status,
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):
@@ -288,9 +299,11 @@ class KnowledgeDocumentViewSet(viewsets.ModelViewSet):
         document.approved_at = revision.approved_at
         document.rejection_reason = ''
         document.save(update_fields=['approval_status', 'approved_by', 'approved_at', 'rejection_reason', 'updated_at'])
-        self._schedule_reindex(document, revision=revision)
+        operation = self._schedule_reindex(document, revision=revision)
         document.refresh_from_db()
-        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+        payload = self.get_serializer(document).data
+        payload['operation'] = operation_envelope(operation)
+        return Response(payload, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='publish')
     def publish(self, request, pk=None):
@@ -565,55 +578,68 @@ class KnowledgeImportBatchViewSet(viewsets.ModelViewSet):
                 validation_errors[index] = str(getattr(exc, 'detail', exc))[:2000]
 
         options = self._build_options(request)
-        batch = KnowledgeImportBatch.objects.create(
-            uploaded_by=request.user,
-            status=KnowledgeImportBatch.Status.PROCESSING,
-            source_files=[file.name for file in files],
-            options=options,
-            total_files=len(files),
-        )
-        for index, uploaded_file in enumerate(files):
-            import_file = KnowledgeImportFile.objects.create(
-                batch=batch,
-                source_file=uploaded_file,
-                original_name=uploaded_file.name,
-                status=KnowledgeImportFile.Status.PENDING,
+        operations = []
+        with transaction.atomic():
+            batch = KnowledgeImportBatch.objects.create(
+                uploaded_by=request.user,
+                status=KnowledgeImportBatch.Status.PROCESSING,
+                source_files=[file.name for file in files],
+                options=options,
+                total_files=len(files),
             )
-            if index in validation_errors:
-                import_file.status = KnowledgeImportFile.Status.FAILED
-                import_file.error_message = validation_errors[index]
-                import_file.save(update_fields=['status', 'error_message', 'updated_at'])
-                import_file.source_file.delete(save=False)
-                continue
-            try:
-                process_knowledge_import_file.delay(str(import_file.id))
-            except Exception as exc:
-                try:
-                    process_import_file(str(import_file.id))
-                except Exception as inner_exc:
+            for index, uploaded_file in enumerate(files):
+                import_file = KnowledgeImportFile.objects.create(
+                    batch=batch,
+                    source_file=uploaded_file,
+                    original_name=uploaded_file.name,
+                    status=KnowledgeImportFile.Status.PENDING,
+                )
+                if index in validation_errors:
                     import_file.status = KnowledgeImportFile.Status.FAILED
-                    import_file.error_message = f'{exc}; {inner_exc}'[:2000]
+                    import_file.error_message = validation_errors[index]
                     import_file.save(update_fields=['status', 'error_message', 'updated_at'])
+                    import_file.source_file.delete(save=False)
+                    continue
+                operation = create_knowledge_operation(
+                    user=request.user,
+                    operation_type=IMPORT_OPERATION,
+                    source_model='KnowledgeImportFile',
+                    source_id=import_file.pk,
+                    title=f'导入知识文档：{import_file.original_name}',
+                    metadata={'batch_id': str(batch.pk)},
+                )
+                operations.append(operation_envelope(operation))
 
         refresh_import_batch_stats(batch)
         serializer = self.get_serializer(batch)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        payload = dict(serializer.data)
+        payload['operations'] = operations
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['post'], url_path='retry-failed')
     def retry_failed(self, request, pk=None):
         batch = self.get_object()
-        for import_file in batch.import_files.filter(status=KnowledgeImportFile.Status.FAILED):
-            try:
-                process_knowledge_import_file.delay(str(import_file.id))
-            except Exception as exc:
-                try:
-                    process_import_file(str(import_file.id))
-                except Exception as inner_exc:
-                    import_file.status = KnowledgeImportFile.Status.FAILED
-                    import_file.error_message = f'{exc}; {inner_exc}'[:2000]
-                    import_file.save(update_fields=['status', 'error_message', 'updated_at'])
+        operations = []
+        with transaction.atomic():
+            for import_file in batch.import_files.select_for_update().filter(
+                status=KnowledgeImportFile.Status.FAILED,
+            ):
+                import_file.status = KnowledgeImportFile.Status.PENDING
+                import_file.error_message = ''
+                import_file.save(update_fields=['status', 'error_message', 'updated_at'])
+                operation = create_knowledge_operation(
+                    user=request.user,
+                    operation_type=IMPORT_OPERATION,
+                    source_model='KnowledgeImportFile',
+                    source_id=import_file.pk,
+                    title=f'重试导入知识文档：{import_file.original_name}',
+                    metadata={'batch_id': str(batch.pk), 'manual_retry': True},
+                )
+                operations.append(operation_envelope(operation))
         refresh_import_batch_stats(batch)
-        return Response(self.get_serializer(batch).data, status=status.HTTP_200_OK)
+        payload = dict(self.get_serializer(batch).data)
+        payload['operations'] = operations
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
 
 
 class KnowledgeSearchDebugView(APIView):

@@ -4,10 +4,9 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
-from django.core.cache import caches
 from django.db import close_old_connections
 
-from core.views import websocket_ticket_cache_key
+from core.views import consume_websocket_ticket
 
 
 @database_sync_to_async
@@ -15,6 +14,15 @@ def get_user(user_id):
     from django.contrib.auth import get_user_model
     User = get_user_model()
     return User.objects.filter(pk=user_id, status=User.Status.NORMAL).first() or AnonymousUser()
+
+
+@database_sync_to_async
+def consume_ticket(ticket, expected_scope, expected_resource):
+    return consume_websocket_ticket(
+        ticket,
+        expected_scope=expected_scope,
+        expected_resource=expected_resource,
+    )
 
 
 def _expected_scope(path: str):
@@ -44,14 +52,9 @@ class JwtAuthMiddleware:
         ticket = str((query.get('ticket') or [''])[0])
         expected_scope, expected_resource = _expected_scope(scope.get('path', ''))
         if ticket and expected_scope:
-            cache = caches['coordination']
-            cache_key = websocket_ticket_cache_key(ticket)
-            payload = cache.get(cache_key)
-            claim_key = f'{cache_key}:claimed'
-            if payload and cache.add(claim_key, '1', timeout=90):
-                cache.delete(cache_key)
-                if payload.get('scope') == expected_scope and str(payload.get('resource_id')) == expected_resource:
-                    scope['user'] = await get_user(payload.get('user_id'))
+            payload = await consume_ticket(ticket, expected_scope, expected_resource)
+            if payload:
+                scope['user'] = await get_user(payload.get('user_id'))
         elif getattr(settings, 'WS_ALLOW_LEGACY_QUERY_JWT', False):
             token = str((query.get('token') or [''])[0])
             if token:

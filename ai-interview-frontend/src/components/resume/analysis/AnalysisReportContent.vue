@@ -90,7 +90,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { AnalysisReport } from '@/api/modules/resumeEditor';
+import type { AnalysisReport } from '@/api/modules/report';
 import { ElCard, ElProgress, ElTag, ElRate, ElTimeline, ElTimelineItem, ElIcon } from 'element-plus';
 import { CircleCheckFilled, WarningFilled, Edit } from '@element-plus/icons-vue';
 // [核心修正] 导入雷达图组件

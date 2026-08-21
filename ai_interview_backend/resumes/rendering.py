@@ -15,6 +15,7 @@ from django.utils import timezone
 from docx import Document
 from docx.enum.text import WD_BREAK
 from docx.shared import Inches, Pt
+from PIL import Image
 
 from .models import ResumeArtifact, ResumeAsset
 from .runtime import resume_runtime_config
@@ -76,17 +77,18 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
             'summary': '职业摘要', 'work': '工作经历', 'projects': '项目经历',
             'education': '教育经历', 'skills': '专业技能', 'certificates': '证书',
             'awards': '荣誉奖项', 'publications': '发表成果', 'languages': '语言能力',
-            'volunteer': '志愿经历', 'interests': '兴趣',
+            'volunteer': '志愿经历', 'interests': '兴趣', 'references': '推荐人',
         },
         'en-US': {
             'summary': 'Summary', 'work': 'Experience', 'projects': 'Projects',
             'education': 'Education', 'skills': 'Skills', 'certificates': 'Certificates',
             'awards': 'Awards', 'publications': 'Publications', 'languages': 'Languages',
-            'volunteer': 'Volunteer', 'interests': 'Interests',
+            'volunteer': 'Volunteer', 'interests': 'Interests', 'references': 'References',
         },
     }[design_json.get('language', 'zh-CN')]
     sections = {}
-    summary = _safe_text(basics.get('summary'))
+    hidden_sections = set(design_json.get('hidden_sections') or [])
+    summary = '' if 'summary' in hidden_sections else _safe_text(basics.get('summary'))
     if summary:
         sections[section_names['summary']] = [summary]
     work_entries = []
@@ -100,7 +102,7 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
             'summary': _safe_text(item.get('summary')),
             'highlights': [_safe_text(value) for value in item.get('highlights') or []],
         })
-    if work_entries:
+    if work_entries and 'work' not in hidden_sections:
         sections[section_names['work']] = work_entries
     project_entries = []
     for item in resume_json.get('projects') or []:
@@ -119,7 +121,7 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
         if item.get('endDate'):
             project_entry['end_date'] = _safe_text(item.get('endDate'))
         project_entries.append(project_entry)
-    if project_entries:
+    if project_entries and 'projects' not in hidden_sections:
         sections[section_names['projects']] = project_entries
     education_entries = []
     for item in resume_json.get('education') or []:
@@ -134,7 +136,7 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
         if item.get('endDate'):
             education_entry['end_date'] = _safe_text(item.get('endDate'))
         education_entries.append(education_entry)
-    if education_entries:
+    if education_entries and 'education' not in hidden_sections:
         sections[section_names['education']] = education_entries
     skills = []
     for item in resume_json.get('skills') or []:
@@ -142,9 +144,11 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
         if item.get('level'):
             details = ', '.join(filter(None, [_safe_text(item.get('level')), details]))
         skills.append({'label': _safe_text(item.get('name')), 'details': details})
-    if skills:
+    if skills and 'skills' not in hidden_sections:
         sections[section_names['skills']] = skills
     for key in ('certificates', 'awards', 'publications', 'languages', 'volunteer', 'interests'):
+        if key in hidden_sections:
+            continue
         entries = []
         for item in resume_json.get(key) or []:
             values = [
@@ -156,6 +160,17 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
                 entries.append(' — '.join(values))
         if entries:
             sections[section_names[key]] = entries
+    if 'references' not in hidden_sections:
+        entries = []
+        for item in resume_json.get('references') or []:
+            text = ' — '.join(filter(None, [
+                _safe_text(item.get('name')),
+                _safe_text(item.get('reference')),
+            ]))
+            if text:
+                entries.append(text)
+        if entries:
+            sections[section_names['references']] = entries
     ordered = {}
     for section_key in design_json.get('section_order') or []:
         translated = section_names.get(section_key)
@@ -281,6 +296,68 @@ def _docx_bytes(resume_json: dict) -> bytes:
     return output.getvalue()
 
 
+def _markdown_bytes(resume_json: dict) -> bytes:
+    """Generate deterministic, ATS-friendly Markdown without internal IDs."""
+    data = strip_internal_metadata(resume_json)
+    basics = data.get('basics') or {}
+    lines = [f"# {_safe_text(basics.get('name')) or 'Resume'}", '']
+    contact = ' · '.join(filter(None, [
+        _safe_text(basics.get('label')), _safe_text(basics.get('email')),
+        _safe_text(basics.get('phone')), _safe_text(basics.get('url')),
+    ]))
+    if contact:
+        lines.extend([contact, ''])
+    if basics.get('summary'):
+        lines.extend(['## 职业摘要', '', _safe_text(basics['summary']), ''])
+    headings = {
+        'work': '工作经历', 'projects': '项目经历', 'education': '教育经历', 'skills': '专业技能',
+        'certificates': '证书', 'awards': '荣誉奖项', 'publications': '发表成果',
+        'languages': '语言能力', 'volunteer': '志愿经历', 'interests': '兴趣', 'references': '推荐人',
+    }
+    primary_fields = {
+        'work': ('name', 'position'), 'projects': ('name', 'description'),
+        'education': ('institution', 'area'), 'skills': ('name', 'level'),
+        'certificates': ('name', 'issuer'), 'awards': ('title', 'awarder'),
+        'publications': ('name', 'publisher'), 'languages': ('language', 'fluency'),
+        'volunteer': ('organization', 'position'), 'interests': ('name', ''),
+        'references': ('name', 'reference'),
+    }
+    for key, heading in headings.items():
+        items = data.get(key) or []
+        if not items:
+            continue
+        lines.extend([f'## {heading}', ''])
+        primary, secondary = primary_fields[key]
+        for item in items:
+            title = ' — '.join(filter(None, [_safe_text(item.get(primary)), _safe_text(item.get(secondary))]))
+            dates = ' – '.join(filter(None, [_safe_text(item.get('startDate')), _safe_text(item.get('endDate'))]))
+            lines.append(f"### {title or heading}{f' · {dates}' if dates else ''}")
+            detail = _safe_text(item.get('summary') or item.get('description'))
+            if detail:
+                lines.append(detail)
+            for bullet in item.get('highlights') or item.get('keywords') or []:
+                lines.append(f'- {_safe_text(bullet)}')
+            lines.append('')
+    return ('\n'.join(lines).rstrip() + '\n').encode('utf-8')
+
+
+def _stack_png_pages(paths: list[Path]) -> bytes:
+    images = [Image.open(path).convert('RGB') for path in paths]
+    if not images:
+        raise RenderFailure('renderer_output_missing', 'RenderCV 未生成 PNG。')
+    width = max(image.width for image in images)
+    gap = 24 if len(images) > 1 else 0
+    height = sum(image.height for image in images) + gap * (len(images) - 1)
+    canvas = Image.new('RGB', (width, height), 'white')
+    cursor = 0
+    for image in images:
+        canvas.paste(image, ((width - image.width) // 2, cursor))
+        cursor += image.height + gap
+    output = io.BytesIO()
+    canvas.save(output, format='PNG', optimize=True)
+    return output.getvalue()
+
+
 def _render_with_rendercv(
     resume_json: dict,
     design_json: dict,
@@ -370,6 +447,8 @@ def _render_with_rendercv(
         candidates = sorted(base.glob('resume_*.png')) or ([png_path] if png_path.exists() else [])
         if not candidates:
             raise RenderFailure('renderer_output_missing', 'RenderCV 未生成预览图。')
+        if output_format == ResumeArtifact.Format.PNG:
+            return _stack_png_pages(candidates), 'image/png', len(candidates)
         return candidates[0].read_bytes(), 'image/png', len(candidates)
 
 
@@ -388,7 +467,10 @@ def render_artifact(artifact: ResumeArtifact) -> ResumeArtifact:
         mime_type, extension, page_count = (
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx', 0,
         )
-    elif artifact.format in {ResumeArtifact.Format.PDF, ResumeArtifact.Format.PREVIEW}:
+    elif artifact.format == ResumeArtifact.Format.MARKDOWN:
+        content = _markdown_bytes(resume_json)
+        mime_type, extension, page_count = 'text/markdown; charset=utf-8', 'md', 0
+    elif artifact.format in {ResumeArtifact.Format.PDF, ResumeArtifact.Format.PNG, ResumeArtifact.Format.PREVIEW}:
         avatar_bytes = None
         image_pointer = str((resume_json.get('basics') or {}).get('image') or '')
         if design_json.get('show_avatar') and image_pointer.startswith('asset:'):

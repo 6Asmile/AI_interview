@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import TestCase
 from django.utils import timezone
@@ -6,10 +6,12 @@ from rest_framework.test import APIClient
 
 from users.models import User
 
+from core.models import OperationDispatchOutbox
 from resumes.models import Resume, ResumeVersion
 
 from .models import (
-    CareerFact, Company, JobApplication, JobPosting, JobPostingRevision, JobTarget,
+    CareerFact, Company, JobApplication, JobMatchAnalysis, JobPosting, JobPostingRevision,
+    JobTarget,
 )
 from .services import stable_hash
 
@@ -105,8 +107,7 @@ class CareerWorkspaceApiTests(TestCase):
         self.assertEqual(target.jd_text, 'Python RAG')
 
     @patch('careers.views.admit_expensive_operation')
-    @patch('careers.views.run_job_match_analysis.delay')
-    def test_match_analysis_returns_standard_operation_envelope(self, delay, _admit):
+    def test_match_analysis_returns_standard_operation_envelope(self, _admit):
         target = JobTarget.objects.create(
             user=self.user, company_name='iFaceoff', position_name='Backend',
             jd_text='Python Django', jd_snapshot_hash=stable_hash({'jd_text': 'Python Django'}),
@@ -117,14 +118,64 @@ class CareerWorkspaceApiTests(TestCase):
             resume_json={'basics': {'name': 'Candidate'}, 'skills': [{'name': 'Python'}]},
             created_by=self.user,
         )
-        with self.captureOnCommitCallbacks(execute=True):
-            response = self.client.post(
-                f'/api/v2/job-targets/{target.pk}/match-analyses/',
-                {'resume_version_id': version.pk},
-                format='json',
-                HTTP_IDEMPOTENCY_KEY='match-once',
-            )
+        response = self.client.post(
+            f'/api/v2/job-targets/{target.pk}/match-analyses/',
+            {'resume_version_id': version.pk},
+            format='json',
+            HTTP_IDEMPOTENCY_KEY='match-once',
+        )
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data['status'], 'accepted')
         self.assertIn('/api/v2/operations/', response.data['events_url'])
-        delay.assert_called_once()
+        analysis = JobMatchAnalysis.objects.get(user=self.user, job_target=target)
+        self.assertEqual(str(analysis.operation_id), response.data['operation_id'])
+        dispatch = OperationDispatchOutbox.objects.get(operation=analysis.operation)
+        self.assertEqual(dispatch.payload, {'operation_id': str(analysis.operation_id)})
+        self.assertEqual(dispatch.routing_key, 'career.analysis')
+
+    @patch('careers.tasks.execute_job_match_analysis')
+    def test_job_match_handler_reloads_analysis_without_legacy_operation_updates(self, execute):
+        target = JobTarget.objects.create(
+            user=self.user, company_name='iFaceoff', position_name='Backend',
+            jd_text='Python Django', jd_snapshot_hash=stable_hash({'jd_text': 'Python Django'}),
+        )
+        resume = Resume.objects.create(user=self.user, title='Handler resume')
+        version = ResumeVersion.objects.create(
+            resume=resume,
+            version_number=1,
+            resume_json={'basics': {'name': 'Candidate'}, 'skills': [{'name': 'Python'}]},
+            created_by=self.user,
+        )
+        analysis = JobMatchAnalysis.objects.create(
+            user=self.user,
+            job_target=target,
+            resume_version=version,
+            jd_snapshot=target.jd_text,
+            jd_snapshot_hash=target.jd_snapshot_hash,
+        )
+        from .operation_service import create_job_match_operation
+
+        operation = create_job_match_operation(analysis=analysis, title='Match resume')
+
+        def complete(domain_analysis, *, legacy_operation):
+            self.assertIsNone(legacy_operation)
+            domain_analysis.status = JobMatchAnalysis.Status.SUCCEEDED
+            domain_analysis.score = 88
+            domain_analysis.save(update_fields=['status', 'score'])
+            return {'status': 'matched'}
+
+        execute.side_effect = complete
+        context = Mock()
+        context.operation = None
+        context.get_operation.return_value = operation
+        context.heartbeat.return_value = True
+
+        from .operation_handlers import handle_job_match
+
+        result = handle_job_match(context)
+
+        self.assertEqual(result.result_id, str(analysis.pk))
+        self.assertEqual(result.result['status'], JobMatchAnalysis.Status.SUCCEEDED)
+        execute.assert_called_once()
+        context.raise_if_canceled.assert_called()
+        self.assertGreaterEqual(context.heartbeat.call_count, 2)

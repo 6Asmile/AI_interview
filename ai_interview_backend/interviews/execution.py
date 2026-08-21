@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Iterable
 
 from django.conf import settings
 from django.db import connection, transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from .agent import get_interview_agent_engine
@@ -52,6 +53,7 @@ def agent_request_hash(session, question, answer_text: str, event='submit_answer
     return _fallback_request_hash(session, question, answer_text, event)
 
 
+@transaction.atomic
 def create_answer_execution(
     *,
     session: InterviewSession,
@@ -108,6 +110,39 @@ def create_answer_execution(
     if not created and execution.request_hash != request_hash:
         raise ValueError('agent_execution_request_hash_conflict')
 
+    if execution.operation_id is None:
+        from core.models import AsyncOperation
+        from core.operations import create_operation
+
+        operation = AsyncOperation.objects.filter(
+            user=session.user,
+            operation_type='interview.agent_turn',
+            idempotency_key_hash=request_hash,
+        ).first()
+        if operation is None:
+            operation = create_operation(
+                user=session.user,
+                operation_type='interview.agent_turn',
+                source_app='interviews',
+                source_model='InterviewAgentExecution',
+                source_id=str(execution.id),
+                title='面试回答评估与下一题生成',
+                input_type='InterviewAgentExecution',
+                input_id=str(execution.id),
+                input_version=str(state_schema_version),
+                input_hash=request_hash,
+                idempotency_key_hash=request_hash,
+                metadata={
+                    'session_id': str(session.id),
+                    'question_id': question.id,
+                    'agent_run_id': str(run.id),
+                },
+                max_attempts=5,
+                correlation_id=run.id,
+            )
+        execution.operation = operation
+        execution.save(update_fields=['operation', 'updated_at'])
+
     next_sequence = answered_count + 1
     generation_job, _ = InterviewQuestionGenerationJob.objects.get_or_create(
         session=session,
@@ -131,13 +166,87 @@ def cas_transition(
     from_statuses: Iterable[str],
     to_status: str,
     expected_version: int | None = None,
+    lease_owner: str | None = None,
+    fencing_token: int | None = None,
+    release_lease: bool = False,
     **updates,
 ) -> bool:
     queryset = InterviewAgentExecution.objects.filter(id=execution_id, status__in=tuple(from_statuses))
     if expected_version is not None:
         queryset = queryset.filter(version=expected_version)
+    if lease_owner is not None:
+        queryset = queryset.filter(lease_owner=lease_owner)
+    if fencing_token is not None:
+        queryset = queryset.filter(fencing_token=fencing_token)
+    if release_lease:
+        updates.update({
+            'lease_owner': '',
+            'lease_expires_at': None,
+            'heartbeat_at': timezone.now(),
+        })
     values = {'status': to_status, 'version': F('version') + 1, 'updated_at': timezone.now(), **updates}
     return queryset.update(**values) == 1
+
+
+def claim_execution(
+    execution_id,
+    *,
+    lease_owner: str,
+    from_statuses: Iterable[str],
+    to_status: str,
+    lease_seconds: int | None = None,
+) -> InterviewAgentExecution | None:
+    """Atomically claim a durable execution and advance its fencing token."""
+
+    now = timezone.now()
+    lease_seconds = max(30, int(lease_seconds or getattr(settings, 'AGENT_EXECUTION_LEASE_SECONDS', 360)))
+    claimed = InterviewAgentExecution.objects.filter(
+        id=execution_id,
+        status__in=tuple(from_statuses),
+    ).filter(
+        Q(lease_owner='') | Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now),
+    ).update(
+        status=to_status,
+        lease_owner=lease_owner[:128],
+        lease_expires_at=now + timedelta(seconds=lease_seconds),
+        heartbeat_at=now,
+        fencing_token=F('fencing_token') + 1,
+        version=F('version') + 1,
+        started_at=now,
+        completed_at=None,
+        error_code='',
+        updated_at=now,
+    )
+    if not claimed:
+        return None
+    return InterviewAgentExecution.objects.get(id=execution_id, lease_owner=lease_owner[:128])
+
+
+def heartbeat_execution(
+    execution_id,
+    *,
+    lease_owner: str,
+    fencing_token: int,
+    lease_seconds: int | None = None,
+) -> bool:
+    """Renew a lease only for the worker holding the current database fence."""
+
+    now = timezone.now()
+    lease_seconds = max(30, int(lease_seconds or getattr(settings, 'AGENT_EXECUTION_LEASE_SECONDS', 360)))
+    return InterviewAgentExecution.objects.filter(
+        id=execution_id,
+        lease_owner=lease_owner[:128],
+        fencing_token=fencing_token,
+        status__in=(
+            InterviewAgentExecution.Status.EVALUATING,
+            InterviewAgentExecution.Status.EVALUATED,
+            InterviewAgentExecution.Status.GENERATING,
+        ),
+    ).update(
+        heartbeat_at=now,
+        lease_expires_at=now + timedelta(seconds=lease_seconds),
+        updated_at=now,
+    ) == 1
 
 
 def durable_execution_snapshot(execution: InterviewAgentExecution) -> dict:
@@ -146,12 +255,16 @@ def durable_execution_snapshot(execution: InterviewAgentExecution) -> dict:
         answered_question_id=execution.trigger_question_id,
     ).select_related('generated_question').order_by('-created_at').first()
     payload = {
+        'operation_id': str(execution.operation_id) if execution.operation_id else None,
         'execution_id': str(execution.id),
         'run_id': str(execution.run_id),
         'thread_id': str(execution.thread_id),
         'status': execution.status,
         'version': execution.version,
+        'fencing_token': execution.fencing_token,
         'retry_count': execution.retry_count,
+        'lease_expires_at': execution.lease_expires_at.isoformat() if execution.lease_expires_at else None,
+        'heartbeat_at': execution.heartbeat_at.isoformat() if execution.heartbeat_at else None,
         'last_durable_sequence': execution.last_durable_sequence,
         'error_code': execution.error_code,
         'fallback_reason': execution.fallback_reason,

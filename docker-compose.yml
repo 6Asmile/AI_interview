@@ -18,7 +18,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_COORDINATION_URL: redis://redis:6379/2
       REDIS_REALTIME_URL: redis://redis:6379/3
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
       MEILISEARCH_URL: http://meilisearch:7700
@@ -35,6 +37,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      celery-topology:
+        condition: service_completed_successfully
       qdrant:
         condition: service_started
       meilisearch:
@@ -63,7 +67,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_COORDINATION_URL: redis://redis:6379/2
       REDIS_REALTIME_URL: redis://redis:6379/3
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
       RABBITMQ_HOST: rabbitmq
     ports:
       - "${AGENT_SERVICE_PORT:-8010}:8010"
@@ -88,7 +94,9 @@ services:
   celery-worker:
     image: ifaceoff/backend:latest
     container_name: Ifaceoff-celery-worker
-    command: celery -A ai_interview_backend worker -l info -P solo -Q celery,agent,career.analysis,documents,resume.render,media,community.moderation,notifications,search.index,events
+    command: celery -A ai_interview_backend worker -l info -P solo --hostname=dev@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.default,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.agent.interactive,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.career.analysis,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.documents,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.resume.render,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.media,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.community.moderation,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.notifications,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.search.index,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.events,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.publisher
+    restart: unless-stopped
+    stop_grace_period: 60s
     env_file:
       - ./.env.docker
     environment:
@@ -99,7 +107,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_COORDINATION_URL: redis://redis:6379/2
       REDIS_REALTIME_URL: redis://redis:6379/3
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
       MEILISEARCH_URL: http://meilisearch:7700
@@ -109,6 +119,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      celery-topology:
+        condition: service_completed_successfully
       meilisearch:
         condition: service_healthy
     networks:
@@ -117,7 +129,8 @@ services:
   celery-beat:
     image: ifaceoff/backend:latest
     container_name: Ifaceoff-celery-beat
-    command: celery -A ai_interview_backend beat -l info --schedule=/tmp/celerybeat-schedule
+    command: celery -A ai_interview_backend beat -l info --schedule=/var/run/celery/celerybeat-schedule
+    restart: unless-stopped
     env_file:
       - ./.env.docker
     environment:
@@ -128,12 +141,42 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_COORDINATION_URL: redis://redis:6379/2
       REDIS_REALTIME_URL: redis://redis:6379/3
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
       RABBITMQ_HOST: rabbitmq
       QDRANT_URL: http://qdrant:6333
     depends_on:
       backend:
         condition: service_healthy
+      celery-topology:
+        condition: service_completed_successfully
+    volumes:
+      - celery_beat_data:/var/run/celery
+    networks:
+      - ifaceoff_network
+
+  celery-topology:
+    image: ifaceoff/backend:latest
+    container_name: Ifaceoff-celery-topology
+    command: python manage.py declare_celery_topology --max-retries=10
+    env_file:
+      - ./.env.docker
+    environment:
+      IFACEOFF_RUN_MIGRATIONS: "0"
+      IFACEOFF_COLLECTSTATIC: "0"
+      IFACEOFF_SETUP_AGENT_CHECKPOINT: "0"
+      IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
+      AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
+      REDIS_CACHE_URL: redis://redis:6379/1
+      REDIS_COORDINATION_URL: redis://redis:6379/2
+      REDIS_REALTIME_URL: redis://redis:6379/3
+      RABBITMQ_HOST: rabbitmq
+      CELERY_TOPOLOGY_VERSION: ${CELERY_TOPOLOGY_VERSION:-v2}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: "no"
     networks:
       - ifaceoff_network
 
@@ -215,6 +258,7 @@ services:
   rabbitmq:
     image: ${RABBITMQ_IMAGE:-rabbitmq:4.3.4-management-alpine}
     container_name: Ifaceoff-rabbitmq
+    restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
@@ -222,8 +266,11 @@ services:
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_local_alarms"]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -263,6 +310,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  rabbitmq_data:
+  celery_beat_data:
   static_volume:
   media_volume:
   qdrant_data:

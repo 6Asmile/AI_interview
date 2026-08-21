@@ -233,7 +233,7 @@ def submit_content(*, content: CommunityContent, user) -> CommunityContent:
     content.published_at = None if requires_review else timezone.now()
     content.save(update_fields=['status', 'published_at', 'updated_at'])
     if requires_review:
-        ModerationCase.objects.get_or_create(
+        case, _created = ModerationCase.objects.get_or_create(
             content=content,
             revision=content.current_revision,
             defaults={
@@ -241,8 +241,8 @@ def submit_content(*, content: CommunityContent, user) -> CommunityContent:
                 'findings': content.current_revision.risk_findings,
             },
         )
-        from .tasks import moderate_community_content
-        transaction.on_commit(lambda: moderate_community_content.delay(str(content.pk)))
+        from .operation_handlers import create_moderation_operation
+        content._accepted_operation = create_moderation_operation(user=user, case=case)
     else:
         enqueue_integration_event(
             event_type='community.content.published',

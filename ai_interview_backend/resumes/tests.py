@@ -1,6 +1,8 @@
+import json
 import os
 import tempfile
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -11,18 +13,26 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
 
-from careers.models import CareerFact
+from careers.models import CareerFact, JobTarget
 from users.models import User
 
 from .services import extract_text_from_file
-from .models import Resume, ResumeArtifact, ResumeImportJob
+from .models import Resume, ResumeArtifact, ResumeImportJob, ResumeSuggestion, ResumeVariant
 from .quality import build_quality_report
-from .rendering import RenderFailure, _rendercv_payload, _safe_text, artifact_cache_key, render_artifact
-from .schema import JSON_RESUME_SCHEMA_VERSION, schema_snapshot_hash, strip_internal_metadata, validate_resume
+from .rendering import (
+    RenderFailure,
+    _markdown_bytes,
+    _rendercv_payload,
+    _safe_text,
+    _stack_png_pages,
+    artifact_cache_key,
+    render_artifact,
+)
+from .schema import JSON_RESUME_SCHEMA_VERSION, schema_snapshot_hash, sha256_json, strip_internal_metadata, validate_resume
 from .sharing import create_share_link, redact_shared_resume, resolve_share
 from .studio import ensure_studio
-from .templates import default_design, template_catalog
-from .versioning import create_resume_version
+from .templates import default_design, template_catalog, validate_design
+from .versioning import accept_suggestion, create_resume_version
 
 
 class ResumeParsingServiceTests(TestCase):
@@ -109,7 +119,18 @@ class ResumeIntelligenceTests(TestCase):
         catalog = template_catalog()
         self.assertEqual(len(catalog), 6)
         self.assertTrue(all(item['capabilities']['single_column'] for item in catalog))
+        self.assertTrue(all(item['thumbnail'].endswith('.svg') for item in catalog))
+        self.assertTrue(all(item['use_tags'] and item['industry_tags'] and item['role_tags'] for item in catalog))
         self.assertNotIn('custom_css', {key for item in catalog for key in item})
+
+    def test_old_design_gets_new_sections_and_can_hide_them(self):
+        design = default_design()
+        design['section_order'] = ['basics', 'work', 'education']
+        design['hidden_sections'] = ['references', 'awards']
+        normalized = validate_design(design)
+        self.assertIn('certificates', normalized['section_order'])
+        self.assertIn('references', normalized['section_order'])
+        self.assertEqual(normalized['hidden_sections'], ['references', 'awards'])
 
     def test_six_templates_map_to_distinct_server_owned_rendercv_themes(self):
         themes = {
@@ -127,6 +148,27 @@ class ResumeIntelligenceTests(TestCase):
             'avatar.png',
         )
         self.assertEqual(payload['cv']['photo'], 'avatar.png')
+
+    def test_six_template_payloads_match_reviewed_golden_contract(self):
+        sample = {
+            'basics': {
+                'name': '黄金样例', 'label': '后端工程师', 'email': 'golden@example.com',
+                'summary': '构建可靠的求职平台。',
+            },
+            'work': [{'name': '示例公司', 'position': '工程师', 'startDate': '2024-01', 'highlights': ['建设可靠异步链路']}],
+            'projects': [{'name': 'iFaceOff', 'description': 'AI 求职成长平台', 'highlights': ['统一简历事实源']}],
+            'education': [{'institution': '示例大学', 'area': '计算机科学'}],
+            'skills': [{'name': '工程能力', 'keywords': ['Python', 'Django']}],
+            'certificates': [{'name': '云架构认证', 'issuer': '认证机构'}],
+            'languages': [{'language': '英语', 'fluency': '熟练'}],
+        }
+        golden_path = Path(__file__).with_name('golden') / 'template_payload_hashes.json'
+        golden = json.loads(golden_path.read_text(encoding='utf-8'))
+        actual = {
+            item['key']: sha256_json(_rendercv_payload(sample, default_design(item['key'])))
+            for item in template_catalog()
+        }
+        self.assertEqual(actual, golden)
 
     def test_version_and_design_revision_are_immutable(self):
         resume, version, _, design = self.create_resume()
@@ -283,6 +325,56 @@ class ResumeIntelligenceTests(TestCase):
             self.assertEqual(artifact.status, ResumeArtifact.Status.READY)
             self.assertGreater(artifact.asset.size_bytes, 100)
             self.assertEqual(len(artifact.asset.checksum_sha256), 64)
+
+    def test_markdown_export_covers_extended_sections_and_bullets(self):
+        payload = validate_resume({
+            'basics': {'name': '候选人', 'label': '后端工程师'},
+            'work': [{'name': '示例公司', 'position': '工程师', 'highlights': ['将发布流程自动化']}],
+            'certificates': [{'name': '云架构认证', 'issuer': '认证机构'}],
+            'languages': [{'language': '英语', 'fluency': '熟练'}],
+            'references': [{'name': '推荐人', 'reference': '经授权后提供'}],
+        })
+        markdown = _markdown_bytes(payload).decode('utf-8')
+        self.assertIn('# 候选人', markdown)
+        self.assertIn('## 证书', markdown)
+        self.assertIn('## 语言能力', markdown)
+        self.assertIn('## 推荐人', markdown)
+        self.assertIn('- 将发布流程自动化', markdown)
+
+    def test_png_export_stacks_multiple_server_pages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, size in enumerate(((120, 80), (100, 60))):
+                path = os.path.join(directory, f'page-{index}.png')
+                Image.new('RGB', size, 'white').save(path, format='PNG')
+                paths.append(path)
+            output = Image.open(BytesIO(_stack_png_pages(paths)))
+        self.assertEqual(output.size, (120, 164))
+
+    def test_jd_tailor_acceptance_creates_detached_variant(self):
+        resume, base_version, _, _ = self.create_resume()
+        target = JobTarget.objects.create(
+            user=self.user,
+            company_name='示例科技',
+            position_name='RAG 工程师',
+            jd_text='要求 Python、RAG 与检索评估经验。',
+        )
+        suggestion = ResumeSuggestion.objects.create(
+            resume=resume,
+            base_version=base_version,
+            task_key='resume.jd_tailor',
+            job_target=target,
+            patch=[{'op': 'add', 'path': '/basics/label', 'value': 'RAG 工程师'}],
+            summary='针对目标岗位调整定位',
+            created_by=self.user,
+        )
+        tailored_version = accept_suggestion(suggestion, self.user)
+        resume.refresh_from_db()
+        self.assertEqual(resume.current_version_id, base_version.id)
+        self.assertNotEqual(tailored_version.id, base_version.id)
+        variant = ResumeVariant.objects.get(resume=resume, version=tailored_version)
+        self.assertEqual(variant.job_target, target)
+        self.assertEqual(tailored_version.resume_json['basics']['label'], 'RAG 工程师')
 
     def test_renderer_rejects_typst_commands_images_and_html(self):
         for value in (
