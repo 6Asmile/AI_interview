@@ -77,7 +77,7 @@ flowchart LR
     VERSION --> VARIANT["JD（岗位描述）定制版本"]
     VERSION --> RENDER["RenderCV / Typst（排版渲染）"]
     DESIGN["ResumeDesignRevision（设计版本）"] --> RENDER
-    RENDER --> ARTIFACT["PDF / PNG / DOCX / JSON（导出物）"]
+    RENDER --> ARTIFACT["PDF / PNG / DOCX / Markdown / JSON（导出物）"]
     VERSION --> SHARE["私密分享快照"]
     SHARE --> REDACT["字段脱敏 / 密码 / 过期<br/>撤销 / 限流 / 审计"]
 ```
@@ -99,12 +99,14 @@ flowchart LR
 
 1. 打开 `http://127.0.0.1:5173/dashboard/resumes`，新建简历或导入 PDF、DOCX、JSON Resume。
 2. 在解析确认页检查 OCR/结构化结果；只有用户确认后才进入可编辑草稿。
-3. 进入 `/dashboard/resumes/{id}`，编辑基本信息、经历、项目、教育、技能和证据；Studio 使用 `If-Match` 自动保存，版本冲突返回 `409`，不会覆盖另一窗口的修改。
-4. 选择母版、语言、纸张、字体、色彩和栏目顺序，使用服务端预览检查分页效果。
-5. 显式创建内容版本后运行 ATS/质量检查；AI 只返回可审阅的 JSON Patch 建议，不直接改写事实。
-6. 选择真实岗位 JD 创建定制版本，匹配分数和能力 Gap 统一保存到岗位分析。
-7. 导出 PDF、DOCX 或标准 JSON Resume；重复导出相同内容和设计时复用已验证 Artifact。
-8. 创建私密分享链接，按需开启邮箱、电话、地址、头像和下载权限，并可设置密码、有效期、次数限制或随时撤销。
+3. 进入 `/dashboard/resumes/{id}`，结构化编辑基本信息、工作、项目、教育、技能、证书、奖项、发表、语言、志愿、兴趣和推荐人；经历成果使用可排序 Bullet（要点）。
+4. 拖拽条目或栏目改变顺序，用开关隐藏栏目；选择带缩略图和用途标签的六套母版，再调整语言、纸张、字体、色彩与密度。草稿以 `If-Match` 自动保存，版本冲突返回 `409`。
+5. 保存完成后，Studio 自动防抖请求服务端权威 PNG 预览；旧 ETag（实体标签）任务的结果会被丢弃，不再要求每次手动点击“生成预览”。
+6. 在 AI 简历助手中选择“职业事实生成、栏目润色/翻译、成果追问或岗位定制”。AI 只返回可审阅的 JSON Patch（增量建议），采纳后才创建版本。
+7. 运行质量复核时，左侧确定性 ATS 检查与右侧 Recruiter（招聘负责人）、Hiring Manager（用人经理）、Domain Reviewer（岗位专业评审）明确分层；模型不可用不会抹去 ATS 结果。
+8. 选择真实 JobTarget（目标岗位）创建 ResumeVariant（岗位简历变体）；变体冻结来源主版本与 JD，不覆盖主简历。
+9. 导出 PDF、PNG 长图、DOCX、Markdown 或标准 JSON Resume；导出、AI、复核和分享都会先冻结当前草稿快照，相同内容、设计和渲染器版本复用 Artifact（制品）。
+10. 创建私密分享链接，按需开启邮箱、电话、地址、头像和下载权限，并可设置密码、有效期、次数限制或随时撤销。
 
 ### 管理员操作方式
 
@@ -113,11 +115,39 @@ flowchart LR
 详细模型、渲染隔离和放量方式见
 [Career 与 Resume 实现](docs/ifaceoff-vault/04-卷三-Career与Resume实现.md)。
 
+### 实时 ASR / TTS 语音链路
+
+语音回答采用“双通道、单一事实源”：浏览器 `SpeechRecognition` 只负责低成本临时字幕，不得写入正式回答；浏览器同时把 250ms WebM 分片发送到后端，后端通过统一 Model Gateway（模型网关）返回 `asr.partial`（部分文本）和 `asr.final`（最终文本）。只有匹配当前 `utterance_id`（发言标识）的 Final 可以一次性写入回答，重复或过期事件会被丢弃。
+
+```mermaid
+sequenceDiagram
+    participant 用户 as 求职者
+    participant 浏览器 as 浏览器临时字幕
+    participant 实时通道 as WebSocket（实时通道）
+    participant 语音网关 as Model Gateway（模型网关）
+    participant 主库 as PostgreSQL（权威主库）
+    用户->>浏览器: 开始说话
+    浏览器-->>用户: 临时字幕（不可提交）
+    浏览器->>实时通道: 每 250ms 发送音频分片
+    实时通道->>语音网关: 滚动识别请求
+    语音网关-->>实时通道: Partial（部分文本）
+    实时通道-->>用户: 后端临时结果
+    用户->>实时通道: 停止说话
+    实时通道->>语音网关: Final（最终识别）
+    语音网关-->>实时通道: 唯一最终文本
+    实时通道->>主库: 保存音频制品与最终转写
+    实时通道-->>用户: 覆盖回答一次，不追加浏览器文本
+```
+
+问题播报优先请求服务端 PCM（脉冲编码调制）流，浏览器收到首个音频块后立即用 Web Audio 排程播放；接口也支持 Opus（低码率音频编码）流。用户开始回答时会取消读取、停止已排程音频并记录插话延迟；流式能力不可用时才降级为缓存音频，再降级为浏览器 TTS。
+
+每个真实会话可通过 `GET /api/v1/interviews/{id}/speech-metrics/` 查看最多最近 1000 个样本的 p95：ASR 首个部分文本 ≤500ms、停说到最终文本 ≤1200ms、TTS 首音频 ≤700ms、插话停止 ≤200ms、转写重复值为 0。代码已实现采集和判定，但仓库测试只验证协议、去重、权限和统计计算；在真实语音供应商、中文/英文、长回答、弱网和模型切换矩阵完成压测之前，这些时延目标保持 **pending-verification（待验证）**。
+
 ## 核心能力
 
 | 模块 | 已实现能力 |
 | --- | --- |
-| Resume Intelligence | JSON Resume 1.3.1 单一事实源、ETag 草稿、不可变内容/设计版本、逐字段事实证据、ATS 与多视角质量检查、JD Variant、六套 Typst 母版、PDF/DOCX/JSON 导出及可撤销私密分享 |
+| Resume Intelligence | JSON Resume 1.3.1 单一事实源、完整结构化栏目、条目/Bullet/栏目排序与隐藏、ETag 草稿、自动权威预览、不可变内容/设计版本、逐字段事实证据、分层 ATS/AI Review、JobTarget Variant、六套带缩略图母版、PDF/PNG/DOCX/Markdown/JSON 导出及可撤销私密分享 |
 | 求职工作台 | 目标岗位、JD、投递管道、面试安排、Offer、补强任务；模块独立加载，局部接口失败不会导致整页白屏 |
 | Composite Agent V4 | 外部只有一个综合面试官；内部业务子图使用 LangGraph 编排，Pydantic 校验边界，PostgreSQL Checkpointer 负责恢复 |
 | 自适应面试 | 目标时长与能力覆盖共同决定结束；依据回答证据执行澄清、验证、深挖、挑战、迁移、换题或收尾；支持主题栈与自然承接 |
@@ -125,7 +155,7 @@ flowchart LR
 | 企业知识库 | 用户私有与系统公共隔离、HR/Admin 审批、导入批次、Docling/OCR、修订版本、逐 Chunk 编辑、冻结发布和历史版本保留 |
 | Hybrid RAG | Multi Query、向量召回、中文关键词召回、RRF 融合、Rerank、已用块去重、租户和审批二次校验、检索 Trace |
 | 模型网关 | Chat/Embedding/Rerank/ASR/TTS 模型类型、加密凭据、任务别名、路由策略、预算、调用账本和 LiteLLM 数据面 |
-| 多模态体验 | 音频分片、ASR 转写与置信度确认、TTS 缓存与浏览器兜底、媒体记录；语音和表情不直接决定能力分数 |
+| 多模态体验 | 250ms 音频分片、ASR Partial/Final（部分/最终文本）、浏览器临时字幕、后端唯一最终转写、PCM/Opus 流式 TTS、首块播放、取消与插话、耐久 p95 指标；语音和表情不直接决定能力分数 |
 | 社区与搜索 | 本地已发布文章和公共知识 Feed、Meilisearch 全量/增量索引、Discourse SSO/Webhook 扩展入口、私人内容不进入公开索引 |
 | 私信与附件 | WebSocket 会话、文本与图片粘贴、Emoji、IME/组合键处理、附件上传、屏蔽举报以及可靠消息状态基础 |
 | 账号与安全 | 候选人 HttpOnly Refresh Cookie、内存 Access Token、单次 WebSocket Ticket、独立员工账号/MFA/会话、租户隔离和敏感字段脱敏 |
@@ -531,9 +561,10 @@ docker compose --env-file .env.observability -f docker-compose.observability.yml
 
 - `/api/v2/career-facts/`, `/job-targets/`, `/applications/`, `/learning-tasks/`
 - `/api/v2/resumes/`, `/resumes/{id}/draft/`, `/resumes/{id}/versions/`, `/resumes/{id}/versions/{version_id}/diff/`
-- `/api/v2/resumes/{id}/preview/`, `/suggestions/`, `/quality-reports/`, `/exports/`, `/share-links/`, `/avatar/`
+- `/api/v2/resumes/{id}/preview/`, `/suggestions/`, `/quality-reports/`, `/exports/`, `/share-links/`, `/avatar/`, `/variants/`
 - `/api/v2/resume-imports/`, `/resume-templates/`, `/resume-artifacts/{id}/`, `/resume-shares/{token}/`
 - `/api/v1/interviews/`, `/api/v1/interviews/{id}/abandon/`
+- `/api/v1/interviews/{id}/questions/{question_id}/tts-stream/`, `/api/v1/interviews/{id}/speech-metrics/`
 - `/api/v1/knowledge/documents/`, `/revisions/`, `/chunk-drafts/`, `/publish/`
 - `/api/v1/community/feed/`, `/community/search/`
 - `/api/v1/gateway/credentials/`, `/deployments/`, `/aliases/`, `/requests/`
@@ -596,13 +627,14 @@ npm run test:e2e
 
 当前发布前实测结果：
 
-- Django 全量回归发现 **295 项**：**293 项通过**，2 项真实 PostgreSQL Checkpoint（检查点）集成测试按环境开关明确跳过
+- Django 全量回归发现 **304 项**：**302 项通过**，2 项真实 PostgreSQL Checkpoint（检查点）集成测试按环境开关明确跳过
 - Django system check：**0 issues**
 - Migration drift：**No changes detected**
 - 候选人端与独立管理端 production build：**passed**
 - Operation、Redis Lua、Gateway 熔断、领域接入与 Staff 幂等定向用例包含在上述全量回归中：**passed**
-- 基础、基础设施、生产韧性、可观测性四组 Compose 配置展开：**passed**
+- 基础、基础设施、生产韧性、可观测性四组 Compose 配置展开：沿用基线验证；本轮未启动 Docker 复验
 - 当前验证机器的 Docker daemon（容器守护进程）未运行，因此真实 RabbitMQ/Redis/Celery 健康检查、三节点 Quorum（仲裁队列）故障演练、PostgreSQL Checkpoint 与 500 并发压测仍为 **pending-verification（待验证）**
+- 本轮 Resume/语音/模型网关聚焦测试 **47 项通过**，候选人端 production build（生产构建）通过；RenderCV 容器六母版像素级 Golden Render（黄金渲染）、真实 ASR/TTS p95、中文/英文长回答、弱网和模型切换压测仍为 **pending-verification（待验证）**
 
 测试业务数据来自本地真实或匿名化样例；provider boundary fake 仅用于超时、异常和降级故障注入，不作为简历、知识库、评分或社区内容。
 

@@ -1099,6 +1099,30 @@ class InterviewMediaArtifact(models.Model):
         return f'{self.session_id} {self.artifact_type} {self.status}'
 
 
+class SpeechLatencyMetric(models.Model):
+    class MetricType(models.TextChoices):
+        ASR_FIRST_PARTIAL = 'asr_first_partial', 'ASR 首个部分文本'
+        ASR_FINAL = 'asr_final', 'ASR 最终文本'
+        TTS_FIRST_AUDIO = 'tts_first_audio', 'TTS 首音频'
+        BARGE_IN_STOP = 'barge_in_stop', '用户插话停止播放'
+        TRANSCRIPT_DUPLICATE = 'transcript_duplicate', '转写重复'
+
+    session = models.ForeignKey(InterviewSession, on_delete=models.CASCADE, related_name='speech_latency_metrics')
+    question = models.ForeignKey(InterviewQuestion, on_delete=models.SET_NULL, null=True, blank=True, related_name='speech_latency_metrics')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='speech_latency_metrics')
+    metric_type = models.CharField(max_length=40, choices=MetricType.choices, db_index=True)
+    latency_ms = models.FloatField(default=0)
+    language = models.CharField(max_length=20, blank=True)
+    network_profile = models.CharField(max_length=32, blank=True)
+    model_alias = models.CharField(max_length=100, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['metric_type', 'created_at'], name='speech_metric_type_time')]
+
+
 class EvaluationDataset(models.Model):
     class Visibility(models.TextChoices):
         SHARED = 'shared', '共享'

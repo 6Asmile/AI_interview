@@ -1,51 +1,35 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, Check, Download, Plus, Refresh, Share } from '@element-plus/icons-vue';
+import draggable from 'vuedraggable';
+import { ArrowLeft, Check, Download, MagicStick, Rank, Refresh, Share, View } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import ResumeSectionEditor, { type ResumeSectionField } from '@/components/resume/studio/ResumeSectionEditor.vue';
+import { getJobTargetsApi, type JobTarget } from '@/api/modules/career';
 import {
-  acceptResumeSuggestionApi,
-  commitResumeDraftApi,
-  createResumeShareLinkApi,
-  deleteResumeAvatarApi,
-  getResumeArtifactApi,
-  getResumeAvatarApi,
-  getAsyncOperationApi,
-  getResumeDraftApi,
-  getResumeQualityReportsApi,
-  getResumeShareLinksApi,
-  getResumeSuggestionsV2Api,
-  getResumeTemplatesApi,
-  getResumeV2Api,
-  getResumeVersionDiffApi,
-  getResumeVersionsV2Api,
-  patchResumeDraftApi,
-  requestResumeExportApi,
-  requestResumePreviewApi,
-  requestResumeQualityApi,
-  requestResumeSuggestionApi,
-  rejectResumeSuggestionApi,
-  revokeResumeShareLinkApi,
-  uploadResumeAvatarApi,
-  type JsonResume,
-  type ResumeArtifact,
-  type ResumeDesign,
-  type ResumeDraft,
-  type ResumeQualityReport,
-  type ResumeShareLink,
-  type ResumeSuggestionV2,
-  type ResumeTemplate,
-  type ResumeV2,
-  type ResumeVersionV2,
+  acceptResumeSuggestionApi, commitResumeDraftApi, createResumeShareLinkApi,
+  deleteResumeAvatarApi, getAsyncOperationApi, getResumeArtifactApi, getResumeAvatarApi,
+  getResumeDraftApi, getResumeQualityReportsApi, getResumeShareLinksApi,
+  getResumeSuggestionsV2Api, getResumeTemplatesApi, getResumeV2Api,
+  getResumeVariantsApi, getResumeVersionDiffApi, getResumeVersionsV2Api,
+  patchResumeDraftApi, requestResumeExportApi, requestResumePreviewApi,
+  requestResumeQualityApi, requestResumeSuggestionApi, rejectResumeSuggestionApi,
+  revokeResumeShareLinkApi, uploadResumeAvatarApi,
+  type JsonResume, type ResumeArtifact, type ResumeDesign, type ResumeDraft,
+  type ResumeQualityReport, type ResumeShareLink, type ResumeSuggestionV2,
+  type ResumeTemplate, type ResumeV2, type ResumeVariantV2, type ResumeVersionV2,
 } from '@/api/modules/resume';
 import { formatDateTime } from '@/utils/format';
+
+type SectionKey = Exclude<keyof JsonResume, 'meta' | 'x-ifaceoff' | 'basics'>;
+interface SectionDefinition { key: SectionKey; title: string; description: string; fields: ResumeSectionField[]; defaults: Record<string, any>; }
 
 const route = useRoute();
 const router = useRouter();
 const resumeId = Number(route.params.id);
 const loading = ref(true);
 const saving = ref(false);
-const saveState = ref<'saved' | 'saving' | 'conflict' | 'error'>('saved');
+const saveState = ref<'saved' | 'saving' | 'pending' | 'conflict' | 'error'>('saved');
 const activeTab = ref('content');
 const resume = ref<ResumeV2 | null>(null);
 const draft = ref<ResumeDraft | null>(null);
@@ -53,661 +37,170 @@ const content = ref<JsonResume | null>(null);
 const design = ref<ResumeDesign | null>(null);
 const templates = ref<ResumeTemplate[]>([]);
 const versions = ref<ResumeVersionV2[]>([]);
+const variants = ref<ResumeVariantV2[]>([]);
 const qualityReports = ref<ResumeQualityReport[]>([]);
 const shares = ref<ResumeShareLink[]>([]);
 const suggestions = ref<ResumeSuggestionV2[]>([]);
+const jobTargets = ref<JobTarget[]>([]);
 const intelligenceLoading = ref(false);
 const intelligenceResult = ref<Record<string, any> | null>(null);
 const avatarUrl = ref('');
 const avatarUploading = ref(false);
-const intelligenceForm = ref({
-  task_key: 'resume.rewrite_section',
-  instruction: '',
-  job_target_id: null as number | null,
-});
+const intelligenceForm = ref({ task_key: 'resume.rewrite_section', instruction: '', job_target_id: null as number | null });
 const previewArtifact = ref<ResumeArtifact | null>(null);
 const previewLoading = ref(false);
+const previewState = ref<'idle' | 'waiting_save' | 'rendering' | 'ready' | 'failed'>('idle');
 const qualityLoading = ref(false);
 const diffVisible = ref(false);
 const diffData = ref<any>(null);
 const shareVisible = ref(false);
 const shareResult = ref<ResumeShareLink | null>(null);
-const shareForm = ref({
-  password: '',
-  expires_at: '',
-  allow_download: false,
-  download_limit: null as number | null,
-  field_policy: { email: false, phone: false, address: false, image: false },
-});
+const shareForm = ref({ password: '', expires_at: '', allow_download: false, download_limit: null as number | null, field_policy: { email: false, phone: false, address: false, image: false } });
 let saveTimer: number | undefined;
+let previewTimer: number | undefined;
 let hydrating = true;
+let saveQueued = false;
+let previewSerial = 0;
+
+const sectionDefinitions: SectionDefinition[] = [
+  { key: 'work', title: '工作经历', description: '组织、岗位、职责与可验证成果', defaults: { name: '', position: '', location: '', url: '', startDate: '', endDate: '', summary: '', highlights: [] }, fields: [
+    { key: 'name', label: '公司 / 组织' }, { key: 'position', label: '职位' }, { key: 'location', label: '地点' }, { key: 'url', label: '链接', type: 'url' }, { key: 'startDate', label: '开始时间' }, { key: 'endDate', label: '结束时间' }, { key: 'summary', label: '职责概述', type: 'textarea', span: 2 }, { key: 'highlights', label: '成果 Bullet', type: 'list', span: 2, placeholder: '例如：设计幂等消费协议，将重复副作用降为 0' },
+  ] },
+  { key: 'projects', title: '项目经历', description: '项目场景、个人行动、技术与结果', defaults: { name: '', description: '', url: '', startDate: '', endDate: '', keywords: [], highlights: [] }, fields: [
+    { key: 'name', label: '项目名称' }, { key: 'url', label: '项目链接', type: 'url' }, { key: 'startDate', label: '开始时间' }, { key: 'endDate', label: '结束时间' }, { key: 'description', label: '项目说明', type: 'textarea', span: 2 }, { key: 'keywords', label: '技术 / 关键词', type: 'list', span: 2 }, { key: 'highlights', label: '成果 Bullet', type: 'list', span: 2 },
+  ] },
+  { key: 'education', title: '教育经历', description: '院校、专业、学位与课程证据', defaults: { institution: '', area: '', studyType: '', startDate: '', endDate: '', score: '', url: '', courses: [] }, fields: [
+    { key: 'institution', label: '院校' }, { key: 'area', label: '专业' }, { key: 'studyType', label: '学位' }, { key: 'score', label: '成绩 / GPA' }, { key: 'startDate', label: '开始时间' }, { key: 'endDate', label: '结束时间' }, { key: 'url', label: '院校链接', type: 'url', span: 2 }, { key: 'courses', label: '核心课程 / 荣誉', type: 'list', span: 2 },
+  ] },
+  { key: 'skills', title: '专业技能', description: '按技能域组织，不使用虚假进度条', defaults: { name: '', level: '', keywords: [] }, fields: [{ key: 'name', label: '技能域' }, { key: 'level', label: '熟练度 / 说明' }, { key: 'keywords', label: '技能关键词', type: 'list', span: 2 }] },
+  { key: 'certificates', title: '证书', description: '认证名称、机构、日期与凭证链接', defaults: { name: '', issuer: '', date: '', url: '' }, fields: [{ key: 'name', label: '证书名称' }, { key: 'issuer', label: '颁发机构' }, { key: 'date', label: '获得日期' }, { key: 'url', label: '凭证链接', type: 'url' }] },
+  { key: 'awards', title: '荣誉奖项', description: '奖项、主办方与获奖依据', defaults: { title: '', awarder: '', date: '', summary: '' }, fields: [{ key: 'title', label: '奖项名称' }, { key: 'awarder', label: '颁发方' }, { key: 'date', label: '获奖日期' }, { key: 'summary', label: '获奖说明', type: 'textarea', span: 2 }] },
+  { key: 'languages', title: '语言能力', description: '语言与可解释的熟练程度', defaults: { language: '', fluency: '' }, fields: [{ key: 'language', label: '语言' }, { key: 'fluency', label: '熟练度 / 证书' }] },
+  { key: 'publications', title: '发表成果', description: '论文、文章、专利或公开演讲', defaults: { name: '', publisher: '', releaseDate: '', url: '', summary: '' }, fields: [{ key: 'name', label: '成果名称' }, { key: 'publisher', label: '发布方' }, { key: 'releaseDate', label: '发布日期' }, { key: 'url', label: '链接', type: 'url' }, { key: 'summary', label: '摘要', type: 'textarea', span: 2 }] },
+  { key: 'volunteer', title: '志愿经历', description: '组织、职责、投入与影响', defaults: { organization: '', position: '', url: '', startDate: '', endDate: '', summary: '', highlights: [] }, fields: [{ key: 'organization', label: '组织' }, { key: 'position', label: '角色' }, { key: 'startDate', label: '开始时间' }, { key: 'endDate', label: '结束时间' }, { key: 'url', label: '链接', type: 'url', span: 2 }, { key: 'summary', label: '经历说明', type: 'textarea', span: 2 }, { key: 'highlights', label: '成果 Bullet', type: 'list', span: 2 }] },
+  { key: 'interests', title: '兴趣', description: '适量保留能体现长期投入的兴趣', defaults: { name: '', keywords: [] }, fields: [{ key: 'name', label: '兴趣方向' }, { key: 'keywords', label: '关键词', type: 'list', span: 2 }] },
+  { key: 'references', title: '推荐人', description: '仅在获得对方授权后填写', defaults: { name: '', reference: '' }, fields: [{ key: 'name', label: '推荐人' }, { key: 'reference', label: '推荐说明 / 联系方式', type: 'textarea', span: 2 }] },
+];
+const sectionLabels: Record<string, string> = { basics: '基本信息', summary: '职业摘要', work: '工作经历', projects: '项目经历', education: '教育经历', skills: '专业技能', certificates: '证书', awards: '荣誉奖项', publications: '发表成果', languages: '语言能力', volunteer: '志愿经历', interests: '兴趣', references: '推荐人' };
 
 const basics = computed(() => content.value?.basics || {});
 const latestQuality = computed(() => qualityReports.value.find(item => item.status === 'completed'));
-const saveStateText = computed(() => ({
-  saved: '草稿已保存',
-  saving: '正在保存',
-  conflict: '检测到版本冲突',
-  error: '保存失败',
-}[saveState.value]));
+const deterministicIssues = computed(() => latestQuality.value?.report_json?.issues || []);
+const aiReviewers = computed(() => latestQuality.value?.report_json?.reviewers || {});
+const hiddenSections = computed(() => new Set(design.value?.hidden_sections || []));
+const orderedSectionDefinitions = computed(() => { const order = design.value?.section_order || []; return [...sectionDefinitions].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key)); });
+const orderedModuleKeys = computed({ get: () => design.value?.section_order || [], set: value => { if (design.value) design.value.section_order = value; } });
+const saveStateText = computed(() => ({ saved: '草稿与预览已同步', saving: '正在保存', pending: '有修改等待保存', conflict: '检测到版本冲突', error: '保存失败' }[saveState.value]));
+const previewStateText = computed(() => ({ idle: '等待内容', waiting_save: '保存后自动刷新', rendering: '服务端排版中', ready: '权威预览已更新', failed: '预览失败，可手动重试' }[previewState.value]));
 
-function ensureItemId(item: Record<string, any>) {
-  item['x-ifaceoff'] ||= {};
-  item['x-ifaceoff'].id ||= crypto.randomUUID();
-  return item;
-}
-
-function addItem(section: keyof JsonResume) {
-  if (!content.value || !Array.isArray(content.value[section])) return;
-  const defaults: Record<string, any> = {
-    work: { name: '', position: '', startDate: '', endDate: '', summary: '', highlights: [] },
-    projects: { name: '', description: '', startDate: '', endDate: '', keywords: [], highlights: [] },
-    education: { institution: '', area: '', studyType: '', startDate: '', endDate: '', courses: [] },
-    skills: { name: '', level: '', keywords: [] },
-  };
-  (content.value[section] as Array<Record<string, any>>).push(ensureItemId(defaults[String(section)] || {}));
-}
-
-function removeItem(section: keyof JsonResume, index: number) {
-  if (content.value && Array.isArray(content.value[section])) {
-    (content.value[section] as any[]).splice(index, 1);
-  }
-}
+function ensureItemId(item: Record<string, any>) { item['x-ifaceoff'] ||= {}; item['x-ifaceoff'].id ||= crypto.randomUUID(); return item; }
+function addItem(definition: SectionDefinition) { if (!content.value) return; (content.value[definition.key] as Array<Record<string, any>>).push(ensureItemId(structuredClone(definition.defaults))); }
+function updateSectionItems(key: SectionKey, items: Array<Record<string, any>>) { if (content.value) (content.value[key] as Array<Record<string, any>>) = items.map(ensureItemId); }
+function toggleSection(key: string) { if (!design.value || key === 'basics') return; const hidden = new Set(design.value.hidden_sections || []); hidden.has(key) ? hidden.delete(key) : hidden.add(key); design.value.hidden_sections = [...hidden]; }
 
 async function loadAll() {
-  loading.value = true;
+  loading.value = true; hydrating = true;
   try {
-    const [resumeData, draftData, templateData, versionData, reportData, shareData, suggestionData, avatarData] = await Promise.all([
-      getResumeV2Api(resumeId),
-      getResumeDraftApi(resumeId),
-      getResumeTemplatesApi(),
-      getResumeVersionsV2Api(resumeId),
-      getResumeQualityReportsApi(resumeId),
-      getResumeShareLinksApi(resumeId),
-      getResumeSuggestionsV2Api(resumeId),
-      getResumeAvatarApi(resumeId),
+    const [resumeData, draftData, templateData, versionData, reportData, shareData, suggestionData, avatarData, targetData, variantData] = await Promise.all([
+      getResumeV2Api(resumeId), getResumeDraftApi(resumeId), getResumeTemplatesApi(), getResumeVersionsV2Api(resumeId), getResumeQualityReportsApi(resumeId), getResumeShareLinksApi(resumeId), getResumeSuggestionsV2Api(resumeId), getResumeAvatarApi(resumeId), getJobTargetsApi(), getResumeVariantsApi(resumeId),
     ]);
-    resume.value = resumeData;
-    draft.value = draftData;
-    content.value = structuredClone(draftData.resume_json);
+    resume.value = resumeData; draft.value = draftData; content.value = draftData.resume_json;
+    content.value.basics ||= {};
     content.value.basics.location ||= {};
-    content.value.basics.profiles ||= [];
-    design.value = structuredClone(draftData.design_json);
-    templates.value = templateData.templates;
-    versions.value = versionData;
-    qualityReports.value = reportData;
-    shares.value = shareData;
-    suggestions.value = suggestionData;
-    avatarUrl.value = avatarData.avatar?.url || '';
-    await nextTick();
-    hydrating = false;
-  } finally {
-    loading.value = false;
-  }
+    design.value = { ...draftData.design_json, hidden_sections: draftData.design_json.hidden_sections || [] };
+    Object.values(content.value).forEach(value => { if (Array.isArray(value)) value.forEach(item => ensureItemId(item)); });
+    templates.value = templateData.templates; versions.value = versionData; qualityReports.value = reportData; shares.value = shareData; suggestions.value = suggestionData; avatarUrl.value = avatarData.avatar?.url || ''; jobTargets.value = targetData; variants.value = variantData;
+    const requestedTemplate = String(route.query.template || '');
+    const requested = templates.value.find(item => item.key === requestedTemplate);
+    if (requested) chooseTemplate(requested);
+    await nextTick(); schedulePreview(120);
+  } finally { hydrating = false; loading.value = false; }
 }
-
-async function persistBeforeAssetChange() {
-  if (saveTimer) {
-    window.clearTimeout(saveTimer);
-    saveTimer = undefined;
-  }
-  await saveDraft();
-}
-
-async function uploadAvatar(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file || !draft.value) return;
-  avatarUploading.value = true;
-  try {
-    await persistBeforeAssetChange();
-    const result = await uploadResumeAvatarApi(resumeId, draft.value.etag, file);
-    const refreshed = await getResumeDraftApi(resumeId);
-    draft.value = refreshed;
-    content.value = structuredClone(refreshed.resume_json);
-    avatarUrl.value = result.avatar.url;
-    if (design.value) design.value.show_avatar = true;
-    ElMessage.success('头像已安全处理并保存到草稿');
-  } finally {
-    avatarUploading.value = false;
-    input.value = '';
-  }
-}
-
-async function removeAvatar() {
-  if (!draft.value) return;
-  await persistBeforeAssetChange();
-  const result = await deleteResumeAvatarApi(resumeId, draft.value.etag);
-  const refreshed = await getResumeDraftApi(resumeId);
-  draft.value = refreshed;
-  content.value = structuredClone(refreshed.resume_json);
-  avatarUrl.value = '';
-  if (design.value) design.value.show_avatar = false;
-  ElMessage.success('头像已从后续版本中移除');
-  return result;
-}
+async function persistBeforeAssetChange() { if (saveTimer) window.clearTimeout(saveTimer); await saveDraft(); }
+async function uploadAvatar(event: Event) { const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file || !draft.value) return; avatarUploading.value = true; try { await persistBeforeAssetChange(); const result = await uploadResumeAvatarApi(resumeId, draft.value.etag, file); avatarUrl.value = result.avatar.url; draft.value = await getResumeDraftApi(resumeId); content.value = draft.value.resume_json; schedulePreview(50); } finally { avatarUploading.value = false; input.value = ''; } }
+async function removeAvatar() { if (!draft.value) return; await persistBeforeAssetChange(); await deleteResumeAvatarApi(resumeId, draft.value.etag); draft.value = await getResumeDraftApi(resumeId); content.value = draft.value.resume_json; avatarUrl.value = ''; schedulePreview(50); }
 
 async function saveDraft() {
-  if (!draft.value || !content.value || !design.value || saving.value || hydrating) return;
-  saving.value = true;
-  saveState.value = 'saving';
+  if (!draft.value || !content.value || !design.value || hydrating) return;
+  if (saving.value) { saveQueued = true; return; }
+  saving.value = true; saveState.value = 'saving';
   try {
-    const updated = await patchResumeDraftApi(resumeId, draft.value.etag, {
-      resume_json: content.value,
-      design_json: design.value,
-    });
-    draft.value = updated;
-    saveState.value = 'saved';
-  } catch (error: any) {
-    if (error?.response?.status === 409) {
-      saveState.value = 'conflict';
-      ElMessage.error('草稿已在其他页面修改，请刷新后再继续。');
-    } else {
-      saveState.value = 'error';
-    }
-    throw error;
-  } finally {
-    saving.value = false;
+    const updated = await patchResumeDraftApi(resumeId, draft.value.etag, { resume_json: structuredClone(content.value), design_json: structuredClone(design.value) });
+    hydrating = true; draft.value = updated; content.value = updated.resume_json; design.value = updated.design_json; await nextTick(); hydrating = false; saveState.value = 'saved'; schedulePreview(350);
+  } catch (error: any) { saveState.value = error?.response?.status === 409 ? 'conflict' : 'error'; if (error?.response?.status === 409) ElMessage.warning('草稿已在其他页面更新，请刷新后继续。'); }
+  finally { saving.value = false; if (saveQueued) { saveQueued = false; scheduleSave(80); } }
+}
+function scheduleSave(delay = 700) { if (hydrating) return; saveState.value = 'pending'; previewState.value = 'waiting_save'; if (saveTimer) window.clearTimeout(saveTimer); saveTimer = window.setTimeout(() => saveDraft(), delay); }
+function schedulePreview(delay = 450) { if (previewTimer) window.clearTimeout(previewTimer); previewTimer = window.setTimeout(() => generatePreview(true), delay); }
+async function commitVersion() { if (!draft.value) return; await persistBeforeAssetChange(); const { value } = await ElMessageBox.prompt('说明这次版本的主要变化，便于后续对比与审计。', '创建不可变版本', { confirmButtonText: '创建版本', cancelButtonText: '取消', inputValue: '完善结构化简历内容' }); const version = await commitResumeDraftApi(resumeId, draft.value.etag, value); [resume.value, versions.value, draft.value] = await Promise.all([getResumeV2Api(resumeId), getResumeVersionsV2Api(resumeId), getResumeDraftApi(resumeId)]); ElMessage.success(`版本 v${version.version_number} 已创建`); }
+
+async function ensureActionSnapshot(changeSummary: string): Promise<number> {
+  await persistBeforeAssetChange();
+  if (!draft.value || !resume.value) throw new Error('resume_snapshot_unavailable');
+  const contentChanged = JSON.stringify(draft.value.resume_json) !== JSON.stringify(resume.value.current_version.resume_json);
+  const designChanged = JSON.stringify(draft.value.design_json) !== JSON.stringify(resume.value.current_design_revision.design_json);
+  if (contentChanged || designChanged || draft.value.base_version !== resume.value.current_version.id) {
+    const version = await commitResumeDraftApi(resumeId, draft.value.etag, changeSummary);
+    [resume.value, versions.value, draft.value] = await Promise.all([getResumeV2Api(resumeId), getResumeVersionsV2Api(resumeId), getResumeDraftApi(resumeId)]);
+    return version.id;
   }
+  return resume.value.current_version.id;
 }
 
-function scheduleSave() {
-  if (hydrating || saveState.value === 'conflict') return;
-  window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => saveDraft().catch(() => undefined), 900);
-}
+async function waitForArtifact(id: string, serial = previewSerial) { for (let index = 0; index < 60; index += 1) { const artifact = await getResumeArtifactApi(id); if (serial !== -1 && serial !== previewSerial) return artifact; if (artifact.status === 'ready' || artifact.status === 'failed') return artifact; await new Promise(resolve => window.setTimeout(resolve, 500)); } throw new Error('artifact_timeout'); }
+async function generatePreview(silent = false) { if (saving.value || saveState.value === 'pending') return; const serial = ++previewSerial; previewLoading.value = true; previewState.value = 'rendering'; try { const accepted = await requestResumePreviewApi(resumeId); const artifact = await waitForArtifact(accepted.artifact_id!, serial); if (serial !== previewSerial) return; previewArtifact.value = artifact; previewState.value = artifact.status === 'ready' ? 'ready' : 'failed'; if (artifact.status === 'failed' && !silent) ElMessage.error(artifact.error_message || '预览生成失败'); } catch { if (serial === previewSerial) previewState.value = 'failed'; if (!silent) ElMessage.error('预览暂时不可用，请稍后重试。'); } finally { if (serial === previewSerial) previewLoading.value = false; } }
+async function exportResume(format: 'pdf' | 'png' | 'docx' | 'json' | 'markdown') { const versionId = await ensureActionSnapshot(`导出 ${format.toUpperCase()} 前冻结快照`); const accepted = await requestResumeExportApi(resumeId, format, versionId); ElMessage.success(`${format.toUpperCase()} 导出已受理`); const artifact = await waitForArtifact(accepted.artifact_id!, -1).catch(() => null); if (artifact?.file_url) window.open(artifact.file_url, '_blank', 'noopener'); }
+async function waitForOperation(operationId: string) { for (let index = 0; index < 80; index += 1) { const operation = await getAsyncOperationApi(operationId); if (['succeeded', 'failed', 'canceled', 'review_required'].includes(operation.status)) return operation; await new Promise(resolve => window.setTimeout(resolve, 750)); } throw new Error('operation_timeout'); }
+async function runQualityReview() { qualityLoading.value = true; try { const versionId = await ensureActionSnapshot('质量复核前冻结快照'); const accepted = await requestResumeQualityApi(resumeId, versionId); const operation = await waitForOperation(accepted.operation_id); qualityReports.value = await getResumeQualityReportsApi(resumeId); operation.status === 'succeeded' ? ElMessage.success('ATS 规则与多视角 AI 评审已完成') : ElMessage.warning('确定性 ATS 结果已保留，AI 评审可能处于降级状态'); activeTab.value = 'review'; } finally { qualityLoading.value = false; } }
+async function runIntelligence() { if (intelligenceForm.value.task_key === 'resume.jd_tailor' && !intelligenceForm.value.job_target_id) { ElMessage.warning('请先选择一个目标岗位。'); return; } intelligenceLoading.value = true; intelligenceResult.value = null; try { const versionId = await ensureActionSnapshot('AI 建议前冻结快照'); const accepted = await requestResumeSuggestionApi(resumeId, { ...intelligenceForm.value, base_version_id: versionId }); const operation = await waitForOperation(accepted.operation_id); intelligenceResult.value = operation.result || operation.metadata || operation; suggestions.value = await getResumeSuggestionsV2Api(resumeId); if (operation.status === 'succeeded') ElMessage.success('AI 已生成可审阅建议，不会直接改写简历'); } finally { intelligenceLoading.value = false; } }
+async function acceptSuggestion(suggestion: ResumeSuggestionV2) { await acceptResumeSuggestionApi(resumeId, suggestion.id); const [resumeData, draftData, versionData, variantData, suggestionData] = await Promise.all([getResumeV2Api(resumeId), getResumeDraftApi(resumeId), getResumeVersionsV2Api(resumeId), getResumeVariantsApi(resumeId), getResumeSuggestionsV2Api(resumeId)]); resume.value = resumeData; draft.value = draftData; versions.value = versionData; variants.value = variantData; suggestions.value = suggestionData; hydrating = true; content.value = draftData.resume_json; design.value = draftData.design_json; await nextTick(); hydrating = false; schedulePreview(100); ElMessage.success(suggestion.task_key === 'resume.jd_tailor' ? '岗位定制版本已独立创建，主简历未被覆盖' : '建议已采纳并创建新版本'); }
+async function rejectSuggestion(suggestion: ResumeSuggestionV2) { await rejectResumeSuggestionApi(resumeId, suggestion.id); suggestions.value = await getResumeSuggestionsV2Api(resumeId); }
+async function showDiff(version: ResumeVersionV2) { diffData.value = await getResumeVersionDiffApi(resumeId, version.id); diffVisible.value = true; }
+async function createShare() { const versionId = await ensureActionSnapshot('创建私密分享前冻结快照'); const payload: Record<string, any> = { ...shareForm.value, version_id: versionId }; if (!payload.expires_at) delete payload.expires_at; if (!payload.password) delete payload.password; if (!payload.download_limit) delete payload.download_limit; shareResult.value = await createResumeShareLinkApi(resumeId, payload); shares.value = await getResumeShareLinksApi(resumeId); ElMessage.success('私密分享链接已创建'); }
+async function copyShare() { if (!shareResult.value?.token) return; await navigator.clipboard.writeText(`${window.location.origin}/resume-shares/${shareResult.value.token}`); ElMessage.success('链接已复制；完整 Token 只展示这一次'); }
+async function revokeShare(link: ResumeShareLink) { await revokeResumeShareLinkApi(resumeId, link.id); shares.value = await getResumeShareLinksApi(resumeId); }
+function chooseTemplate(template: ResumeTemplate) { if (!design.value) return; design.value.template_key = template.key; design.value.template_version = template.version; design.value.font = template.default_font; design.value.color = template.default_color; design.value.density = template.default_density as ResumeDesign['density']; }
 
-watch(content, scheduleSave, { deep: true });
-watch(design, scheduleSave, { deep: true });
-
-async function commitVersion() {
-  await saveDraft();
-  if (!draft.value) return;
-  const summary = await ElMessageBox.prompt('说明本次版本的主要变化，便于后续 Diff 与审计。', '创建不可变版本', {
-    inputPlaceholder: '例如：补充项目成果并调整技能顺序',
-    inputPattern: /\S+/,
-    inputErrorMessage: '请填写变更说明',
-  }).then(result => result.value).catch(() => '');
-  if (!summary) return;
-  await commitResumeDraftApi(resumeId, draft.value.etag, summary);
-  draft.value = await getResumeDraftApi(resumeId);
-  versions.value = await getResumeVersionsV2Api(resumeId);
-  resume.value = await getResumeV2Api(resumeId);
-  ElMessage.success('新版本已创建');
-}
-
-async function waitForArtifact(id: string) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const artifact = await getResumeArtifactApi(id);
-    if (artifact.status === 'ready' || artifact.status === 'failed') return artifact;
-    await new Promise(resolve => window.setTimeout(resolve, 750));
-  }
-  throw new Error('artifact_timeout');
-}
-
-async function generatePreview() {
-  previewLoading.value = true;
-  try {
-    await saveDraft();
-    const accepted = await requestResumePreviewApi(resumeId);
-    if (!accepted.artifact_id) throw new Error('artifact_missing');
-    previewArtifact.value = await waitForArtifact(accepted.artifact_id);
-    if (previewArtifact.value.status === 'failed') {
-      ElMessage.error(previewArtifact.value.error_message || '预览生成失败');
-    }
-  } catch (error: any) {
-    if (error?.message === 'artifact_timeout') ElMessage.warning('预览仍在生成，可稍后刷新。');
-  } finally {
-    previewLoading.value = false;
-  }
-}
-
-async function exportResume(format: 'pdf' | 'docx' | 'json') {
-  const accepted = await requestResumeExportApi(resumeId, format);
-  ElMessage.success(`${format.toUpperCase()} 导出已受理`);
-  if (!accepted.artifact_id) return;
-  const artifact = await waitForArtifact(accepted.artifact_id).catch(() => null);
-  if (artifact?.file_url) window.open(artifact.file_url, '_blank', 'noopener');
-  else if (artifact?.status === 'failed') ElMessage.error(artifact.error_message || '导出失败');
-}
-
-async function runQualityReview() {
-  qualityLoading.value = true;
-  try {
-    await requestResumeQualityApi(resumeId);
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      await new Promise(resolve => window.setTimeout(resolve, 650));
-      qualityReports.value = await getResumeQualityReportsApi(resumeId);
-      if (qualityReports.value.some(item => item.status === 'completed' || item.status === 'failed')) break;
-    }
-    activeTab.value = 'quality';
-  } finally {
-    qualityLoading.value = false;
-  }
-}
-
-async function runIntelligence() {
-  intelligenceLoading.value = true;
-  intelligenceResult.value = null;
-  try {
-    await saveDraft();
-    const accepted = await requestResumeSuggestionApi(resumeId, intelligenceForm.value);
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await new Promise(resolve => window.setTimeout(resolve, 750));
-      const operation = await getAsyncOperationApi(accepted.operation_id);
-      if (['succeeded', 'failed'].includes(operation.status)) {
-        intelligenceResult.value = operation;
-        break;
-      }
-    }
-    suggestions.value = await getResumeSuggestionsV2Api(resumeId);
-    if (intelligenceResult.value?.status === 'failed') {
-      ElMessage.error(intelligenceResult.value.error_message || '建议生成失败');
-    } else {
-      ElMessage.success('证据约束建议已生成');
-    }
-  } finally {
-    intelligenceLoading.value = false;
-  }
-}
-
-async function acceptSuggestion(suggestion: ResumeSuggestionV2) {
-  await ElMessageBox.confirm('采纳后会创建一个新的不可变版本，不会覆盖历史版本。', '采纳建议');
-  await acceptResumeSuggestionApi(resumeId, suggestion.id);
-  [draft.value, versions.value, suggestions.value, resume.value] = await Promise.all([
-    getResumeDraftApi(resumeId),
-    getResumeVersionsV2Api(resumeId),
-    getResumeSuggestionsV2Api(resumeId),
-    getResumeV2Api(resumeId),
-  ]);
-  content.value = structuredClone(draft.value.resume_json);
-  design.value = structuredClone(draft.value.design_json);
-  ElMessage.success('建议已采纳并创建新版本');
-}
-
-async function rejectSuggestion(suggestion: ResumeSuggestionV2) {
-  await rejectResumeSuggestionApi(resumeId, suggestion.id);
-  suggestions.value = await getResumeSuggestionsV2Api(resumeId);
-}
-
-async function showDiff(version: ResumeVersionV2) {
-  diffData.value = await getResumeVersionDiffApi(resumeId, version.id);
-  diffVisible.value = true;
-}
-
-async function createShare() {
-  const payload: Record<string, any> = {
-    password: shareForm.value.password,
-    allow_download: shareForm.value.allow_download,
-    download_limit: shareForm.value.allow_download ? shareForm.value.download_limit : null,
-    field_policy: shareForm.value.field_policy,
-  };
-  if (shareForm.value.expires_at) payload.expires_at = new Date(shareForm.value.expires_at).toISOString();
-  shareResult.value = await createResumeShareLinkApi(resumeId, payload);
-  shares.value = await getResumeShareLinksApi(resumeId);
-  ElMessage.success('私密分享链接已创建，请立即复制令牌');
-}
-
-async function copyShare() {
-  if (!shareResult.value?.token) return;
-  const url = `${window.location.origin}/resume-shares/${shareResult.value.token}`;
-  await navigator.clipboard.writeText(url);
-  ElMessage.success('分享链接已复制');
-}
-
-async function revokeShare(link: ResumeShareLink) {
-  await revokeResumeShareLinkApi(resumeId, link.id);
-  shares.value = await getResumeShareLinksApi(resumeId);
-  ElMessage.success('分享链接已撤销');
-}
-
-onMounted(loadAll);
-onBeforeUnmount(() => window.clearTimeout(saveTimer));
+watch([content, design], () => scheduleSave(), { deep: true });
+onMounted(() => { if (!Number.isInteger(resumeId) || resumeId < 1) { ElMessage.error('简历 ID 无效'); router.replace('/dashboard/resumes'); return; } loadAll().catch(() => { ElMessage.error('Resume Studio 加载失败，请确认 V2 服务可用。'); router.replace('/dashboard/resumes'); }); });
+onBeforeUnmount(() => { if (saveTimer) window.clearTimeout(saveTimer); if (previewTimer) window.clearTimeout(previewTimer); previewSerial += 1; });
 </script>
 
 <template>
-  <main class="studio" v-loading="loading">
-    <header class="studio-header">
-      <div class="title-row">
-        <el-button text :icon="ArrowLeft" @click="router.push('/dashboard/resumes')">简历库</el-button>
-        <div>
-          <h1>{{ resume?.title || 'Resume Studio' }}</h1>
-          <span :class="['save-state', saveState]"><el-icon v-if="saveState === 'saved'"><Check /></el-icon>{{ saveStateText }}</span>
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-dropdown @command="exportResume">
-          <el-button :icon="Download">导出<el-icon class="el-icon--right"><Download /></el-icon></el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="pdf">PDF（同源排版）</el-dropdown-item>
-              <el-dropdown-item command="docx">DOCX（ATS 样式）</el-dropdown-item>
-              <el-dropdown-item command="json">JSON Resume</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <el-button :loading="qualityLoading" @click="runQualityReview">ATS 检查</el-button>
-        <el-button type="primary" @click="commitVersion">创建版本</el-button>
-      </div>
+  <div v-loading="loading" class="resume-studio">
+    <header class="studio-toolbar">
+      <div class="studio-toolbar__identity"><el-button circle text :icon="ArrowLeft" aria-label="返回简历列表" @click="router.push('/dashboard/resumes')" /><div><h1>{{ resume?.title || 'Resume Studio' }}</h1><p><span :class="`save-state save-state--${saveState}`"></span>{{ saveStateText }} · {{ previewStateText }}</p></div></div>
+      <div class="studio-toolbar__actions"><el-button :loading="qualityLoading" @click="runQualityReview">ATS + AI 复核</el-button><el-button :icon="Check" @click="commitVersion">创建版本</el-button><el-dropdown trigger="click" @command="exportResume"><el-button type="primary" :icon="Download">导出 ⌄</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="pdf">PDF · 正式排版</el-dropdown-item><el-dropdown-item command="png">PNG · 多页长图</el-dropdown-item><el-dropdown-item command="docx">DOCX · ATS 样式</el-dropdown-item><el-dropdown-item command="markdown">Markdown · 可编辑文本</el-dropdown-item><el-dropdown-item command="json">JSON Resume 1.3.1</el-dropdown-item></el-dropdown-menu></template></el-dropdown><el-button :icon="Share" @click="shareVisible = true">私密分享</el-button></div>
     </header>
 
-    <div v-if="content && design" class="studio-body">
-      <section class="editor-panel">
-        <el-tabs v-model="activeTab" stretch>
-          <el-tab-pane label="内容" name="content">
-            <div class="pane">
-              <section class="form-section">
-                <div class="section-heading"><div><span>01</span><h2>基本信息</h2></div></div>
-                <el-form label-position="top" class="form-grid">
-                  <el-form-item label="姓名"><el-input v-model="basics.name" maxlength="300" /></el-form-item>
-                  <el-form-item label="目标职位"><el-input v-model="basics.label" maxlength="300" /></el-form-item>
-                  <el-form-item label="邮箱"><el-input v-model="basics.email" type="email" /></el-form-item>
-                  <el-form-item label="电话"><el-input v-model="basics.phone" /></el-form-item>
-                  <el-form-item label="城市"><el-input v-model="basics.location.city" /></el-form-item>
-                  <el-form-item label="个人网站"><el-input v-model="basics.url" placeholder="https://" /></el-form-item>
-                  <el-form-item label="职业摘要" class="wide"><el-input v-model="basics.summary" type="textarea" :rows="5" maxlength="20000" show-word-limit /></el-form-item>
-                </el-form>
-              </section>
-
-              <section class="form-section">
-                <div class="section-heading"><div><span>02</span><h2>工作经历</h2></div><el-button :icon="Plus" @click="addItem('work')">添加</el-button></div>
-                <article v-for="(item, index) in content.work" :key="item['x-ifaceoff']?.id" class="entry-card">
-                  <el-form label-position="top" class="form-grid">
-                    <el-form-item label="公司"><el-input v-model="item.name" /></el-form-item>
-                    <el-form-item label="职位"><el-input v-model="item.position" /></el-form-item>
-                    <el-form-item label="开始日期"><el-input v-model="item.startDate" placeholder="YYYY-MM" /></el-form-item>
-                    <el-form-item label="结束日期"><el-input v-model="item.endDate" placeholder="留空表示至今" /></el-form-item>
-                    <el-form-item label="职责与成果" class="wide"><el-input v-model="item.summary" type="textarea" :rows="4" /></el-form-item>
-                  </el-form>
-                  <el-button link type="danger" @click="removeItem('work', index)">删除经历</el-button>
-                </article>
-              </section>
-
-              <section class="form-section">
-                <div class="section-heading"><div><span>03</span><h2>项目经历</h2></div><el-button :icon="Plus" @click="addItem('projects')">添加</el-button></div>
-                <article v-for="(item, index) in content.projects" :key="item['x-ifaceoff']?.id" class="entry-card">
-                  <el-form label-position="top" class="form-grid">
-                    <el-form-item label="项目名称"><el-input v-model="item.name" /></el-form-item>
-                    <el-form-item label="技术关键词（逗号分隔）"><el-input :model-value="(item.keywords || []).join(', ')" @update:model-value="item.keywords = String($event).split(',').map(v => v.trim()).filter(Boolean)" /></el-form-item>
-                    <el-form-item label="开始日期"><el-input v-model="item.startDate" placeholder="YYYY-MM" /></el-form-item>
-                    <el-form-item label="结束日期"><el-input v-model="item.endDate" /></el-form-item>
-                    <el-form-item label="项目说明" class="wide"><el-input v-model="item.description" type="textarea" :rows="4" /></el-form-item>
-                  </el-form>
-                  <el-button link type="danger" @click="removeItem('projects', index)">删除项目</el-button>
-                </article>
-              </section>
-
-              <section class="form-section">
-                <div class="section-heading"><div><span>04</span><h2>教育经历</h2></div><el-button :icon="Plus" @click="addItem('education')">添加</el-button></div>
-                <article v-for="(item, index) in content.education" :key="item['x-ifaceoff']?.id" class="entry-card">
-                  <el-form label-position="top" class="form-grid">
-                    <el-form-item label="学校"><el-input v-model="item.institution" /></el-form-item>
-                    <el-form-item label="专业"><el-input v-model="item.area" /></el-form-item>
-                    <el-form-item label="学历/学位"><el-input v-model="item.studyType" /></el-form-item>
-                    <el-form-item label="时间"><el-input v-model="item.startDate" placeholder="YYYY-MM" /></el-form-item>
-                  </el-form>
-                  <el-button link type="danger" @click="removeItem('education', index)">删除教育经历</el-button>
-                </article>
-              </section>
-
-              <section class="form-section">
-                <div class="section-heading"><div><span>05</span><h2>专业技能</h2></div><el-button :icon="Plus" @click="addItem('skills')">添加</el-button></div>
-                <article v-for="(item, index) in content.skills" :key="item['x-ifaceoff']?.id" class="entry-card compact">
-                  <el-form label-position="top" class="form-grid">
-                    <el-form-item label="技能分类"><el-input v-model="item.name" placeholder="例如：后端开发" /></el-form-item>
-                    <el-form-item label="技能关键词（逗号分隔）"><el-input :model-value="(item.keywords || []).join(', ')" @update:model-value="item.keywords = String($event).split(',').map(v => v.trim()).filter(Boolean)" /></el-form-item>
-                  </el-form>
-                  <el-button link type="danger" @click="removeItem('skills', index)">删除技能</el-button>
-                </article>
-              </section>
-            </div>
+    <div v-if="content && design" class="studio-grid">
+      <main class="studio-main">
+        <el-tabs v-model="activeTab" class="studio-tabs">
+          <el-tab-pane label="内容编辑" name="content">
+            <section class="basics-editor"><header><div><h2>基本信息</h2><p>敏感字段默认不会出现在公开分享中。</p></div></header><div class="basics-grid"><div class="avatar-field"><el-avatar :size="88" :src="avatarUrl">{{ basics.name?.slice(0, 1) || '简' }}</el-avatar><div><label class="upload-button"><input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadAvatar" />{{ avatarUploading ? '上传中…' : '上传头像' }}</label><button v-if="avatarUrl" type="button" @click="removeAvatar">移除</button></div></div><el-form-item label="姓名"><el-input v-model="basics.name" /></el-form-item><el-form-item label="目标职位"><el-input v-model="basics.label" /></el-form-item><el-form-item label="邮箱"><el-input v-model="basics.email" /></el-form-item><el-form-item label="电话"><el-input v-model="basics.phone" /></el-form-item><el-form-item label="个人链接"><el-input v-model="basics.url" /></el-form-item><el-form-item label="城市"><el-input v-model="basics.location.city" /></el-form-item><el-form-item class="basics-grid__wide" label="职业摘要"><el-input v-model="basics.summary" type="textarea" :rows="4" placeholder="用 2–4 句说明经验范围、核心能力和目标岗位；不要编造指标。" /></el-form-item></div></section>
+            <section class="module-organizer"><div><h2>栏目编排</h2><p>拖拽改变导出顺序；隐藏不会删除内容。</p></div><draggable v-model="orderedModuleKeys" class="module-strip" :item-key="(key: string) => key" handle=".module-chip__drag" :animation="180"><template #item="{ element: key }"><div class="module-chip" :class="{ 'module-chip--hidden': hiddenSections.has(key) }"><button class="module-chip__drag" type="button" aria-label="拖动栏目排序"><el-icon><Rank /></el-icon></button><span>{{ sectionLabels[key] || key }}</span><el-switch :model-value="!hiddenSections.has(key)" :disabled="key === 'basics'" size="small" @change="toggleSection(key)" /></div></template></draggable></section>
+            <div class="section-stack"><ResumeSectionEditor v-for="definition in orderedSectionDefinitions" :key="definition.key" :section-key="definition.key" :title="definition.title" :items="content[definition.key] as Array<Record<string, any>>" :fields="definition.fields" :hidden="hiddenSections.has(definition.key)" @update:items="items => updateSectionItems(definition.key, items)" @toggle-hidden="toggleSection(definition.key)" @add="addItem(definition)" /></div>
           </el-tab-pane>
 
-          <el-tab-pane label="设计" name="design">
-            <div class="pane">
-              <div class="template-grid">
-                <button v-for="template in templates" :key="template.key" :class="{ active: design.template_key === template.key }" @click="design.template_key = template.key">
-                  <strong>{{ template.name[design.language] || template.name['zh-CN'] }}</strong>
-                  <span>{{ template.description }}</span>
-                </button>
-              </div>
-              <el-form label-position="top" class="design-form">
-                <el-form-item label="语言"><el-segmented v-model="design.language" :options="[{ label: '中文', value: 'zh-CN' }, { label: 'English', value: 'en-US' }]" /></el-form-item>
-                <el-form-item label="页面"><el-segmented v-model="design.page_size" :options="['A4', 'Letter']" /></el-form-item>
-                <el-form-item label="字体"><el-select v-model="design.font"><el-option v-for="font in ['Noto Sans CJK SC','Noto Serif CJK SC','Source Sans 3','Inter']" :key="font" :value="font" /></el-select></el-form-item>
-                <el-form-item label="紧凑度"><el-segmented v-model="design.density" :options="[{ label: '紧凑', value: 'compact' }, { label: '均衡', value: 'balanced' }, { label: '舒展', value: 'comfortable' }]" /></el-form-item>
-                <el-form-item label="强调色"><el-color-picker v-model="design.color" /></el-form-item>
-                <el-form-item label="头像">
-                  <div class="avatar-control">
-                    <img v-if="avatarUrl" :src="avatarUrl" alt="简历头像" />
-                    <div class="avatar-actions">
-                      <el-switch
-                        v-model="design.show_avatar"
-                        :disabled="!avatarUrl"
-                        active-text="显示"
-                        inactive-text="隐藏"
-                      />
-                      <label class="avatar-upload" :class="{ disabled: avatarUploading }">
-                        {{ avatarUploading ? '处理中…' : (avatarUrl ? '更换头像' : '上传头像') }}
-                        <input type="file" accept="image/jpeg,image/png,image/webp" :disabled="avatarUploading" @change="uploadAvatar" />
-                      </label>
-                      <el-button v-if="avatarUrl" link type="danger" :disabled="avatarUploading" @click="removeAvatar">移除</el-button>
-                    </div>
-                  </div>
-                </el-form-item>
-              </el-form>
-              <el-alert title="Studio 仅开放安全参数，不接受任意 CSS、自由画布或用户 Typst。" type="info" :closable="false" />
-            </div>
-          </el-tab-pane>
+          <el-tab-pane label="模板与排版" name="design"><section class="design-panel"><header class="panel-heading"><div><h2>六套精品母版</h2><p>全部复用同一份结构化内容，切换不会产生第二套数据。</p></div><el-button text type="primary" @click="router.push({ path: '/dashboard/resume-templates', query: { resume: resumeId } })">模板中心</el-button></header><div class="template-grid"><button v-for="template in templates" :key="template.key" type="button" class="template-card" :class="{ 'template-card--active': design.template_key === template.key }" @click="chooseTemplate(template)"><img :src="template.thumbnail" :alt="`${template.name['zh-CN']} 模板缩略图`" /><span><strong>{{ template.name['zh-CN'] }}</strong><small>{{ template.description }}</small></span><em v-if="design.template_key === template.key">使用中</em><div><el-tag v-for="tag in template.use_tags" :key="tag" size="small" effect="plain">{{ tag }}</el-tag></div></button></div><div class="design-controls"><el-form-item label="页面"><el-select v-model="design.page_size"><el-option label="A4" value="A4" /><el-option label="Letter" value="Letter" /></el-select></el-form-item><el-form-item label="语言"><el-select v-model="design.language"><el-option label="中文" value="zh-CN" /><el-option label="English" value="en-US" /></el-select></el-form-item><el-form-item label="字体"><el-select v-model="design.font"><el-option v-for="font in ['Noto Sans CJK SC','Noto Serif CJK SC','Source Sans 3','Inter']" :key="font" :label="font" :value="font" /></el-select></el-form-item><el-form-item label="密度"><el-segmented v-model="design.density" :options="[{label:'紧凑',value:'compact'},{label:'均衡',value:'balanced'},{label:'舒展',value:'comfortable'}]" /></el-form-item><el-form-item label="日期"><el-select v-model="design.date_format"><el-option v-for="value in ['YYYY-MM','YYYY.MM','MMM YYYY','YYYY']" :key="value" :value="value" /></el-select></el-form-item><el-form-item label="强调色"><el-color-picker v-model="design.color" /></el-form-item><el-form-item label="头像"><el-switch v-model="design.show_avatar" active-text="显示" inactive-text="隐藏" /></el-form-item></div></section></el-tab-pane>
 
-          <el-tab-pane label="质量" name="quality">
-            <div class="pane quality-pane">
-              <div v-if="latestQuality" class="score-card">
-                <div><strong>{{ latestQuality.score }}</strong><span>综合质量分</span></div>
-                <p>Schema、ATS、内容一致性与证据约束的统一结果。</p>
-              </div>
-              <el-empty v-else description="创建版本后运行 ATS 检查" />
-              <div v-if="latestQuality?.report_json?.consensus?.length" class="issue-list">
-                <article v-for="issue in latestQuality.report_json.consensus" :key="`${issue.code}-${issue.pointer}`" :data-priority="issue.priority">
-                  <div><strong>{{ issue.message }}</strong><code>{{ issue.pointer || '/' }}</code></div>
-                  <el-tag size="small" effect="plain">{{ issue.priority }}</el-tag>
-                </article>
-              </div>
-            </div>
-          </el-tab-pane>
+          <el-tab-pane label="AI 简历助手" name="ai"><section class="ai-workbench"><header class="panel-heading"><div><h2>先建议，后采纳</h2><p>AI 只生成 JSON Patch；未确认事实与数字不会直接写入简历。</p></div><el-icon><MagicStick /></el-icon></header><div class="ai-form"><el-form-item label="任务"><el-select v-model="intelligenceForm.task_key"><el-option label="从职业事实生成" value="resume.from_career_facts" /><el-option label="栏目改写 / 润色 / 翻译" value="resume.rewrite_section" /><el-option label="成果追问教练" value="resume.achievement_coach" /><el-option label="岗位定制简历" value="resume.jd_tailor" /></el-select></el-form-item><el-form-item v-if="intelligenceForm.task_key === 'resume.jd_tailor'" label="目标岗位"><el-select v-model="intelligenceForm.job_target_id" filterable placeholder="选择已保存岗位"><el-option v-for="target in jobTargets" :key="target.id" :label="`${target.company_name} · ${target.position_name}`" :value="target.id" /></el-select></el-form-item><el-form-item label="你的要求"><el-input v-model="intelligenceForm.instruction" type="textarea" :rows="5" placeholder="例如：翻译为自然英文；或突出可验证的系统可靠性成果。" /></el-form-item><el-button type="primary" :loading="intelligenceLoading" @click="runIntelligence">生成可审阅建议</el-button></div><el-alert v-if="intelligenceResult?.missing_evidence?.length" title="仍需补充事实证据" type="warning" :closable="false"><ul><li v-for="item in intelligenceResult.missing_evidence" :key="String(item)">{{ item }}</li></ul></el-alert><div class="suggestion-list"><article v-for="suggestion in suggestions" :key="suggestion.id" class="suggestion-item"><div><el-tag :type="suggestion.task_key === 'resume.jd_tailor' ? 'warning' : 'info'" effect="plain">{{ suggestion.task_key === 'resume.jd_tailor' ? '岗位定制' : 'AI 建议' }}</el-tag><h3>{{ suggestion.summary }}</h3><p>{{ suggestion.rationale || '请展开 Diff 核对每一处变化。' }}</p><small>{{ suggestion.patch.length }} 条 Patch · {{ formatDateTime(suggestion.created_at) }}</small></div><div v-if="suggestion.status === 'pending'"><el-button type="primary" @click="acceptSuggestion(suggestion)">审阅后采纳</el-button><el-button @click="rejectSuggestion(suggestion)">拒绝</el-button></div><el-tag v-else :type="suggestion.status === 'accepted' ? 'success' : 'info'">{{ suggestion.status === 'accepted' ? '已采纳' : '已拒绝' }}</el-tag></article></div></section></el-tab-pane>
 
-          <el-tab-pane label="AI 建议" name="intelligence">
-            <div class="pane intelligence-pane">
-              <el-alert title="AI 只生成 JSON Patch 候选建议；没有已确认 CareerFact 的经历、技能与数字不会被写入。" type="info" :closable="false" />
-              <el-form label-position="top" class="intelligence-form">
-                <el-form-item label="任务">
-                  <el-select v-model="intelligenceForm.task_key">
-                    <el-option label="基于职业事实生成" value="resume.from_career_facts" />
-                    <el-option label="改写指定栏目" value="resume.rewrite_section" />
-                    <el-option label="成果追问教练" value="resume.achievement_coach" />
-                    <el-option label="多视角质量复核" value="resume.quality_review" />
-                    <el-option label="岗位定制建议" value="resume.jd_tailor" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item v-if="intelligenceForm.task_key === 'resume.jd_tailor'" label="目标岗位 ID">
-                  <el-input-number v-model="intelligenceForm.job_target_id" :min="1" />
-                </el-form-item>
-                <el-form-item label="你的目标（作为不可信数据隔离）">
-                  <el-input v-model="intelligenceForm.instruction" type="textarea" :rows="4" maxlength="4000" show-word-limit placeholder="例如：压缩工作经历，突出分布式系统经验" />
-                </el-form-item>
-                <el-button type="primary" :loading="intelligenceLoading" @click="runIntelligence">生成候选建议</el-button>
-              </el-form>
-              <div v-if="intelligenceResult?.metadata?.questions?.length" class="coach-questions">
-                <h3>需要你补充确认</h3>
-                <ol><li v-for="question in intelligenceResult.metadata.questions" :key="question">{{ question }}</li></ol>
-              </div>
-              <article v-for="suggestion in suggestions" :key="suggestion.id" class="suggestion-card">
-                <div>
-                  <div><strong>{{ suggestion.summary }}</strong><el-tag size="small">{{ suggestion.status }}</el-tag></div>
-                  <p>{{ suggestion.rationale || '建议已通过输出契约与证据约束校验。' }}</p>
-                  <small>Patch {{ suggestion.patch.length }} 条 · 事实证据 {{ suggestion.evidence_links.length }} 条 · 基于版本 #{{ suggestion.base_version }}</small>
-                </div>
-                <div v-if="suggestion.status === 'pending'">
-                  <el-button @click="rejectSuggestion(suggestion)">拒绝</el-button>
-                  <el-button type="primary" @click="acceptSuggestion(suggestion)">采纳并创建版本</el-button>
-                </div>
-              </article>
-            </div>
-          </el-tab-pane>
+          <el-tab-pane label="质量复核" name="review"><section class="quality-panel"><header class="quality-summary"><div><h2>确定性 ATS 检查</h2><p>Schema、阅读顺序、日期、证据与重复内容由规则引擎计算。</p></div><strong>{{ latestQuality?.score ?? '—' }}<small>/100</small></strong></header><div v-if="latestQuality" class="quality-columns"><div><h3>规则问题</h3><ul class="issue-list"><li v-for="issue in deterministicIssues" :key="`${issue.code}-${issue.pointer}`"><el-tag :type="issue.priority === 'high' ? 'danger' : issue.priority === 'medium' ? 'warning' : 'info'" size="small">{{ issue.priority }}</el-tag><span>{{ issue.message }}</span><code>{{ issue.pointer }}</code></li></ul><el-empty v-if="!deterministicIssues.length" description="未发现确定性 ATS 问题" /></div><div><h3>多视角 AI Review</h3><el-alert v-if="latestQuality.report_json?.ai_review_status !== 'completed'" title="AI 评审当前不可用；左侧 ATS 结果仍有效。" type="warning" :closable="false" show-icon /><div v-for="(reviewer, key) in aiReviewers" :key="key" class="reviewer-block"><h4>{{ reviewer.label }}</h4><p v-for="issue in reviewer.issues" :key="issue.message">{{ issue.message }}</p></div></div></div><el-empty v-else description="尚未评审"><el-button type="primary" :loading="qualityLoading" @click="runQualityReview">开始分层评审</el-button></el-empty></section></el-tab-pane>
 
-          <el-tab-pane label="版本" name="versions">
-            <div class="pane">
-              <el-timeline>
-                <el-timeline-item v-for="version in versions" :key="version.id" :timestamp="formatDateTime(version.created_at)" placement="top">
-                  <article class="version-card">
-                    <div><strong>v{{ version.version_number }}</strong><el-tag v-if="resume?.current_version?.id === version.id" size="small" type="success">当前</el-tag></div>
-                    <p>{{ version.change_summary || '未填写变更说明' }}</p>
-                    <small>{{ version.source }} · {{ version.content_hash.slice(0, 12) }} · 证据 {{ version.evidence_links.length }}</small>
-                    <el-button link @click="showDiff(version)">查看 Diff</el-button>
-                  </article>
-                </el-timeline-item>
-              </el-timeline>
-            </div>
-          </el-tab-pane>
-
-          <el-tab-pane label="分享" name="share">
-            <div class="pane">
-              <el-alert title="默认隐藏邮箱、手机号、精确地址和头像。只有你显式开启的字段才会公开。" type="warning" :closable="false" />
-              <el-button type="primary" :icon="Share" class="share-button" @click="shareVisible = true">创建私密分享</el-button>
-              <el-table :data="shares">
-                <el-table-column prop="token_hint" label="令牌尾号" />
-                <el-table-column prop="expires_at" label="过期时间"><template #default="{ row }">{{ row.expires_at ? formatDateTime(row.expires_at) : '永不过期' }}</template></el-table-column>
-                <el-table-column prop="download_count" label="下载" width="90" />
-                <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.is_revoked ? 'danger' : 'success'">{{ row.is_revoked ? '已撤销' : '有效' }}</el-tag></template></el-table-column>
-                <el-table-column label="操作" width="90"><template #default="{ row }"><el-button v-if="!row.is_revoked" link type="danger" @click="revokeShare(row)">撤销</el-button></template></el-table-column>
-              </el-table>
-            </div>
-          </el-tab-pane>
+          <el-tab-pane label="版本与岗位变体" name="versions"><section class="history-panel"><h2>不可变版本</h2><el-timeline><el-timeline-item v-for="version in versions" :key="version.id" :timestamp="formatDateTime(version.created_at)" placement="top"><div class="history-row"><span><strong>v{{ version.version_number }}</strong> · {{ version.change_summary || version.source }}</span><el-button text type="primary" @click="showDiff(version)">查看 Diff</el-button></div></el-timeline-item></el-timeline><h2>岗位定制变体</h2><div class="variant-list"><article v-for="variant in variants" :key="variant.id"><div><strong>{{ variant.company_name }} · {{ variant.position_name }}</strong><p>从主版本 v{{ variant.source_version_number }} 派生为独立版本 v{{ variant.version_number }}，不会覆盖主简历。</p></div><el-tag type="warning" effect="plain">岗位变体</el-tag></article><el-empty v-if="!variants.length" description="在 AI 助手中选择目标岗位即可创建独立变体" /></div></section></el-tab-pane>
+          <el-tab-pane label="分享管理" name="shares"><el-table :data="shares"><el-table-column prop="token_hint" label="Token 提示" /><el-table-column label="状态"><template #default="{ row }"><el-tag :type="row.is_revoked ? 'info' : 'success'">{{ row.is_revoked ? '已撤销' : '可访问' }}</el-tag></template></el-table-column><el-table-column prop="expires_at" label="过期时间"><template #default="{ row }">{{ row.expires_at ? formatDateTime(row.expires_at) : '永不过期' }}</template></el-table-column><el-table-column label="操作"><template #default="{ row }"><el-button v-if="!row.is_revoked" text type="danger" @click="revokeShare(row)">撤销</el-button></template></el-table-column></el-table></el-tab-pane>
         </el-tabs>
-      </section>
+      </main>
 
-      <aside class="preview-panel">
-        <header><div><strong>服务端权威预览</strong><small>{{ design.page_size }} · {{ design.language }}</small></div><el-button circle :icon="Refresh" :loading="previewLoading" @click="generatePreview" /></header>
-        <div class="preview-stage">
-          <img v-if="previewArtifact?.file_url" :src="previewArtifact.file_url" alt="简历服务端预览" />
-          <div v-else class="preview-placeholder">
-            <span>PDF 与预览使用同一个 RenderCV/Typst 渲染源</span>
-            <el-button type="primary" plain :loading="previewLoading" @click="generatePreview">生成预览</el-button>
-          </div>
-        </div>
-        <footer>RenderCV {{ previewArtifact?.renderer_version || '2.8' }} · 可选择文本 · 字体嵌入</footer>
-      </aside>
+      <aside class="preview-panel"><header><div><strong>服务端权威预览</strong><small>{{ design.page_size }} · {{ design.language }} · {{ templates.find(item => item.key === design.template_key)?.name?.['zh-CN'] }}</small></div><el-button circle :icon="Refresh" :loading="previewLoading" aria-label="重新生成预览" @click="generatePreview(false)" /></header><div class="preview-stage" :aria-busy="previewLoading"><img v-if="previewArtifact?.file_url" :src="previewArtifact.file_url" alt="简历服务端权威预览" /><div v-else class="preview-placeholder"><el-icon :size="42"><View /></el-icon><strong>{{ previewStateText }}</strong><p>草稿保存后自动刷新，无需手动生成。</p></div><div v-if="previewLoading" class="preview-progress"><span></span>RenderCV 正在根据最新 ETag 排版</div></div><footer>RenderCV {{ previewArtifact?.renderer_version || '2.8' }} · 预览与 PDF 同源 · 旧 ETag 结果自动丢弃</footer></aside>
     </div>
 
-    <el-drawer v-model="diffVisible" title="版本 Diff" size="min(680px, 92vw)">
-      <el-empty v-if="!diffData?.changes?.length" description="初始版本没有可比较的变化" />
-      <div v-else class="diff-list">
-        <article v-for="(change, index) in diffData.changes" :key="index" :data-op="change.op">
-          <div><el-tag size="small">{{ change.op }}</el-tag><code>{{ change.path }}</code></div>
-          <pre>{{ JSON.stringify(change.after ?? change.before, null, 2) }}</pre>
-        </article>
-      </div>
-    </el-drawer>
-
-    <el-dialog v-model="shareVisible" title="创建私密分享" width="min(560px, 92vw)">
-      <el-form label-position="top">
-        <el-form-item label="访问密码（可选）"><el-input v-model="shareForm.password" type="password" show-password /></el-form-item>
-        <el-form-item label="过期时间（可选）"><el-date-picker v-model="shareForm.expires_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
-        <el-form-item label="公开字段">
-          <el-checkbox v-model="shareForm.field_policy.email">邮箱</el-checkbox>
-          <el-checkbox v-model="shareForm.field_policy.phone">手机号</el-checkbox>
-          <el-checkbox v-model="shareForm.field_policy.address">精确地址</el-checkbox>
-          <el-checkbox v-model="shareForm.field_policy.image">头像</el-checkbox>
-        </el-form-item>
-        <el-form-item><el-switch v-model="shareForm.allow_download" active-text="允许下载" /></el-form-item>
-        <el-form-item v-if="shareForm.allow_download" label="最多下载次数"><el-input-number v-model="shareForm.download_limit" :min="1" /></el-form-item>
-      </el-form>
-      <el-alert v-if="shareResult?.token" title="令牌只显示一次；服务端仅保存 SHA-256 哈希。" type="success" :closable="false">
-        <template #default><el-button type="primary" @click="copyShare">复制分享链接</el-button></template>
-      </el-alert>
-      <template #footer><el-button @click="shareVisible = false">关闭</el-button><el-button type="primary" @click="createShare">创建链接</el-button></template>
-    </el-dialog>
-  </main>
+    <el-dialog v-model="diffVisible" title="版本差异" width="760px"><pre class="diff-view">{{ JSON.stringify(diffData, null, 2) }}</pre></el-dialog>
+    <el-dialog v-model="shareVisible" title="创建私密分享" width="560px"><el-form label-position="top"><el-form-item label="访问密码（可选）"><el-input v-model="shareForm.password" type="password" show-password /></el-form-item><el-form-item label="过期时间（可选）"><el-date-picker v-model="shareForm.expires_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item><el-form-item label="允许展示字段"><el-checkbox v-model="shareForm.field_policy.email">邮箱</el-checkbox><el-checkbox v-model="shareForm.field_policy.phone">电话</el-checkbox><el-checkbox v-model="shareForm.field_policy.address">精确地址</el-checkbox><el-checkbox v-model="shareForm.field_policy.image">头像</el-checkbox></el-form-item><el-form-item label="下载"><el-switch v-model="shareForm.allow_download" active-text="允许 PDF 下载" /></el-form-item><el-form-item v-if="shareForm.allow_download" label="下载次数上限"><el-input-number v-model="shareForm.download_limit" :min="1" /></el-form-item></el-form><el-alert v-if="shareResult?.token" :closable="false" type="success" show-icon><template #title>完整链接仅展示一次</template><p class="share-token">{{ `${window.location.origin}/resume-shares/${shareResult.token}` }}</p><el-button size="small" @click="copyShare">复制链接</el-button></el-alert><template #footer><el-button @click="shareVisible = false">关闭</el-button><el-button type="primary" @click="createShare">创建分享</el-button></template></el-dialog>
+  </div>
 </template>
 
 <style scoped>
-.studio { min-height: calc(100vh - 60px); background: #eef1f4; color: #18212f; }
-.studio-header { position: sticky; z-index: 10; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 24px; border-bottom: 1px solid #dce1e7; background: rgba(255,255,255,.94); backdrop-filter: blur(14px); }
-.title-row, .header-actions { display: flex; align-items: center; gap: 12px; }
-.title-row h1 { display: inline; margin: 0 12px 0 0; font-size: 20px; }
-.save-state { color: #667085; font-size: 12px; }
-.save-state.saved { color: #047857; }
-.save-state.conflict, .save-state.error { color: #b42318; }
-.studio-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 42vw); min-height: calc(100vh - 120px); }
-.editor-panel { min-width: 0; padding: 22px; }
-.editor-panel :deep(.el-tabs__header) { margin-bottom: 18px; padding: 0 12px; border: 1px solid #dfe4ea; border-radius: 14px; background: #fff; }
-.pane { display: grid; gap: 18px; }
-.form-section { padding: 22px; border: 1px solid #dfe4ea; border-radius: 16px; background: #fff; }
-.section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-.section-heading > div { display: flex; align-items: center; gap: 10px; }
-.section-heading span { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; color: #0f766e; background: #ccfbf1; font-size: 12px; font-weight: 800; }
-.section-heading h2 { margin: 0; font-size: 18px; }
-.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
-.form-grid .wide { grid-column: 1 / -1; }
-.entry-card { position: relative; margin-top: 14px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 14px; background: #f8fafc; }
-.entry-card.compact { padding-bottom: 10px; }
-.template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.template-grid button { min-height: 112px; padding: 16px; border: 1px solid #d7dde5; border-radius: 14px; color: #344054; background: #fff; text-align: left; cursor: pointer; }
-.template-grid button.active { border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15,118,110,.12); }
-.template-grid strong, .template-grid span { display: block; }
-.template-grid span { margin-top: 8px; color: #667085; line-height: 1.5; }
-.design-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; padding: 22px; border-radius: 16px; background: #fff; }
-.avatar-control { display: flex; align-items: center; gap: 14px; }
-.avatar-control img { width: 64px; height: 64px; border: 1px solid #d9dfe6; border-radius: 50%; object-fit: cover; }
-.avatar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.avatar-upload { padding: 6px 10px; border: 1px solid #cfd6df; border-radius: 7px; color: #344054; cursor: pointer; }
-.avatar-upload.disabled { opacity: .55; cursor: wait; }
-.avatar-upload input { display: none; }
-.preview-panel { position: sticky; top: 72px; height: calc(100vh - 72px); padding: 22px; border-left: 1px solid #d9dfe6; background: #dfe4e9; }
-.preview-panel > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.preview-panel strong, .preview-panel small { display: block; }
-.preview-panel small { margin-top: 4px; color: #667085; }
-.preview-stage { display: grid; height: calc(100% - 84px); place-items: start center; overflow: auto; border-radius: 10px; background: #cbd2d9; box-shadow: inset 0 1px 5px rgba(15,23,42,.12); }
-.preview-stage img { display: block; width: min(100%, 760px); min-height: 100%; background: #fff; box-shadow: 0 10px 30px rgba(15,23,42,.18); }
-.preview-placeholder { display: grid; width: min(82%, 520px); min-height: 68vh; place-content: center; gap: 18px; padding: 30px; color: #667085; background: #fff; text-align: center; }
-.preview-panel > footer { margin-top: 10px; color: #667085; font-size: 12px; text-align: center; }
-.score-card { display: flex; align-items: center; gap: 24px; padding: 24px; border-radius: 16px; color: #fff; background: #0f766e; }
-.score-card strong, .score-card span { display: block; }
-.score-card strong { font-size: 46px; }
-.score-card p { margin: 0; }
-.issue-list { display: grid; gap: 10px; }
-.issue-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border-left: 4px solid #f59e0b; border-radius: 10px; background: #fff; }
-.issue-list article[data-priority="high"] { border-color: #dc2626; }
-.issue-list code, .issue-list strong { display: block; }
-.issue-list code { margin-top: 5px; color: #667085; }
-.intelligence-form { padding: 20px; border: 1px solid #dfe4ea; border-radius: 14px; background: #fff; }
-.coach-questions { padding: 18px; border-radius: 14px; background: #fffbeb; }
-.coach-questions h3 { margin-top: 0; }
-.suggestion-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px; border: 1px solid #dfe4ea; border-radius: 14px; background: #fff; }
-.suggestion-card > div > div { display: flex; align-items: center; gap: 8px; }
-.suggestion-card p { margin: 8px 0; color: #475467; }
-.suggestion-card small { color: #667085; }
-.version-card { padding: 14px; border: 1px solid #e1e6ec; border-radius: 12px; background: #fff; }
-.version-card > div { display: flex; gap: 8px; }
-.version-card p { margin: 8px 0; }
-.version-card small { display: block; color: #667085; }
-.share-button { justify-self: start; }
-.diff-list { display: grid; gap: 12px; }
-.diff-list article { padding: 14px; border: 1px solid #e1e6ec; border-left: 4px solid #64748b; border-radius: 10px; }
-.diff-list article[data-op="add"] { border-left-color: #059669; }
-.diff-list article[data-op="remove"] { border-left-color: #dc2626; }
-.diff-list code { margin-left: 8px; }
-.diff-list pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
-@media (max-width: 1040px) {
-  .studio-header { align-items: flex-start; flex-direction: column; }
-  .header-actions { width: 100%; overflow-x: auto; }
-  .studio-body { grid-template-columns: 1fr; }
-  .preview-panel { position: relative; top: 0; height: 780px; border-top: 1px solid #d9dfe6; border-left: 0; }
-}
-@media (max-width: 640px) {
-  .studio-header, .editor-panel { padding: 12px; }
-  .form-grid, .design-form, .template-grid { grid-template-columns: 1fr; }
-  .form-grid .wide { grid-column: auto; }
-  .header-actions :deep(.el-button) { flex-shrink: 0; }
-}
+.resume-studio{min-height:100%;color:#172033;background:#eef1f4}.studio-toolbar{position:sticky;z-index:20;top:0;display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:72px;padding:12px 20px;border-bottom:1px solid #d7dde5;background:#fff}.studio-toolbar__identity,.studio-toolbar__actions{display:flex;align-items:center}.studio-toolbar__identity{gap:10px}.studio-toolbar__identity h1{margin:0;font-size:20px;letter-spacing:-.02em}.studio-toolbar__identity p{margin:4px 0 0;color:#59677b;font-size:12px}.studio-toolbar__actions{flex-wrap:wrap;justify-content:flex-end;gap:8px}.save-state{display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:#23955d}.save-state--saving,.save-state--pending{background:#c77d12}.save-state--conflict,.save-state--error{background:#c33d45}.studio-grid{display:grid;grid-template-columns:minmax(620px,1fr) minmax(390px,44vw);min-height:calc(100vh - 132px)}.studio-main{min-width:0;padding:22px clamp(18px,3vw,42px) 80px}.studio-tabs :deep(.el-tabs__header){margin-bottom:20px}.basics-editor,.module-organizer,.design-panel,.ai-workbench,.quality-panel,.history-panel{border:1px solid #d8dee6;border-radius:14px;background:#fff}.basics-editor,.design-panel,.ai-workbench,.quality-panel,.history-panel{padding:22px}.basics-editor h2,.module-organizer h2,.panel-heading h2,.quality-summary h2,.history-panel h2{margin:0 0 6px;font-size:19px;letter-spacing:-.02em}.basics-editor p,.module-organizer p,.panel-heading p,.quality-summary p{margin:0;color:#637085;font-size:13px}.basics-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:20px}.basics-grid__wide{grid-column:1/-1}.avatar-field{grid-column:1/-1;display:flex;align-items:center;gap:14px;margin-bottom:12px}.avatar-field>div{display:flex;align-items:center;gap:12px}.avatar-field input{position:absolute;width:1px;height:1px;opacity:0}.upload-button,.avatar-field button{border:0;color:#245fbd;background:transparent;cursor:pointer;font-size:13px}.upload-button{padding:8px 12px;border:1px solid #b9cae4;border-radius:8px}.module-organizer{display:grid;grid-template-columns:minmax(180px,240px) 1fr;gap:24px;margin:16px 0;padding:18px}.module-strip{display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}.module-chip{display:flex;align-items:center;gap:7px;min-height:34px;padding:4px 8px;border:1px solid #cfd7e1;border-radius:9px;background:#f9fafb}.module-chip--hidden{opacity:.58;background:#eceff2;text-decoration:line-through}.module-chip__drag{display:grid;padding:2px;border:0;color:#667085;background:transparent;cursor:grab;place-items:center}.section-stack,.suggestion-list,.variant-list{display:grid;gap:14px}.panel-heading,.quality-summary,.history-row,.variant-list article,.suggestion-item{display:flex;align-items:center;justify-content:space-between;gap:20px}.template-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:20px}.template-card{position:relative;overflow:hidden;padding:0 0 14px;border:1px solid #d5dce5;border-radius:12px;color:inherit;background:#fff;cursor:pointer;text-align:left;transition:border-color .18s ease-out,transform .18s ease-out,box-shadow .18s ease-out}.template-card:hover{transform:translateY(-2px);border-color:#8aaee5;box-shadow:0 8px 20px rgba(35,56,91,.11)}.template-card--active{border-color:#2f6dcc;box-shadow:0 0 0 2px rgba(47,109,204,.12)}.template-card img{display:block;width:100%;aspect-ratio:4/3;border-bottom:1px solid #e1e6ec;object-fit:cover;background:#f3f5f7}.template-card>span{display:block;padding:12px 12px 7px}.template-card strong,.template-card small{display:block}.template-card small{min-height:34px;margin-top:5px;color:#637085;line-height:1.45}.template-card em{position:absolute;top:8px;right:8px;padding:4px 7px;border-radius:6px;color:#fff;background:#245fbd;font-size:11px;font-style:normal}.template-card>div{display:flex;flex-wrap:wrap;gap:5px;padding:0 12px}.design-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px;margin-top:24px;padding-top:20px;border-top:1px solid #e2e6ec}.ai-form{max-width:760px;margin-top:24px}.suggestion-list{margin-top:22px}.suggestion-item,.variant-list article{padding:16px;border:1px solid #dce2e9;border-radius:12px}.suggestion-item h3{margin:8px 0 4px;font-size:15px}.suggestion-item p,.variant-list p{margin:4px 0;color:#59677b}.suggestion-item small{color:#7a8699}.quality-summary strong{color:#205eaf;font-size:44px;letter-spacing:-.04em}.quality-summary small{font-size:15px}.quality-columns{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:24px}.issue-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.issue-list li{display:grid;grid-template-columns:auto 1fr;gap:6px 9px;padding:10px;background:#f7f8fa}.issue-list code{grid-column:2;color:#778398;font-size:11px}.reviewer-block{padding:13px 0;border-bottom:1px solid #e1e5eb}.reviewer-block h4{margin:0 0 8px}.reviewer-block p{margin:5px 0;color:#4f5d72}.diff-view{max-height:60vh;overflow:auto;padding:16px;color:#dce8ff;border-radius:10px;background:#172033;white-space:pre-wrap}.share-token{overflow-wrap:anywhere}.preview-panel{position:sticky;top:72px;height:calc(100vh - 132px);padding:20px;border-left:1px solid #d2d8df;background:#dfe3e7}.preview-panel>header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.preview-panel strong,.preview-panel small{display:block}.preview-panel small{margin-top:4px;color:#59677b}.preview-stage{position:relative;display:grid;height:calc(100% - 75px);place-items:start center;overflow:auto;border-radius:10px;background:#c8cfd6;box-shadow:inset 0 2px 6px rgba(23,32,51,.14)}.preview-stage img{display:block;width:min(100%,760px);background:#fff;box-shadow:0 12px 28px rgba(23,32,51,.2)}.preview-placeholder{display:grid;width:min(82%,520px);min-height:68vh;place-content:center;gap:8px;padding:30px;color:#59677b;background:#fff;text-align:center}.preview-placeholder p{margin:0}.preview-progress{position:absolute;top:12px;left:50%;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;color:#fff;background:rgba(23,32,51,.9);transform:translateX(-50%);font-size:12px}.preview-progress span{width:7px;height:7px;border-radius:50%;background:#75a9ff;animation:pulse 1s ease-in-out infinite}.preview-panel>footer{margin-top:8px;color:#59677b;font-size:11px;text-align:center}@keyframes pulse{50%{transform:scale(1.6);opacity:.45}}@media(max-width:1200px){.studio-toolbar{align-items:flex-start;flex-direction:column}.studio-grid{grid-template-columns:1fr}.preview-panel{position:relative;top:0;height:820px;border-top:1px solid #d2d8df;border-left:0}}@media(max-width:760px){.studio-toolbar,.studio-main{padding-right:14px;padding-left:14px}.studio-toolbar__actions{justify-content:flex-start}.basics-grid,.template-grid,.design-controls,.quality-columns{grid-template-columns:1fr}.basics-grid__wide{grid-column:auto}.module-organizer{grid-template-columns:1fr}.preview-panel{height:680px;padding:12px}}
 </style>

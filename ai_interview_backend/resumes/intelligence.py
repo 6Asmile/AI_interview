@@ -235,6 +235,8 @@ def generate_resume_suggestion(*, version, task_key, instruction='', job_target_
             rationale=str(result.get('rationale') or ''),
             evidence_fact_ids=fact_ids,
             evidence_links=evidence_links,
+            task_key=task_key,
+            job_target=job_target,
             created_by=version.resume.user,
         )
     else:

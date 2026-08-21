@@ -79,6 +79,32 @@ def tts_client(*, response=None, error=None):
     return SimpleNamespace(audio=SimpleNamespace(speech=SimpleNamespace(create=create)))
 
 
+class FakeStreamingSpeechResponse:
+    def __init__(self, chunks, request_id='stream-tts-request'):
+        self.chunks = chunks
+        self._request_id = request_id
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def iter_bytes(self, chunk_size=4096):
+        del chunk_size
+        yield from self.chunks
+
+
+def streaming_tts_client(response):
+    create = MagicMock(return_value=response)
+    streaming = SimpleNamespace(create=create)
+    return SimpleNamespace(
+        audio=SimpleNamespace(
+            speech=SimpleNamespace(with_streaming_response=streaming),
+        ),
+    )
+
+
 def stream_chunk(value, request_id='provider-request'):
     return SimpleNamespace(
         id=request_id,
@@ -473,3 +499,33 @@ class GatewayExecutionLedgerTests(TestCase):
         self.assertEqual(attempt.metadata['output_bytes'], len(b'generated-audio'))
         self.assertNotIn(private_text, str(ledger.metadata))
         self.assertNotIn(private_text, str(attempt.metadata))
+
+    @patch('system.gateway_executor.concurrency_lease', available_capacity)
+    def test_tts_stream_yields_early_chunks_and_records_only_safe_metadata(self):
+        alias = ModelAlias.objects.create(
+            slug='speech.tts.stream-test',
+            name='TTS stream test',
+            model_type=AIModel.ModelType.TTS,
+        )
+        deployment = ModelDeployment.objects.create(
+            name='gateway-tts-stream-test',
+            provider='openai_compatible',
+            remote_model='tts-stream-model',
+            model_type=AIModel.ModelType.TTS,
+            base_url='https://tts.example/v1',
+        )
+        target = ExecutionTarget(alias, deployment, 'sk-tts', 20, 30)
+        client = streaming_tts_client(FakeStreamingSpeechResponse([b'first-', b'audio']))
+        executor = GatewayExecutor(circuit_breaker=FakeCircuitBreaker())
+        executor.targets = MagicMock(return_value=[target])
+        executor._client = MagicMock(return_value=client)
+        private_text = 'candidate private prompt'
+
+        chunks, metadata = executor.synthesize_speech_stream(alias.slug, private_text, response_format='pcm')
+        self.assertEqual(next(chunks), b'first-')
+        self.assertEqual(list(chunks), [b'audio'])
+        self.assertEqual(metadata['sample_rate'], 24000)
+        attempt = ModelAttempt.objects.get(request__alias=alias)
+        self.assertEqual(attempt.metadata['output_bytes'], len(b'first-audio'))
+        self.assertNotIn(private_text, str(attempt.metadata))
+        self.assertNotIn(private_text, str(attempt.request.metadata))

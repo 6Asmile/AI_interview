@@ -47,6 +47,7 @@ from .models import (
     InterviewReferenceAnswer,
     InterviewRubric,
     InterviewSession,
+    SpeechLatencyMetric,
     InterviewTemplate,
 )
 from .execution import create_answer_execution, durable_execution_snapshot, short_lock_timeout
@@ -76,7 +77,7 @@ from .ai_services import (
 from .agent import get_interview_agent_engine
 from .configuration import assemble_generation_context, resolve_agent_config, stable_hash
 from .agent_v4.events import publish_agent_event, read_agent_events
-from .speech_services import synthesize_question_tts
+from .speech_services import stream_question_tts, synthesize_question_tts
 from urllib.parse import quote
 
 def format_resume_to_text(resume: Resume) -> str:
@@ -610,6 +611,111 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             'artifact': serializer.data,
             'audio_url': serializer.data.get('file_url'),
         }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'], url_path=r'questions/(?P<question_id>\d+)/tts-stream')
+    def question_tts_stream(self, request, pk=None, question_id=None):
+        session = self.get_object()
+        try:
+            question = session.questions.get(id=question_id)
+        except InterviewQuestion.DoesNotExist:
+            return Response({'error': '问题不存在'}, status=status.HTTP_404_NOT_FOUND)
+        response_format = str(request.query_params.get('format') or 'pcm').lower()
+        result = stream_question_tts(
+            user=request.user,
+            text=question.question_text,
+            response_format=response_format,
+        )
+        if not result.ok or result.chunks is None:
+            return Response({
+                'status': 'failed',
+                'fallback': 'browser_tts',
+                'error': result.error or 'tts_stream_failed',
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        content_type = (
+            'audio/opus' if result.response_format == 'opus'
+            else f'audio/L16; rate={result.sample_rate}; channels=1'
+        )
+        response = StreamingHttpResponse(
+            result.chunks,
+            content_type=content_type,
+        )
+        response['Cache-Control'] = 'no-store'
+        response['X-Accel-Buffering'] = 'no'
+        response['X-Speech-Stream-Format'] = result.response_format
+        response['X-Speech-Sample-Rate'] = str(result.sample_rate)
+        return response
+
+    @action(detail=True, methods=['get', 'post'], url_path='speech-metrics')
+    def speech_metrics(self, request, pk=None):
+        session = self.get_object()
+        targets = {
+            SpeechLatencyMetric.MetricType.ASR_FIRST_PARTIAL: 500,
+            SpeechLatencyMetric.MetricType.ASR_FINAL: 1200,
+            SpeechLatencyMetric.MetricType.TTS_FIRST_AUDIO: 700,
+            SpeechLatencyMetric.MetricType.BARGE_IN_STOP: 200,
+            SpeechLatencyMetric.MetricType.TRANSCRIPT_DUPLICATE: 0,
+        }
+        if request.method == 'POST':
+            metric_type = str(request.data.get('metric_type') or '')
+            if metric_type not in targets:
+                return Response({'error': 'unsupported_metric_type'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                latency_ms = float(request.data.get('latency_ms', 0))
+            except (TypeError, ValueError):
+                return Response({'error': 'invalid_latency_ms'}, status=status.HTTP_400_BAD_REQUEST)
+            if latency_ms < 0 or latency_ms > 120_000:
+                return Response({'error': 'invalid_latency_ms'}, status=status.HTTP_400_BAD_REQUEST)
+            question = None
+            question_id = request.data.get('question_id')
+            if question_id:
+                try:
+                    question = session.questions.get(id=question_id)
+                except InterviewQuestion.DoesNotExist:
+                    return Response({'error': 'question_not_found'}, status=status.HTTP_404_NOT_FOUND)
+            metric = SpeechLatencyMetric.objects.create(
+                session=session,
+                question=question,
+                user=request.user,
+                metric_type=metric_type,
+                latency_ms=latency_ms,
+                language=str(request.data.get('language') or '')[:20],
+                network_profile=str(request.data.get('network_profile') or '')[:32],
+                model_alias='speech.tts' if metric_type in {
+                    SpeechLatencyMetric.MetricType.TTS_FIRST_AUDIO,
+                    SpeechLatencyMetric.MetricType.BARGE_IN_STOP,
+                } else 'speech.asr',
+                metadata={'client': 'web'},
+            )
+            return Response({'id': metric.id, 'status': 'recorded'}, status=status.HTTP_201_CREATED)
+
+        rows = SpeechLatencyMetric.objects.filter(session=session).order_by('-created_at')[:1000]
+        grouped = {key: [] for key in targets}
+        for item in rows:
+            grouped.setdefault(item.metric_type, []).append(float(item.latency_ms))
+        summary = {}
+        for metric_type, target_ms in targets.items():
+            values = sorted(grouped.get(metric_type, []))
+            if not values:
+                summary[metric_type] = {
+                    'sample_count': 0,
+                    'p95_ms': None,
+                    'target_ms': target_ms,
+                    'passed': None,
+                }
+                continue
+            p95_index = max(0, min(len(values) - 1, int((len(values) * 0.95) + 0.999999) - 1))
+            p95_ms = round(values[p95_index], 2)
+            summary[metric_type] = {
+                'sample_count': len(values),
+                'p95_ms': p95_ms,
+                'target_ms': target_ms,
+                'passed': p95_ms <= target_ms,
+            }
+        return Response({
+            'session_id': str(session.id),
+            'metrics': summary,
+            'verification_status': 'measured' if any(item['sample_count'] for item in summary.values()) else 'pending-verification',
+        })
 
     @action(detail=False, methods=['get'], url_path='check-unfinished')
     def check_unfinished(self, request):

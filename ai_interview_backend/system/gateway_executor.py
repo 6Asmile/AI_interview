@@ -1387,3 +1387,144 @@ class GatewayExecutor:
             fallback_count=max(0, attempted - 1),
         )
         raise GatewayExecutionError(last_error or 'tts_failed')
+
+    def synthesize_speech_stream(
+        self,
+        alias_slug: str,
+        text: str,
+        *,
+        voice: str = 'alloy',
+        response_format: str = 'pcm',
+        speed: float | None = None,
+        task_name: str | None = None,
+        chunk_size: int = 4096,
+    ):
+        """Yield provider audio chunks while preserving the shared ledger.
+
+        Fallback is allowed only before the first audio chunk. Once playback can
+        begin, switching providers would create an audible voice discontinuity.
+        """
+        targets = self.targets(alias_slug)
+        value = str(text or '')
+        if not value.strip():
+            raise GatewayExecutionError('tts_text_empty')
+        max_text_chars = min(_bounded_integer(
+            (target.deployment.capabilities or {}).get('max_tts_chars'),
+            default=10_000, minimum=1, maximum=100_000,
+        ) for target in targets)
+        if len(value) > max_text_chars:
+            raise GatewayExecutionError('tts_text_too_long')
+        safe_voice = str(voice or 'alloy').strip()
+        if not safe_voice or len(safe_voice) > 64 or '\r' in safe_voice or '\n' in safe_voice:
+            raise GatewayExecutionError('tts_voice_invalid')
+        safe_format = str(response_format or 'pcm').strip().lower().lstrip('.')
+        if safe_format not in {'opus', 'pcm'}:
+            raise GatewayExecutionError('tts_stream_format_invalid')
+        safe_speed = None
+        if speed is not None:
+            try:
+                safe_speed = float(speed)
+            except (TypeError, ValueError) as exc:
+                raise GatewayExecutionError('tts_speed_invalid') from exc
+            if not 0.25 <= safe_speed <= 4.0:
+                raise GatewayExecutionError('tts_speed_invalid')
+        safe_chunk_size = _bounded_integer(chunk_size, default=4096, minimum=512, maximum=64 * 1024)
+
+        metadata = {
+            'alias': alias_slug,
+            'response_format': safe_format,
+            'sample_rate': 24_000 if safe_format == 'pcm' else None,
+        }
+
+        def iterator():
+            ledger = self._ledger(
+                targets[0].alias,
+                task_name or alias_slug,
+                {'text_chars': len(value), 'streaming': True},
+                total_timeout=targets[0].total_timeout,
+                input_units=len(value),
+                input_unit='characters',
+            )
+            started = time.perf_counter()
+            last_error = ''
+            last_target = targets[0]
+            attempted = 0
+            emitted_any = False
+            for index, target in enumerate(targets):
+                attempted += 1
+                last_target = target
+                attempt_started = time.perf_counter()
+                permit = None
+                attempt_timeout = 0
+                output_bytes = 0
+                response = None
+                try:
+                    attempt_timeout = self._remaining_timeout(started, target)
+                    permit = self.circuit_breaker.before_call(target.deployment)
+                    params = {
+                        'model': target.deployment.remote_model,
+                        'voice': safe_voice,
+                        'input': value,
+                        'response_format': safe_format,
+                        'timeout': attempt_timeout,
+                    }
+                    if safe_speed is not None:
+                        params['speed'] = safe_speed
+                    with concurrency_lease(
+                        scope='model-deployment', identity=str(target.deployment.pk),
+                        limit=int((target.deployment.capabilities or {}).get('max_concurrency') or 8),
+                        lease_seconds=max(1, int(attempt_timeout) + 10),
+                    ):
+                        stream_factory = self._client(target).audio.speech.with_streaming_response.create
+                        with stream_factory(**params) as response:
+                            metadata.update({
+                                'deployment': target.deployment.name,
+                                'provider': target.deployment.provider,
+                                'model': target.deployment.remote_model,
+                            })
+                            for chunk in response.iter_bytes(chunk_size=safe_chunk_size):
+                                if not chunk:
+                                    continue
+                                emitted_any = True
+                                output_bytes += len(chunk)
+                                yield chunk
+                    if not emitted_any:
+                        raise GatewayExecutionError('tts_empty_audio')
+                    request_id = ''
+                    if response is not None:
+                        request_id = getattr(response, '_request_id', '') or getattr(response, 'request_id', '')
+                    self._record_attempt(
+                        ledger, target, index + 1, started=attempt_started, success=True,
+                        input_tokens=0, output_tokens=0, provider_request_id=request_id,
+                        timeout_seconds=attempt_timeout,
+                        metadata={'input_characters': len(value), 'output_bytes': output_bytes, 'response_format': safe_format, 'streaming': True},
+                    )
+                    self.circuit_breaker.record_success(target.deployment, permit)
+                    self._complete(ledger, target, started=started, input_tokens=0, output_tokens=0, success=True, fallback_count=index)
+                    return
+                except GeneratorExit:
+                    self._record_attempt(
+                        ledger, target, index + 1, started=attempt_started, success=False,
+                        error=GatewayExecutionError('tts_stream_canceled'), timeout_seconds=attempt_timeout,
+                        provider_called=permit is not None,
+                        metadata={'input_characters': len(value), 'output_bytes': output_bytes, 'response_format': safe_format, 'streaming': True, 'canceled': True},
+                    )
+                    self._complete(ledger, target, started=started, input_tokens=0, output_tokens=0, success=False, error='tts_stream_canceled', fallback_count=index)
+                    raise
+                except Exception as exc:
+                    failure = self._record_attempt(
+                        ledger, target, index + 1, started=attempt_started, success=False,
+                        error=exc, timeout_seconds=attempt_timeout, provider_called=permit is not None,
+                        metadata={'input_characters': len(value), 'output_bytes': output_bytes, 'response_format': safe_format, 'streaming': True},
+                    )
+                    self._record_circuit_failure(target, permit, failure)
+                    last_error = failure.code
+                    if emitted_any or not failure.retryable:
+                        break
+            self._complete(
+                ledger, last_target, started=started, input_tokens=0, output_tokens=0,
+                success=False, error=last_error, fallback_count=max(0, attempted - 1),
+            )
+            raise GatewayExecutionError(last_error or 'tts_failed')
+
+        return iterator(), metadata

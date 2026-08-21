@@ -176,6 +176,29 @@ class ModelGateway:
             ),
         )
 
+    def synthesize_speech_stream(
+        self,
+        text: str,
+        *,
+        voice: str = 'alloy',
+        response_format: str = 'pcm',
+        speed: float | None = None,
+        alias_slug: str = 'speech.tts',
+        chunk_size: int = 4096,
+    ):
+        return self._use_alias(
+            alias_slug,
+            lambda executor, alias: executor.synthesize_speech_stream(
+                alias,
+                text,
+                voice=voice,
+                response_format=response_format,
+                speed=speed,
+                task_name=alias,
+                chunk_size=chunk_size,
+            ),
+        )
+
     def rerank(self, query: str, documents: Iterable[str], *, top_n: int = 4, alias_slug: str = 'rerank.default') -> tuple[list[dict], dict]:
         docs = [str(item or '') for item in documents]
         return self._use_alias(

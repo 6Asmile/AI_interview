@@ -22,6 +22,16 @@ class SpeechResult:
     error: str = ''
 
 
+@dataclass
+class SpeechStreamResult:
+    ok: bool
+    chunks: object | None = None
+    response_format: str = 'pcm'
+    sample_rate: int = 24_000
+    metadata: dict | None = None
+    error: str = ''
+
+
 def _public_speech_error(exc: Exception, capability: str) -> str:
     """Keep the stable media error contract while the gateway owns routing."""
 
@@ -130,6 +140,52 @@ def transcribe_bytes(
         metadata=metadata,
     )
     return transcribe_artifact(artifact, user=user)
+
+
+def transcribe_partial_bytes(
+    *,
+    user,
+    audio_bytes: bytes,
+    filename: str = 'partial.webm',
+    mime_type: str = 'audio/webm',
+    language: str | None = None,
+) -> SpeechResult:
+    """Generate a non-durable rolling partial; only the final transcript is a fact."""
+    try:
+        text, _metadata = ModelGateway(user).transcribe_audio(
+            audio_bytes,
+            filename=filename,
+            content_type=mime_type,
+            language=language,
+            alias_slug='speech.asr',
+        )
+        return SpeechResult(ok=bool(text), text=text or '', error='' if text else 'asr_partial_empty')
+    except Exception as exc:
+        return SpeechResult(ok=False, error=_public_speech_error(exc, 'asr'))
+
+
+def stream_question_tts(*, user, text: str, response_format: str = 'pcm') -> SpeechStreamResult:
+    """Return provider-backed PCM/Opus chunks without buffering the full speech."""
+    response_format = str(response_format or 'pcm').lower()
+    if response_format not in {'pcm', 'opus'}:
+        return SpeechStreamResult(ok=False, error='tts_stream_format_invalid')
+    try:
+        chunks, metadata = ModelGateway(user).synthesize_speech_stream(
+            text,
+            voice=getattr(settings, 'TTS_DEFAULT_VOICE', 'alloy'),
+            response_format=response_format,
+            alias_slug='speech.tts',
+            chunk_size=int(getattr(settings, 'TTS_STREAM_CHUNK_BYTES', 4096)),
+        )
+        return SpeechStreamResult(
+            ok=True,
+            chunks=chunks,
+            response_format=response_format,
+            sample_rate=int(metadata.get('sample_rate') or 24_000),
+            metadata=metadata,
+        )
+    except Exception as exc:
+        return SpeechStreamResult(ok=False, error=_public_speech_error(exc, 'tts'))
 
 
 def synthesize_question_tts(

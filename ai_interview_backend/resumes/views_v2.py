@@ -28,7 +28,7 @@ from core.uploads import validate_uploaded_file
 from .json_resume import legacy_resume_to_json_resume
 from .models import (
     Resume, ResumeArtifact, ResumeAsset, ResumeImportJob, ResumeQualityReport,
-    ResumeShareAccess, ResumeShareLink, ResumeSuggestion, ResumeVersion,
+    ResumeShareAccess, ResumeShareLink, ResumeSuggestion, ResumeVariant, ResumeVersion,
 )
 from .rendering import RENDERER_NAME, RENDERER_VERSION, artifact_cache_key
 from .operation_service import create_resume_operation
@@ -36,7 +36,7 @@ from .schema import sha256_json, strip_internal_metadata, validate_resume
 from .serializers_v2 import (
     DraftPatchSerializer, ResumeArtifactSerializer, ResumeDraftSerializer,
     ResumeImportJobV2Serializer, ResumeQualityReportSerializer, ResumeShareLinkSerializer,
-    ResumeSuggestionV2Serializer, ResumeV2Serializer, ResumeVersionV2Serializer,
+    ResumeSuggestionV2Serializer, ResumeV2Serializer, ResumeVariantSerializer, ResumeVersionV2Serializer,
     VersionCommitSerializer,
 )
 from .sharing import create_share_link, redact_shared_resume, resolve_share, shared_render_snapshot
@@ -337,9 +337,10 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
             admit_expensive_operation(request, scope='resume.export')
             output_format = str(request.data.get('format') or '').lower()
             if output_format not in {
-                ResumeArtifact.Format.PDF, ResumeArtifact.Format.DOCX, ResumeArtifact.Format.JSON,
+                ResumeArtifact.Format.PDF, ResumeArtifact.Format.PNG, ResumeArtifact.Format.DOCX,
+                ResumeArtifact.Format.JSON, ResumeArtifact.Format.MARKDOWN,
             }:
-                raise ValidationError({'format': '仅支持 pdf、docx、json。'})
+                raise ValidationError({'format': '仅支持 pdf、png、docx、json、markdown。'})
             _, design = ensure_studio(resume, request.user)
             version_id = request.data.get('version_id')
             version = resume.versions.filter(pk=version_id).first() if version_id else resume.current_version
@@ -468,6 +469,14 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
         suggestion.decided_at = timezone.now()
         suggestion.save(update_fields=['status', 'decided_at'])
         return Response(ResumeSuggestionV2Serializer(suggestion).data)
+
+    @action(detail=True, methods=['get'], url_path='variants')
+    def variants(self, request, pk=None):
+        resume = self.get_object()
+        variants = ResumeVariant.objects.filter(resume=resume, user=request.user).select_related(
+            'source_version', 'version', 'job_target',
+        )
+        return Response(ResumeVariantSerializer(variants, many=True).data)
 
     @action(detail=True, methods=['get', 'post'], url_path='share-links')
     def share_links(self, request, pk=None):

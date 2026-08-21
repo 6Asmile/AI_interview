@@ -220,8 +220,10 @@ class ResumeArtifact(models.Model):
     class Format(models.TextChoices):
         PREVIEW = 'preview', '预览图'
         PDF = 'pdf', 'PDF'
+        PNG = 'png', 'PNG 长图'
         DOCX = 'docx', 'DOCX'
         JSON = 'json', 'JSON Resume'
+        MARKDOWN = 'markdown', 'Markdown'
 
     class Status(models.TextChoices):
         PENDING = 'pending', '等待生成'
@@ -465,6 +467,14 @@ class ResumeSuggestion(models.Model):
     rationale = models.TextField(blank=True)
     evidence_fact_ids = models.JSONField(default=list, blank=True)
     evidence_links = models.JSONField(default=list, blank=True)
+    task_key = models.CharField(max_length=80, blank=True, db_index=True)
+    job_target = models.ForeignKey(
+        'careers.JobTarget',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='resume_suggestions',
+    )
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
     accepted_version = models.ForeignKey(ResumeVersion, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='resume_suggestions')
@@ -486,6 +496,9 @@ class ResumeVariant(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['resume', 'version'], name='uniq_resume_variant_version'),
+        ]
 
 
 class Education(models.Model):

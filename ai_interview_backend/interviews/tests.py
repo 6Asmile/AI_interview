@@ -5,7 +5,7 @@ from unittest.mock import patch
 from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from .agent import (
     CompositeInterviewAgentEngine,
@@ -36,9 +36,10 @@ from .models import (
     InterviewQuestion,
     InterviewQuestionGenerationJob,
     InterviewSession,
+    SpeechLatencyMetric,
 )
 from .ai_services import analyze_resume_against_jd, generate_resume_by_ai, polish_description_by_ai
-from .speech_services import synthesize_question_tts, transcribe_bytes
+from .speech_services import stream_question_tts, synthesize_question_tts, transcribe_bytes
 from .views import EvaluationDatasetViewSet, InterviewSessionViewSet, InterviewTemplateViewSet
 from users.models import User
 
@@ -1263,6 +1264,80 @@ class InterviewSpeechServiceTests(TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.error, 'tts_model_or_api_key_missing')
         self.assertNotEqual(result.artifact.id, cached.id)
+
+    @patch('interviews.speech_services.ModelGateway.synthesize_speech_stream')
+    def test_tts_stream_supports_pcm_and_opus_without_full_buffering(self, execute):
+        execute.return_value = (iter([b'first', b'second']), {'sample_rate': 24000})
+        result = stream_question_tts(user=self.user, text='流式问题', response_format='opus')
+        self.assertTrue(result.ok)
+        self.assertEqual(result.response_format, 'opus')
+        self.assertEqual(next(result.chunks), b'first')
+        execute.assert_called_once()
+        invalid = stream_question_tts(user=self.user, text='流式问题', response_format='mp3')
+        self.assertFalse(invalid.ok)
+        self.assertEqual(invalid.error, 'tts_stream_format_invalid')
+
+
+class InterviewSpeechMetricTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='speech-metric-owner', email='speech-metric-owner@example.com', password='pass',
+        )
+        self.other = User.objects.create_user(
+            username='speech-metric-other', email='speech-metric-other@example.com', password='pass',
+        )
+        self.session = InterviewSession.objects.create(
+            user=self.user,
+            job_position='语音交互工程师',
+            status=InterviewSession.Status.RUNNING,
+            started_at=timezone.now(),
+        )
+        self.question = InterviewQuestion.objects.create(
+            session=self.session,
+            question_text='请介绍流式语音链路。',
+            sequence=1,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_client_metric_is_persisted_and_p95_is_compared_with_target(self):
+        for latency in (320, 480, 610):
+            response = self.client.post(
+                f'/api/v1/interviews/{self.session.id}/speech-metrics/',
+                {
+                    'metric_type': 'tts_first_audio',
+                    'latency_ms': latency,
+                    'question_id': self.question.id,
+                    'language': 'zh-CN',
+                    'network_profile': 'wifi',
+                },
+                format='json',
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+        summary = self.client.get(f'/api/v1/interviews/{self.session.id}/speech-metrics/')
+        self.assertEqual(summary.status_code, 200, summary.data)
+        metric = summary.data['metrics']['tts_first_audio']
+        self.assertEqual(metric['sample_count'], 3)
+        self.assertEqual(metric['p95_ms'], 610.0)
+        self.assertTrue(metric['passed'])
+        self.assertEqual(summary.data['verification_status'], 'measured')
+
+    def test_metric_rejects_foreign_question_and_hides_foreign_session(self):
+        foreign_session = InterviewSession.objects.create(
+            user=self.other,
+            job_position='其他岗位',
+            status=InterviewSession.Status.RUNNING,
+            started_at=timezone.now(),
+        )
+        response = self.client.post(
+            f'/api/v1/interviews/{self.session.id}/speech-metrics/',
+            {'metric_type': 'barge_in_stop', 'latency_ms': 80, 'question_id': 999999},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 404)
+        hidden = self.client.get(f'/api/v1/interviews/{foreign_session.id}/speech-metrics/')
+        self.assertEqual(hidden.status_code, 404)
+        self.assertEqual(SpeechLatencyMetric.objects.count(), 0)
 
 
 class InterviewMediaArtifactPermissionTests(TestCase):

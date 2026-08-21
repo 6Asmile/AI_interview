@@ -17,6 +17,7 @@ ALLOWED_DATE_FORMATS = {'YYYY-MM', 'YYYY.MM', 'MMM YYYY', 'YYYY'}
 SECTION_KEYS = [
     'basics', 'summary', 'work', 'projects', 'education', 'skills',
     'certificates', 'awards', 'publications', 'languages', 'volunteer', 'interests',
+    'references',
 ]
 
 RESUME_TEMPLATES = {
@@ -26,6 +27,9 @@ RESUME_TEMPLATES = {
         'default_font': 'Noto Sans CJK SC',
         'default_color': '#1F2937',
         'default_density': 'balanced',
+        'use_tags': ['通用求职', 'ATS 优先'],
+        'industry_tags': ['互联网', '制造', '服务业'],
+        'role_tags': ['产品', '运营', '职能'],
     },
     'modern-professional': {
         'name': {'zh-CN': '现代专业', 'en-US': 'Modern Professional'},
@@ -33,6 +37,9 @@ RESUME_TEMPLATES = {
         'default_font': 'Source Sans 3',
         'default_color': '#155E75',
         'default_density': 'balanced',
+        'use_tags': ['社招', '专业岗位'],
+        'industry_tags': ['互联网', '金融', '专业服务'],
+        'role_tags': ['产品', '设计', '市场'],
     },
     'engineering': {
         'name': {'zh-CN': '技术工程', 'en-US': 'Engineering'},
@@ -40,6 +47,9 @@ RESUME_TEMPLATES = {
         'default_font': 'Inter',
         'default_color': '#334155',
         'default_density': 'compact',
+        'use_tags': ['技术岗位', '项目优先'],
+        'industry_tags': ['互联网', '软件', '智能制造'],
+        'role_tags': ['后端', '前端', '算法', '测试'],
     },
     'graduate': {
         'name': {'zh-CN': '校招成长', 'en-US': 'Graduate'},
@@ -47,6 +57,9 @@ RESUME_TEMPLATES = {
         'default_font': 'Noto Sans CJK SC',
         'default_color': '#4338CA',
         'default_density': 'balanced',
+        'use_tags': ['校招', '实习'],
+        'industry_tags': ['通用'],
+        'role_tags': ['应届生', '实习生'],
     },
     'management-consulting': {
         'name': {'zh-CN': '管理咨询', 'en-US': 'Management Consulting'},
@@ -54,6 +67,9 @@ RESUME_TEMPLATES = {
         'default_font': 'Noto Serif CJK SC',
         'default_color': '#78350F',
         'default_density': 'compact',
+        'use_tags': ['商业分析', '管理岗'],
+        'industry_tags': ['咨询', '金融', '企业服务'],
+        'role_tags': ['咨询顾问', '战略', '管理'],
     },
     'academic-research': {
         'name': {'zh-CN': '学术研究', 'en-US': 'Academic Research'},
@@ -61,6 +77,9 @@ RESUME_TEMPLATES = {
         'default_font': 'Noto Serif CJK SC',
         'default_color': '#374151',
         'default_density': 'comfortable',
+        'use_tags': ['学术申请', '研究岗位'],
+        'industry_tags': ['高校', '研究院', '医药'],
+        'role_tags': ['研究员', '博士后', '教师'],
     },
 }
 
@@ -78,6 +97,7 @@ def default_design(template_key: str = 'ats-classic', language: str = 'zh-CN') -
         'date_format': 'YYYY-MM',
         'show_avatar': False,
         'section_order': list(SECTION_KEYS),
+        'hidden_sections': [],
     }
 
 
@@ -108,6 +128,13 @@ def validate_design(payload: dict | None) -> dict:
     order = design.get('section_order')
     if not isinstance(order, list) or len(order) != len(set(order)) or any(item not in SECTION_KEYS for item in order):
         raise ValidationError({'design_json': {'section_order': '栏目顺序包含重复或未知栏目。'}})
+    # Older drafts did not know newly-added sections. Append them deterministically
+    # so an old user can keep editing without a manual migration.
+    design['section_order'] = [*order, *(item for item in SECTION_KEYS if item not in order)]
+    hidden = design.get('hidden_sections') or []
+    if not isinstance(hidden, list) or len(hidden) != len(set(hidden)) or any(item not in SECTION_KEYS for item in hidden):
+        raise ValidationError({'design_json': {'hidden_sections': '隐藏栏目包含重复或未知栏目。'}})
+    design['hidden_sections'] = hidden
     design['show_avatar'] = bool(design.get('show_avatar', False))
     return design
 
@@ -119,6 +146,7 @@ def template_catalog(*, enabled_only: bool = True) -> list[dict]:
             'key': key,
             'version': TEMPLATE_VERSION,
             **value,
+            'thumbnail': f'/resume-templates/{key}.svg',
             'capabilities': {
                 'page_sizes': sorted(ALLOWED_PAGE_SIZES),
                 'languages': sorted(ALLOWED_LANGUAGES),
