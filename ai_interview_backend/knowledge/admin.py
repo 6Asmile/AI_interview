@@ -9,7 +9,7 @@ from .models import (
     KnowledgeImportBatch,
     KnowledgeImportFile,
 )
-from .tasks import reindex_knowledge_document
+from .operation_handlers import REINDEX_OPERATION, create_knowledge_operation
 
 
 class KnowledgeChunkInline(admin.TabularInline):
@@ -94,11 +94,15 @@ class KnowledgeDocumentAdmin(admin.ModelAdmin):
             document.approved_at = revision.approved_at
             document.rejection_reason = ''
             document.save(update_fields=['approved_by', 'approved_at', 'rejection_reason', 'updated_at'])
-            try:
-                reindex_knowledge_document.delay(str(document.id), str(revision.id))
-            except Exception:
-                from .services import index_document
-                index_document(document, revision=revision)
+            create_knowledge_operation(
+                user=request.user,
+                operation_type=REINDEX_OPERATION,
+                source_model='KnowledgeDocument',
+                source_id=document.pk,
+                input_version=str(revision.pk),
+                title=f'审批后重建知识索引：{document.title}',
+                metadata={'revision_id': str(revision.pk), 'admin_action': True},
+            )
             count += 1
         self.message_user(request, f'已审批并提交 {count} 条知识库索引任务。')
 
@@ -136,11 +140,15 @@ class KnowledgeDocumentAdmin(admin.ModelAdmin):
             revision = document.published_revision
             if not revision:
                 continue
-            try:
-                reindex_knowledge_document.delay(str(document.id), str(revision.id))
-            except Exception:
-                from .services import index_document
-                index_document(document, revision=revision)
+            create_knowledge_operation(
+                user=request.user,
+                operation_type=REINDEX_OPERATION,
+                source_model='KnowledgeDocument',
+                source_id=document.pk,
+                input_version=str(revision.pk),
+                title=f'重建知识索引：{document.title}',
+                metadata={'revision_id': str(revision.pk), 'admin_action': True},
+            )
             count += 1
         self.message_user(request, f'已提交 {count} 条已审批知识库重建索引。')
 

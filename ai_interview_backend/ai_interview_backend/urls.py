@@ -11,6 +11,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 
 from interviews.views import GenerateResumeView
 from resumes.views_upload import FileUploadView
+from system.views import InternalMetricsView
 
 admin.site.site_header = "IFaceOff 管理后台"
 admin.site.site_title = "IFaceOff Admin Portal"
@@ -18,6 +19,7 @@ admin.site.index_title = "欢迎来到 IFaceOff 管理后台"
 
 urlpatterns = [
     path('internal/django-admin/', admin.site.urls),
+    path('internal/metrics', InternalMetricsView.as_view(), name='internal-metrics'),
     path('api/admin/v1/', include('staff_admin.urls')),
 
     # 【核心修正】将所有业务 API 都放在 'api/v1/' 命名空间下

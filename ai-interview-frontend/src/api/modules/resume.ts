@@ -1,8 +1,17 @@
 // src/api/modules/resume.ts
 import request from '@/api/request';
-import { ResumeLayout } from '@/store/modules/resumeEditor';
 // 【核心修改】导入通用分页类型
 import type { PaginatedResponse } from '@/types/api';
+
+export interface LegacyResumeComponent {
+  id: string;
+  componentName: string;
+  moduleType: string;
+  title: string;
+  props: Record<string, any>;
+  styles: Record<string, any>;
+}
+export interface ResumeLayout { sidebar: LegacyResumeComponent[]; main: LegacyResumeComponent[]; }
 
 // --- 【核心修改】将所有简历相关的类型定义集中在此 ---
 
@@ -167,6 +176,7 @@ export interface ResumeDesign {
   date_format: string;
   show_avatar: boolean;
   section_order: string[];
+  hidden_sections: string[];
 }
 
 export interface ResumeVersionV2 {
@@ -229,6 +239,10 @@ export interface ResumeTemplate {
   default_color: string;
   default_density: string;
   capabilities: Record<string, any>;
+  thumbnail: string;
+  use_tags: string[];
+  industry_tags: string[];
+  role_tags: string[];
 }
 
 export interface AsyncOperationAccepted {
@@ -251,7 +265,7 @@ export interface ResumeArtifact {
   design_revision: number | null;
   design_revision_number: number | null;
   draft_etag: string;
-  format: 'preview' | 'pdf' | 'docx' | 'json';
+  format: 'preview' | 'pdf' | 'png' | 'docx' | 'json' | 'markdown';
   status: 'pending' | 'processing' | 'ready' | 'failed';
   renderer_name: string;
   renderer_version: string;
@@ -287,6 +301,8 @@ export interface ResumeShareLink {
 export interface ResumeSuggestionV2 {
   id: number;
   base_version: number;
+  task_key: string;
+  job_target: number | null;
   patch: Array<Record<string, any>>;
   summary: string;
   rationale: string;
@@ -294,10 +310,30 @@ export interface ResumeSuggestionV2 {
   evidence_links: Array<Record<string, any>>;
   status: 'pending' | 'accepted' | 'rejected';
   accepted_version: number | null;
+  variant_id: number | null;
   created_at: string;
 }
 
-const v2Base = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/api\/v1\/?$/, '/api/v2');
+export interface ResumeVariantV2 {
+  id: number;
+  resume: number;
+  source_version: number;
+  source_version_number: number;
+  version: number;
+  version_number: number;
+  job_target: number;
+  company_name: string;
+  position_name: string;
+  title: string;
+  created_at: string;
+}
+
+const configuredApiBase = String(import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
+const v2Base = /\/api\/v\d+$/.test(configuredApiBase)
+  ? configuredApiBase.replace(/\/api\/v\d+$/, '/api/v2')
+  : configuredApiBase.endsWith('/api')
+    ? `${configuredApiBase}/v2`
+    : `${configuredApiBase}/api/v2`;
 const v2 = (config: any) => request({ ...config, baseURL: v2Base });
 const idempotencyKey = () => crypto.randomUUID();
 const asList = <T>(response: any): T[] => Array.isArray(response) ? response : (response?.results || []);
@@ -343,12 +379,12 @@ export const getResumeTemplatesApi = (): Promise<{ schema_version: string; templ
   v2({ url: '/resume-templates/', method: 'get' });
 export const requestResumePreviewApi = (id: number): Promise<AsyncOperationAccepted> =>
   v2({ url: `/resumes/${id}/preview/`, method: 'post', data: {}, headers: { 'Idempotency-Key': idempotencyKey() } });
-export const requestResumeExportApi = (id: number, format: 'pdf' | 'docx' | 'json'): Promise<AsyncOperationAccepted> =>
-  v2({ url: `/resumes/${id}/exports/`, method: 'post', data: { format }, headers: { 'Idempotency-Key': idempotencyKey() } });
+export const requestResumeExportApi = (id: number, format: 'pdf' | 'png' | 'docx' | 'json' | 'markdown', version_id?: number): Promise<AsyncOperationAccepted> =>
+  v2({ url: `/resumes/${id}/exports/`, method: 'post', data: { format, version_id }, headers: { 'Idempotency-Key': idempotencyKey() } });
 export const getResumeArtifactApi = (id: string): Promise<ResumeArtifact> =>
   v2({ url: `/resume-artifacts/${id}/`, method: 'get', suppressErrorToast: true } as any);
-export const requestResumeQualityApi = (id: number): Promise<AsyncOperationAccepted> =>
-  v2({ url: `/resumes/${id}/quality-reports/`, method: 'post', data: {}, headers: { 'Idempotency-Key': idempotencyKey() } });
+export const requestResumeQualityApi = (id: number, version_id?: number): Promise<AsyncOperationAccepted> =>
+  v2({ url: `/resumes/${id}/quality-reports/`, method: 'post', data: { version_id }, headers: { 'Idempotency-Key': idempotencyKey() } });
 export const getResumeQualityReportsApi = async (id: number): Promise<ResumeQualityReport[]> => asList<ResumeQualityReport>(
   await v2({ url: `/resumes/${id}/quality-reports/`, method: 'get' }),
 );
@@ -364,7 +400,7 @@ export const getResumeSuggestionsV2Api = async (id: number): Promise<ResumeSugge
 );
 export const requestResumeSuggestionApi = (
   id: number,
-  data: { task_key: string; instruction?: string; job_target_id?: number | null },
+  data: { task_key: string; instruction?: string; job_target_id?: number | null; base_version_id?: number },
 ): Promise<AsyncOperationAccepted> => v2({
   url: `/resumes/${id}/suggestions/`,
   method: 'post',
@@ -375,6 +411,9 @@ export const acceptResumeSuggestionApi = (resumeId: number, suggestionId: number
   v2({ url: `/resumes/${resumeId}/suggestions/${suggestionId}/accept/`, method: 'post', data: {} });
 export const rejectResumeSuggestionApi = (resumeId: number, suggestionId: number): Promise<ResumeSuggestionV2> =>
   v2({ url: `/resumes/${resumeId}/suggestions/${suggestionId}/reject/`, method: 'post', data: {} });
+export const getResumeVariantsApi = async (resumeId: number): Promise<ResumeVariantV2[]> => asList<ResumeVariantV2>(
+  await v2({ url: `/resumes/${resumeId}/variants/`, method: 'get' }),
+);
 export const getAsyncOperationApi = (id: string): Promise<Record<string, any>> =>
   v2({ url: `/operations/${id}/`, method: 'get', suppressErrorToast: true } as any);
 export const importResumeV2Api = (data: FormData): Promise<AsyncOperationAccepted> =>

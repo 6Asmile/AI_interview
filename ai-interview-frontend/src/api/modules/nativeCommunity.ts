@@ -6,6 +6,9 @@ const v2 = (config: any) => request({ ...config, baseURL: v2Base });
 export const getCommunityFeedApi = (params?: Record<string, unknown>) =>
   v2({ url: '/community/feed/', method: 'get', params });
 
+export const getCommunityTopicsApi = () =>
+  v2({ url: '/community/topics/', method: 'get' });
+
 export const getCommunityContentsApi = (params?: Record<string, unknown>) =>
   v2({ url: '/community/contents/', method: 'get', params });
 

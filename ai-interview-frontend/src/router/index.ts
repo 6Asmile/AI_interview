@@ -37,6 +37,7 @@ const routes: Array<RouteRecordRaw> = [
       
         { path: 'resumes', name: 'ResumeManagement', component: () => import('@/views/Resume.vue') },
         { path: 'resumes/:id', name: 'ResumeStudio', component: () => import('@/views/ResumeStudio.vue'), props: true },
+        { path: 'resume-templates', name: 'ResumeTemplateGallery', component: () => import('@/views/ResumeTemplateGallery.vue') },
       { path: 'knowledge', name: 'KnowledgeBase', component: () => import('@/views/KnowledgeBase.vue'), meta: { desktopOnly: true, desktopFeature: '知识库解析与编辑' } },
       { path: 'interview-admin', name: 'EnterpriseInterviewAdmin', component: () => import('@/views/LegacyAdminRedirect.vue'), meta: { desktopOnly: true, desktopFeature: '独立运营后台' } },
       { path: 'history', name: 'History', component: () => import('@/views/History.vue') },
@@ -45,20 +46,6 @@ const routes: Array<RouteRecordRaw> = [
       { path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue') },
       { path: 'model-gateway', name: 'ModelGatewayAdmin', component: () => import('@/views/LegacyAdminRedirect.vue'), meta: { roles: ['admin'], desktopOnly: true, desktopFeature: '独立运营后台' } },
       { path: 'profile', name: 'Profile', component: () => import('@/views/Profile.vue') },
-      {
-        path: 'resume/edit/:id',
-        name: 'ResumeEditor',
-        component: () => import('@/views/ResumeEditor.vue'),
-        props: true,
-        meta: { desktopOnly: true, desktopFeature: '简历编辑器' },
-      },
-      {
-        path: 'resume/preview/:id',
-        name: 'ResumePreview',
-        component: () => import('@/views/ResumePreview.vue'),
-        props: true,
-        meta: { requiresAuth: true },
-      },
       // 【核心新增】分析报告详情页
     { 
         path: 'analysis/:reportId', 
@@ -66,18 +53,6 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@/views/AnalysisReportDetail.vue'), 
         props: true 
     },
-    { 
-      path: 'ai-diagnosis', 
-      name: 'ResumeAIDiagnosis',
-       component: () => import('@/views/ResumeAIDiagnosis.vue'),
-       meta: { desktopOnly: true, desktopFeature: '简历 AI 诊断' },
-      },
-      { 
-        path: 'generate-resume', 
-        name: 'ResumeGenerator',
-         component: () => import('@/views/ResumeGenerator.vue'),
-         meta: { desktopOnly: true, desktopFeature: '简历生成与编辑' },
-        },
          { 
             path: 'blog', 
             name: 'BlogHome', 

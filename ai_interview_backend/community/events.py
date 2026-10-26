@@ -58,8 +58,12 @@ def project_community_search(envelope):
     from .tasks import index_community_content
     content_id = (envelope.get('payload') or {}).get('content_id')
     if content_id:
-        index_community_content.delay(str(content_id))
-    return {'content_id': content_id, 'queued': bool(content_id)}
+        # Search is a reconstructible projection. Running it inside the leased
+        # Inbox consumer makes the event, not an untracked Celery task ID, the
+        # retry and deduplication authority.
+        result = index_community_content.run(str(content_id))
+        return {'content_id': content_id, **result}
+    return {'content_id': content_id, 'indexed': False}
 
 
 @register_event_handler('community.content.published', 'community.reputation-projector')

@@ -525,6 +525,7 @@ class EvaluationRunSerializer(serializers.ModelSerializer):
         model = EvaluationRun
         fields = [
             'id',
+            'operation',
             'dataset',
             'template',
             'status',
@@ -537,7 +538,7 @@ class EvaluationRunSerializer(serializers.ModelSerializer):
             'created_at',
             'metrics',
         ]
-        read_only_fields = ['status', 'summary', 'error_message', 'created_by', 'started_at', 'finished_at', 'created_at', 'metrics']
+        read_only_fields = ['operation', 'status', 'summary', 'error_message', 'created_by', 'started_at', 'finished_at', 'created_at', 'metrics']
 
 class SubmitAnswerSerializer(serializers.Serializer):
     """

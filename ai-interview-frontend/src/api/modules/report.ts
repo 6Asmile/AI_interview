@@ -1,5 +1,4 @@
 import request from '@/api/request';
-import type { AnalysisReport } from './resumeEditor'; // 导入类型
 import type { InterviewSessionItem, AnalysisFrame } from './interview'; // 【新增】导入 AnalysisFrame
 // 【核心修改】导入通用分页类型
 import type { PaginatedResponse } from '@/types/api';
@@ -52,6 +51,19 @@ export interface QuestionQualityBreakdownItem {
   answer_level?: string;
   follow_up_target?: string;
   follow_up_reason?: string;
+}
+
+export interface AnalysisReport {
+  overall_score: number;
+  ability_scores: { name: string; score: number }[];
+  keyword_analysis: {
+    jd_keywords: string[];
+    matched_keywords: string[];
+    missing_keywords: string[];
+  };
+  strengths_analysis: string[];
+  weaknesses_analysis: string[];
+  suggestions: { module: string; suggestion: string }[];
 }
 
 // 【核心改造】终极的、完整的报告内容类型

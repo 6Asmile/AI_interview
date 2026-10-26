@@ -1,5 +1,6 @@
 import os
 import logging
+from django.db import transaction
 from django.utils import timezone
 from celery import shared_task
 from .models import FileUploadTask, FileChunk, VideoTranscodeTask
@@ -89,14 +90,37 @@ def start_transcode_after_merge(merge_result: dict, transcode_task_id: str):
         _mark_transcode_failed(transcode_task, error)
         return {"success": False, "error": error}
 
-    transcode_task.original_file = merged_file
-    transcode_task.save(update_fields=['original_file'])
-    transcode_video_task.delay(str(transcode_task.id))
-    return {"success": True, "transcode_task_id": str(transcode_task.id)}
+    with transaction.atomic():
+        transcode_task = VideoTranscodeTask.objects.select_for_update().select_related('upload_task').get(
+            id=transcode_task.id,
+        )
+        transcode_task.original_file = merged_file
+        transcode_task.save(update_fields=['original_file'])
+        from core.models import AsyncOperation
+        from .operation_handlers import create_video_operation
+
+        operation = AsyncOperation.objects.filter(
+            user=transcode_task.user,
+            operation_type='media.video_process',
+            source_app='video_uploads',
+            source_model='FileUploadTask',
+            source_id=str(transcode_task.upload_task_id),
+        ).exclude(status=AsyncOperation.Status.CANCELED).order_by('-created_at').first()
+        if operation is None:
+            operation = create_video_operation(
+                user=transcode_task.user,
+                upload_task=transcode_task.upload_task,
+                transcode_task=transcode_task,
+            )
+    return {
+        "success": True,
+        "transcode_task_id": str(transcode_task.id),
+        "operation_id": str(operation.id),
+    }
 
 
 @shared_task(bind=True, max_retries=2)
-def transcode_video_task(self, transcode_task_id: str):
+def transcode_video_task(self, transcode_task_id: str, cancellation_check=None):
     """视频转码任务"""
     try:
         transcode_task = VideoTranscodeTask.objects.get(id=transcode_task_id)
@@ -126,6 +150,8 @@ def transcode_video_task(self, transcode_task_id: str):
     output_path = os.path.join(output_dir, f"{name}_transcoded.mp4")
     
     def update_progress(progress: int):
+        if cancellation_check:
+            cancellation_check()
         transcode_task.progress = progress
         transcode_task.save(update_fields=['progress'])
     
@@ -143,10 +169,13 @@ def transcode_video_task(self, transcode_task_id: str):
             audio_denoise=transcode_task.audio_denoise,
             video_denoise_params=transcode_task.video_denoise_params,
             audio_denoise_params=transcode_task.audio_denoise_params,
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            cancellation_check=cancellation_check,
         )
         
         if success:
+            if cancellation_check:
+                cancellation_check()
             transcode_task.transcoded_file = output_path
             transcode_task.transcoded_size = os.path.getsize(output_path)
             transcode_task.status = VideoTranscodeTask.Status.COMPLETED
@@ -170,6 +199,9 @@ def transcode_video_task(self, transcode_task_id: str):
             
     except Exception as e:
         logger.error(f"视频转码失败: {e}")
+        from core.operations import OperationCanceled, OperationLeaseLost
+        if isinstance(e, (OperationCanceled, OperationLeaseLost)):
+            raise
         transcode_task.status = VideoTranscodeTask.Status.FAILED
         transcode_task.error_message = str(e)[:1000]
         transcode_task.save()

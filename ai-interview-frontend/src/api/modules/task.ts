@@ -1,6 +1,15 @@
 import request from '@/api/request';
 
-export type AsyncTaskStatus = 'pending' | 'running' | 'review_required' | 'succeeded' | 'failed' | 'canceled';
+export type AsyncTaskStatus =
+  | 'pending'
+  | 'claimed'
+  | 'running'
+  | 'retrying'
+  | 'review_required'
+  | 'cancel_requested'
+  | 'succeeded'
+  | 'failed'
+  | 'canceled';
 
 export interface AsyncTaskItem {
   id: string;
@@ -35,4 +44,7 @@ export const retryTaskApi = (id: string): Promise<AsyncTaskItem> =>
   });
 
 export const cancelTaskApi = (id: string): Promise<AsyncTaskItem> =>
-  request({ url: `/tasks/${id}/cancel/`, method: 'post' });
+  request({
+    url: `/tasks/${id}/cancel/`, method: 'post',
+    headers: { 'Idempotency-Key': crypto.randomUUID() },
+  });

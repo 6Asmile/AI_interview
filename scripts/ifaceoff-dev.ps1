@@ -1,7 +1,10 @@
 param(
     [ValidateSet('up', 'down', 'restart', 'status')]
     [string]$Action = 'up',
-    [ValidateSet('django', 'celery-worker', 'celery-beat', 'vite', 'admin-vite')]
+    [ValidateSet('django', 'celery-worker', 'celery-beat', 'vite', 'admin-vite',
+        'celery-publisher', 'celery-agent', 'celery-career', 'celery-document',
+        'celery-resume-render', 'celery-resume-ai', 'celery-media',
+        'celery-moderation', 'celery-events', 'celery-auxiliary')]
     [string[]]$Components = @('django', 'celery-worker', 'celery-beat', 'vite', 'admin-vite')
 )
 
@@ -12,8 +15,18 @@ $Frontend = Join-Path $Root 'ai-interview-frontend'
 $AdminFrontend = Join-Path $Root 'ai-interview-admin'
 $LogDir = Join-Path $Root 'logs\dev'
 $PidFile = Join-Path $Root '.ifaceoff-dev-pids.json'
-$Python = if ($env:IFACEOFF_PYTHON) { $env:IFACEOFF_PYTHON } else { (Get-Command python).Source }
+$ProjectPython = Join-Path $Root '.venv\Scripts\python.exe'
+$Python = if ($env:IFACEOFF_PYTHON) { $env:IFACEOFF_PYTHON }
+    elseif (Test-Path $ProjectPython) { $ProjectPython }
+    else { (Get-Command python).Source }
 $Npm = (Get-Command npm.cmd).Source
+$WorkerRoles = @('publisher', 'agent', 'career', 'document', 'resume-render',
+    'resume-ai', 'media', 'moderation', 'events', 'auxiliary')
+# Preserve the legacy component name as an alias for the isolated worker fleet.
+if ('celery-worker' -in $Components) {
+    $Components = @($Components | Where-Object { $_ -ne 'celery-worker' }) +
+        @($WorkerRoles | ForEach-Object { "celery-$_" }) + @('celery-worker')
+}
 
 $InfraEnv = Join-Path $Root '.env.infra'
 if (Test-Path $InfraEnv) {
@@ -88,9 +101,18 @@ function Stop-DevProcesses([string[]]$Names) {
         if ($entry.name -notin $Names) { $remaining += $entry; continue }
         $process = Get-Process -Id $entry.pid -ErrorAction SilentlyContinue
         if ($process) {
-            $expected = [datetime]::Parse($entry.started_at).ToUniversalTime()
+            # PowerShell 7 ConvertFrom-Json may already return a UTC DateTime.
+            # Parsing its localized string again loses Kind and shifts 8 hours.
+            $expected = if ($entry.started_at -is [datetime]) {
+                $entry.started_at.ToUniversalTime()
+            } else {
+                [datetime]::Parse($entry.started_at, [cultureinfo]::InvariantCulture,
+                    [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+            }
             if ([math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -lt 2) {
-                Stop-Process -Id $entry.pid -Force -ErrorAction SilentlyContinue
+                # venv python.exe is a launcher; its real Python child and
+                # Django reloader must stop too, otherwise restart forks workers.
+                & taskkill.exe /PID $entry.pid /T /F > $null 2>&1
             }
         }
     }
@@ -121,7 +143,7 @@ try {
     Write-Warning 'Application processes will still be started; readiness will report unavailable dependencies.'
 }
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-$needsBackendPreflight = @('django', 'celery-worker', 'celery-beat') | Where-Object { $_ -in $Components }
+$needsBackendPreflight = $Components | Where-Object { $_ -eq 'django' -or $_ -like 'celery-*' }
 if ($needsBackendPreflight) {
     Push-Location $Backend
     try {
@@ -131,6 +153,8 @@ if ($needsBackendPreflight) {
         if ($LASTEXITCODE -ne 0) { throw 'Staff role synchronization failed.' }
         & $Python manage.py sync_public_site
         if ($LASTEXITCODE -ne 0) { throw 'Django Site synchronization failed.' }
+        & $Python manage.py declare_celery_topology --max-retries=3
+        if ($LASTEXITCODE -ne 0) { throw 'Celery topology declaration failed; refusing to start mismatched consumers.' }
     } finally {
         Pop-Location
     }
@@ -142,8 +166,17 @@ if ('django' -in $Components -and 'django' -notin $runningNames) {
     if (Test-Port 8000) { Write-Host 'django: port 8000 already in use; leaving existing server untouched.' }
     else { $entries += Start-AppProcess 'django' $Backend $Python @('manage.py', 'runserver', '127.0.0.1:8000') }
 }
-if ('celery-worker' -in $Components -and 'celery-worker' -notin $runningNames) {
-    $entries += Start-AppProcess 'celery-worker' $Backend $Python @('-m', 'celery', '-A', 'ai_interview_backend', 'worker', '-l', 'info', '-P', 'solo', '-Q', 'celery,agent,documents,media,notifications')
+if ('celery-worker' -in $runningNames) {
+    throw 'A legacy shared worker is still managed. Stop it with -Action down -Components celery-worker before starting isolated workers.'
+}
+foreach ($role in $WorkerRoles) {
+    $name = "celery-$role"
+    if ($name -in $Components -and $name -notin $runningNames) {
+        # Windows uses one solo process per role. Queue names come from Django
+        # settings, not a second hardcoded topology in this script.
+        $entries += Start-AppProcess $name $Backend $Python @('manage.py', 'run_isolated_worker',
+            '--role', $role, '--pool', 'solo', '--concurrency', '1')
+    }
 }
 if ('celery-beat' -in $Components -and 'celery-beat' -notin $runningNames) {
     $entries += Start-AppProcess 'celery-beat' $Backend $Python @('-m', 'celery', '-A', 'ai_interview_backend', 'beat', '-l', 'info')

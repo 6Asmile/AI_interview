@@ -47,8 +47,7 @@ onMounted(() => {
         <el-sub-menu index="/resumes">
           <template #title>简历中心</template>
           <el-menu-item index="/dashboard/resumes">我的简历</el-menu-item>
-          <el-menu-item index="/dashboard/generate-resume">AI 简历生成</el-menu-item>
-          <el-menu-item index="/dashboard/ai-diagnosis">AI 简历诊断</el-menu-item>
+          <el-menu-item index="/dashboard/resume-templates">模板中心</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="/interviews">
           <template #title>我的面试</template>
@@ -111,6 +110,7 @@ onMounted(() => {
           <el-menu-item index="/dashboard/community">技术社区</el-menu-item>
           <el-menu-item index="/dashboard/chat">我的私信</el-menu-item>
           <el-menu-item index="/dashboard/resumes">我的简历</el-menu-item>
+          <el-menu-item index="/dashboard/resume-templates">简历模板</el-menu-item>
           <el-menu-item index="/dashboard/interviews">开始面试</el-menu-item>
           <el-menu-item index="/dashboard/knowledge">知识库</el-menu-item>
           <el-menu-item index="/dashboard/history">面试记录</el-menu-item>

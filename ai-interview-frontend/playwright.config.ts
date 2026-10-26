@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const documentationVirtualMedia = process.env.IFACEOFF_DOCS_VIRTUAL_MEDIA === '1';
+
 export default defineConfig({
   testDir: './tests/e2e',
   outputDir: '../logs/playwright-results',
@@ -14,5 +16,11 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
+    permissions: documentationVirtualMedia ? ['camera', 'microphone'] : [],
+    launchOptions: {
+      args: documentationVirtualMedia
+        ? ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream']
+        : [],
+    },
   },
 });

@@ -135,14 +135,15 @@
             <span class="answer-length-indicator">正文约 {{ answerPlainText.length }} 字</span>
             <span v-if="audioArtifactId" class="draft-indicator draft-indicator--soft">已关联语音记录</span>
           </div>
-          <div v-if="interimTranscript" class="interim-transcript-card">
-            <span>浏览器实时转写</span>
-            <p>{{ interimTranscript }}</p>
+          <div v-if="interimTranscript || browserPreviewTranscript" class="interim-transcript-card">
+            <span>浏览器临时字幕（不写入回答）</span>
+            <p>{{ interimTranscript || browserPreviewTranscript }}</p>
           </div>
           <div v-if="backendAsrStatus !== 'idle' || backendAsrError" class="interim-transcript-card">
-            <span>后端 ASR：{{ backendAsrStatus }}</span>
+            <span>后端权威 ASR：{{ backendAsrStatus }}</span>
             <p v-if="backendAsrError">{{ backendAsrError }}</p>
-            <p v-else>{{ backendAsrStatus === 'transcribing' ? '正在使用已配置 ASR 模型生成最终转写...' : '语音采集中，停止后生成最终转写。' }}</p>
+            <p v-else-if="backendPartialTranscript">{{ backendPartialTranscript }}</p>
+            <p v-else>{{ backendAsrStatus === 'transcribing' ? '正在收束最终文本...' : '后端正在生成临时 Partial，最终文本只以 Final 为准。' }}</p>
           </div>
           <div class="speech-control-bar flex items-center justify-center gap-4 p-3 mt-2 bg-white/50 rounded-lg">
             <el-tooltip content="开始语音输入" placement="top" :disabled="isListening">
@@ -259,9 +260,10 @@ import { useRoute, useRouter } from 'vue-router';
 import { useFaceApi, emotionMap } from '@/composables/useFaceApi';
 import { useTTS } from '@/composables/useTTS';
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition';
+import { useStreamingPcm } from '@/composables/useStreamingPcm';
 import { ElMessage, ElMessageBox, ElButton, ElProgress, ElIcon, ElAvatar, ElTooltip } from 'element-plus';
 import { VideoPlay, VideoPause, RefreshRight, Microphone, SwitchButton, VideoCamera } from '@element-plus/icons-vue';
-import { getInterviewSessionApi, submitAnswerStreamApi, finishInterviewApi, regenerateNextQuestionApi, generateQuestionTTSApi, getInterviewQuestionGenerationJobsApi, SubmitAnswerStreamError, type InterviewSessionItem, type InterviewQuestionItem, type AnalysisFrame, type AnswerFeedback, type InterviewQuestionGenerationJobItem } from '@/api/modules/interview';
+import { getInterviewSessionApi, submitAnswerStreamApi, finishInterviewApi, regenerateNextQuestionApi, generateQuestionTTSApi, streamQuestionTTSApi, recordSpeechMetricApi, getInterviewQuestionGenerationJobsApi, SubmitAnswerStreamError, type InterviewSessionItem, type InterviewQuestionItem, type AnalysisFrame, type AnswerFeedback, type InterviewQuestionGenerationJobItem } from '@/api/modules/interview';
 import { VideoUploader } from '@/api/modules/videoUpload';
 import { createWebSocketTicketApi, resolveWebSocketBase } from '@/api/modules/realtime';
 import aiAvatar from '@/assets/images/image.png';
@@ -306,18 +308,27 @@ const answerAudioRecorder = ref<MediaRecorder | null>(null);
 const answerAudioStream = ref<MediaStream | null>(null);
 const backendAsrStatus = ref<'idle' | 'connecting' | 'listening' | 'transcribing' | 'completed' | 'failed'>('idle');
 const backendAsrError = ref('');
+const backendPartialTranscript = ref('');
+const browserPreviewTranscript = ref('');
+const activeUtteranceId = ref('');
+const lastFinalUtteranceId = ref('');
+const voiceAnswerBase = ref('');
 const audioArtifactId = ref('');
 const asrTranscriptMeta = ref<Record<string, any>>({});
 const backendQuestionAudio = ref<HTMLAudioElement | null>(null);
 const isBackendTtsPlaying = ref(false);
+const { isPlaying: isStreamingTtsPlaying, firstChunkMs: ttsFirstChunkMs, lastCancelLatencyMs, play: playPcmStream, cancel: cancelPcmStream } = useStreamingPcm();
 const SHORT_ANSWER_THRESHOLD = 24;
 const draftStorageKey = computed(() => {
   if (!sessionInfo.value?.id || !currentQuestion.value?.id) return '';
   return `interview-answer-draft:${sessionInfo.value.id}:${currentQuestion.value.id}`;
 });
 const handleSpeechResult = (transcript: string) => {
-  if (userAnswer.value.endsWith('</p>')) { userAnswer.value = userAnswer.value.slice(0, -4) + transcript + '</p>'; } 
-  else { userAnswer.value += transcript; }
+  if (answerInputMode.value === 'voice') {
+    browserPreviewTranscript.value = transcript;
+    return;
+  }
+  appendTranscriptToAnswer(transcript);
 };
 const { isListening, interimTranscript, start: startSpeech, stop: stopSpeech, clearInterimTranscript } = useSpeechRecognition(handleSpeechResult);
 const isRecording = computed(() => isListening.value || backendAsrStatus.value === 'listening' || backendAsrStatus.value === 'transcribing');
@@ -634,11 +645,25 @@ watch([isSpeaking, isPaused], ([speaking, paused]) => {
 }, { immediate: true });
 
 const stopBackendQuestionAudio = () => {
+  const startedAt = performance.now();
+  cancelPcmStream();
   if (backendQuestionAudio.value) {
     backendQuestionAudio.value.pause();
     backendQuestionAudio.value.currentTime = 0;
   }
   isBackendTtsPlaying.value = false;
+  return lastCancelLatencyMs.value ?? (performance.now() - startedAt);
+};
+
+const recordClientSpeechMetric = (metricType: 'tts_first_audio' | 'barge_in_stop' | 'transcript_duplicate', latencyMs: number) => {
+  if (!sessionInfo.value?.id || !currentQuestion.value?.id || !Number.isFinite(latencyMs)) return;
+  recordSpeechMetricApi(sessionInfo.value.id, {
+    metric_type: metricType,
+    latency_ms: Math.max(0, latencyMs),
+    question_id: currentQuestion.value.id,
+    language: navigator.language || 'zh-CN',
+    network_profile: navigator.onLine ? 'online' : 'offline',
+  }).catch(() => undefined);
 };
 
 const playWithBrowserTts = (textToSpeak: string) => {
@@ -652,6 +677,12 @@ const playWithBrowserTts = (textToSpeak: string) => {
 const toggleSpeech = async () => {
   const textToSpeak = streamedQuestionText.value || currentQuestion.value?.question_text;
   if (!textToSpeak) return;
+  if (isStreamingTtsPlaying.value) {
+    cancelPcmStream();
+    speechIcon.value = VideoPlay;
+    speechTooltip.value = '重新播放';
+    return;
+  }
   if (isBackendTtsPlaying.value && backendQuestionAudio.value) {
     backendQuestionAudio.value.pause();
     isBackendTtsPlaying.value = false;
@@ -669,6 +700,19 @@ const toggleSpeech = async () => {
   if (!sessionInfo.value?.id || !currentQuestion.value?.id) {
     playWithBrowserTts(textToSpeak);
     return;
+  }
+  try {
+    const requestedAt = performance.now();
+    const response = await streamQuestionTTSApi(sessionInfo.value.id, currentQuestion.value.id);
+    cancel();
+    speechIcon.value = VideoPause;
+    speechTooltip.value = '停止播放';
+    await playPcmStream(response, requestedAt, latencyMs => recordClientSpeechMetric('tts_first_audio', latencyMs));
+    speechIcon.value = RefreshRight;
+    speechTooltip.value = `重播问题（首音频 ${Math.round(ttsFirstChunkMs.value || 0)}ms）`;
+    return;
+  } catch {
+    // Streaming capability is optional per deployment; cached audio remains a safe fallback.
   }
   try {
     const result = await generateQuestionTTSApi(sessionInfo.value.id, currentQuestion.value.id);
@@ -704,11 +748,23 @@ const appendTranscriptToAnswer = (transcript: string) => {
   }
 };
 
+const appendTranscriptToHtml = (base: string, transcript: string) => {
+  if (!transcript.trim()) return base;
+  if (base.endsWith('</p>')) return base.slice(0, -4) + transcript + '</p>';
+  return base.trim() ? `${base}<p>${transcript}</p>` : `<p>${transcript}</p>`;
+};
+
 const startVoiceAnswer = async () => {
   if (!sessionInfo.value?.id || !currentQuestion.value?.id) return;
-  stopBackendQuestionAudio();
+  const wasAudioPlaying = isStreamingTtsPlaying.value || isBackendTtsPlaying.value || isSpeaking.value;
+  const bargeInLatencyMs = stopBackendQuestionAudio();
   cancel();
+  if (wasAudioPlaying) recordClientSpeechMetric('barge_in_stop', bargeInLatencyMs);
   backendAsrError.value = '';
+  backendPartialTranscript.value = '';
+  browserPreviewTranscript.value = '';
+  activeUtteranceId.value = crypto.randomUUID();
+  voiceAnswerBase.value = userAnswer.value;
   audioArtifactId.value = '';
   asrTranscriptMeta.value = {};
   backendAsrStatus.value = 'connecting';
@@ -725,6 +781,8 @@ const startVoiceAnswer = async () => {
         event: 'asr.start',
         question_id: currentQuestion.value?.id,
         mime_type: 'audio/webm',
+        language: navigator.language || 'zh-CN',
+        utterance_id: activeUtteranceId.value,
       }));
       const recorder = MediaRecorder.isTypeSupported('audio/webm')
         ? new MediaRecorder(stream, { mimeType: 'audio/webm' })
@@ -735,21 +793,39 @@ const startVoiceAnswer = async () => {
           socket.send(event.data);
         }
       };
-      recorder.start(2000);
+      recorder.start(Math.max(120, Math.min(500, Number(import.meta.env.VITE_ASR_CHUNK_MS || 250))));
     };
     socket.onmessage = (event) => {
       const payload = JSON.parse(event.data);
       if (payload.event === 'asr.status' && payload.status === 'transcribing') {
         backendAsrStatus.value = 'transcribing';
       }
+      if (payload.event === 'asr.partial' && payload.utterance_id === activeUtteranceId.value) {
+        backendPartialTranscript.value = payload.transcript || '';
+        backendAsrStatus.value = 'listening';
+      }
       if (payload.event === 'asr.final') {
+        if (payload.utterance_id !== activeUtteranceId.value || payload.utterance_id === lastFinalUtteranceId.value) return;
         backendAsrStatus.value = 'completed';
         audioArtifactId.value = payload.artifact_id || '';
         asrTranscriptMeta.value = {
           confidence: payload.confidence,
           source: 'backend_asr',
         };
-        appendTranscriptToAnswer(payload.transcript || '');
+        lastFinalUtteranceId.value = payload.utterance_id;
+        userAnswer.value = appendTranscriptToHtml(voiceAnswerBase.value, payload.transcript || '');
+        const transcript = String(payload.transcript || '').replace(/\s+/g, ' ').trim();
+        const plainAnswer = sanitizeHtml(userAnswer.value).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+        const duplicateCount = transcript ? plainAnswer.split(transcript).length - 1 : 0;
+        recordSpeechMetricApi(sessionInfo.value!.id, {
+          metric_type: 'transcript_duplicate',
+          latency_ms: duplicateCount > 1 ? 1 : 0,
+          question_id: currentQuestion.value?.id,
+          language: navigator.language || 'zh-CN',
+          network_profile: navigator.onLine ? 'online' : 'offline',
+        }).catch(() => undefined);
+        backendPartialTranscript.value = payload.transcript || '';
+        browserPreviewTranscript.value = '';
         ElMessage.success('语音转写完成，请确认文本后提交');
       }
       if (payload.event === 'asr.error') {
@@ -776,14 +852,22 @@ const startVoiceAnswer = async () => {
 const stopVoiceAnswer = () => {
   stopSpeech();
   if (answerAudioRecorder.value && answerAudioRecorder.value.state !== 'inactive') {
-    answerAudioRecorder.value.stop();
+    const recorder = answerAudioRecorder.value;
+    recorder.onstop = () => {
+      if (speechSocket.value?.readyState === WebSocket.OPEN) {
+        backendAsrStatus.value = 'transcribing';
+        speechSocket.value.send(JSON.stringify({ event: 'asr.stop', utterance_id: activeUtteranceId.value }));
+      }
+    };
+    recorder.stop();
   }
+  const hadRecorder = Boolean(answerAudioRecorder.value);
   answerAudioRecorder.value = null;
   answerAudioStream.value?.getTracks().forEach(track => track.stop());
   answerAudioStream.value = null;
-  if (speechSocket.value?.readyState === WebSocket.OPEN) {
+  if (!hadRecorder && speechSocket.value?.readyState === WebSocket.OPEN) {
     backendAsrStatus.value = 'transcribing';
-    speechSocket.value.send(JSON.stringify({ event: 'asr.stop' }));
+    speechSocket.value.send(JSON.stringify({ event: 'asr.stop', utterance_id: activeUtteranceId.value }));
   }
 };
 

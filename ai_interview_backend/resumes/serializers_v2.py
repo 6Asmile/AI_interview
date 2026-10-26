@@ -6,7 +6,7 @@ from careers.models import CareerFact
 
 from .models import (
     Resume, ResumeArtifact, ResumeDesignRevision, ResumeDraft, ResumeEvidenceLink,
-    ResumeImportJob, ResumeQualityReport, ResumeShareLink, ResumeSuggestion, ResumeVersion,
+    ResumeImportJob, ResumeQualityReport, ResumeShareLink, ResumeSuggestion, ResumeVariant, ResumeVersion,
 )
 from .schema import validate_resume
 from .templates import validate_design
@@ -171,13 +171,36 @@ class ResumeShareLinkSerializer(serializers.ModelSerializer):
 
 
 class ResumeSuggestionV2Serializer(serializers.ModelSerializer):
+    variant_id = serializers.SerializerMethodField()
+
     class Meta:
         model = ResumeSuggestion
         fields = (
-            'id', 'base_version', 'patch', 'summary', 'rationale', 'evidence_fact_ids', 'evidence_links',
-            'status', 'accepted_version', 'created_at', 'decided_at',
+            'id', 'base_version', 'task_key', 'job_target', 'patch', 'summary', 'rationale',
+            'evidence_fact_ids', 'evidence_links', 'status', 'accepted_version', 'variant_id',
+            'created_at', 'decided_at',
         )
         read_only_fields = ('status', 'accepted_version', 'created_at', 'decided_at')
+
+    def get_variant_id(self, obj):
+        if not obj.accepted_version_id:
+            return None
+        return ResumeVariant.objects.filter(version_id=obj.accepted_version_id).values_list('id', flat=True).first()
+
+
+class ResumeVariantSerializer(serializers.ModelSerializer):
+    source_version_number = serializers.IntegerField(source='source_version.version_number', read_only=True)
+    version_number = serializers.IntegerField(source='version.version_number', read_only=True)
+    company_name = serializers.CharField(source='job_target.company_name', read_only=True)
+    position_name = serializers.CharField(source='job_target.position_name', read_only=True)
+
+    class Meta:
+        model = ResumeVariant
+        fields = (
+            'id', 'resume', 'source_version', 'source_version_number', 'version', 'version_number',
+            'job_target', 'company_name', 'position_name', 'title', 'created_at',
+        )
+        read_only_fields = fields
 
 
 class ResumeImportJobV2Serializer(serializers.ModelSerializer):

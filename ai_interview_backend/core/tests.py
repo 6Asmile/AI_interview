@@ -16,7 +16,7 @@ from rest_framework.test import APIClient
 from chat.middleware import JwtAuthMiddleware
 from core.uploads import validate_uploaded_file
 from core.cache_policy import POLICIES, jittered_ttl
-from core.idempotency import OperationInProgress, run_idempotent
+from core.idempotency import OperationInProgress, request_fingerprint, run_idempotent
 from core.models import IdempotencyRecord
 from users.models import User
 
@@ -68,6 +68,9 @@ class IdempotencyClaimTests(TestCase):
             user=self.user,
             data={'value': 1},
             headers={'Idempotency-Key': key},
+            method='POST',
+            path='/test/',
+            FILES={},
         )
 
     def test_completed_operation_replays_without_running_callback(self):
@@ -80,17 +83,18 @@ class IdempotencyClaimTests(TestCase):
         self.assertEqual(second['X-Idempotent-Replay'], 'true')
 
     def test_active_claim_returns_operation_in_progress(self):
+        request = self.request()
         IdempotencyRecord.objects.create(
             user=self.user,
             scope='test',
             key='same-key',
-            request_hash='48208f9428d64634bd8e28ff345bf0eab60d53c18fa2fbdb0b9bc1e84df2b5f6',
+            request_hash=request_fingerprint(request, 'test'),
             status=IdempotencyRecord.Status.PENDING,
             lease_expires_at=timezone.now() + timedelta(minutes=1),
             expires_at=timezone.now() + timedelta(hours=1),
         )
         with self.assertRaises(OperationInProgress):
-            run_idempotent(self.request(), 'test', lambda: Response({'unexpected': True}))
+            run_idempotent(request, 'test', lambda: Response({'unexpected': True}))
 
     def test_retryable_response_releases_claim_for_retry(self):
         first = run_idempotent(

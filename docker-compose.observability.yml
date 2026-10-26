@@ -17,7 +17,7 @@ services:
       CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
       CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-clickhouse-change-me}
       CLICKHOUSE_CLUSTER_ENABLED: "false"
-      REDIS_HOST: redis
+      REDIS_HOST: redis-cache
       REDIS_PORT: 6379
       REDIS_AUTH: ""
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
@@ -95,6 +95,44 @@ services:
       retries: 20
     networks: [ifaceoff_infra_network]
 
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9092}:9090"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ifaceoff_prometheus_data:/prometheus
+    networks: [ifaceoff_infra_network]
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:12.1.0}
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ifaceoff_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks: [ifaceoff_infra_network]
+
 volumes:
   ifaceoff_langfuse_clickhouse_data:
     name: Ifaceoff-langfuse-clickhouse-data
@@ -102,6 +140,10 @@ volumes:
     name: Ifaceoff-langfuse-clickhouse-logs
   ifaceoff_langfuse_minio_data:
     name: Ifaceoff-langfuse-minio-data
+  ifaceoff_prometheus_data:
+    name: Ifaceoff-prometheus-data
+  ifaceoff_grafana_data:
+    name: Ifaceoff-grafana-data
 
 networks:
   ifaceoff_infra_network:

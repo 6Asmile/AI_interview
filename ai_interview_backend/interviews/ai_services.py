@@ -4,7 +4,6 @@ import os
 import json
 import re
 import uuid
-from openai import OpenAI
 from dotenv import load_dotenv
 from users.models import User
 from system.models import AISetting, AIModel
@@ -452,15 +451,12 @@ def analyze_answer(job_position: str, question: str, answer: str, user: User) ->
         "请对我的回答给出一个大约50-100字的简评。直接返回评价本身，不要包含多余内容。"
     )
     try:
-        client = OpenAI(api_key=api_key, base_url=model.base_url)
-        response = client.chat.completions.create(
-            model=model.model_slug,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            stream=False,
+        return ModelGateway(user).chat_text(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
             max_tokens=200,
-            temperature=0.6
+            temperature=0.6,
+            alias_slug='chat.default',
         )
-        return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"调用 AI 生成简评时发生错误: {e}")
         return "AI 在分析时遇到了一点小问题。"
@@ -900,15 +896,12 @@ def generate_reference_answer_for_question(job_position: str, question: str, use
         "3. 直接返回答案文本，不需要任何额外的问候或解释。"
     )
     try:
-        client = OpenAI(api_key=api_key, base_url=model.base_url)
-        response = client.chat.completions.create(
-            model=model.model_slug,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            stream=False,
+        return ModelGateway(user).chat_text(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
             max_tokens=1024,
-            temperature=0.6
+            temperature=0.6,
+            alias_slug='chat.default',
         )
-        return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"调用 AI 生成参考答案时发生错误: {e}")
         return "抱歉，AI 在思考参考答案时遇到了一点小问题。"

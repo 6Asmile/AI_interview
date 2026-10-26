@@ -28,6 +28,7 @@ from .serializers_v2 import (
     GrowthEventSerializer,
     TopicSerializer,
 )
+from .operation_handlers import operation_envelope
 from .services import submit_content
 
 
@@ -59,14 +60,26 @@ class CommunityContentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def publish(self, request, pk=None):
         content = self.get_object()
-        admit_expensive_operation(request, scope='community-publish')
+        def publish_content():
+            admit_expensive_operation(request, scope='community-publish')
+            submitted = submit_content(content=content, user=request.user)
+            payload = dict(self.get_serializer(submitted).data)
+            operation = getattr(submitted, '_accepted_operation', None)
+            if operation:
+                payload['operation'] = operation_envelope(operation)
+            return Response(
+                payload,
+                status=(
+                    status.HTTP_202_ACCEPTED
+                    if submitted.status == CommunityContent.Status.PENDING
+                    else status.HTTP_200_OK
+                ),
+            )
+
         return run_idempotent(
             request,
             f'community.content.{content.pk}.publish',
-            lambda: Response(
-                self.get_serializer(submit_content(content=content, user=request.user)).data,
-                status=status.HTTP_202_ACCEPTED if content.risk_level != 'low' else status.HTTP_200_OK,
-            ),
+            publish_content,
             required=True,
         )
 

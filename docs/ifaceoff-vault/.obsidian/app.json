@@ -1,0 +1,9 @@
+{
+  "alwaysUpdateLinks": true,
+  "attachmentFolderPath": "assets/screenshots",
+  "newFileLocation": "root",
+  "showLineNumber": false,
+  "strictLineBreaks": false,
+  "useMarkdownLinks": true,
+  "rightToLeft": false
+}

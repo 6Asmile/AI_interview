@@ -478,43 +478,78 @@ class KnowledgeReviewDecisionView(StaffProtectedView):
 
     def _execute(self, request, document_id, decision):
         from knowledge.models import KnowledgeDocument, KnowledgeDocumentRevision
-        from knowledge.tasks import reindex_knowledge_document
+        from knowledge.operation_handlers import REINDEX_OPERATION, create_knowledge_operation
         reason = str(request.data.get('operation_reason') or '').strip()
         if not reason:
             return Response({'code': 'operation_reason_required', 'message': '审批操作必须填写原因。'}, status=status.HTTP_400_BAD_REQUEST)
-        document = KnowledgeDocument.objects.select_related('draft_revision').filter(pk=document_id).first()
-        revision = document.draft_revision if document else None
-        if not document or not revision or revision.status != KnowledgeDocumentRevision.Status.PENDING_REVIEW:
-            return Response({'code': 'knowledge_not_reviewable', 'message': '当前版本不在待审核状态。'}, status=status.HTTP_409_CONFLICT)
-        before = {'approval_status': document.approval_status, 'revision_status': revision.status}
-        now = timezone.now()
-        if decision == 'approve':
-            if document.parse_status != KnowledgeDocument.ParseStatus.PARSED:
-                return Response({'code': 'knowledge_not_parsed', 'message': '文档解析完成后才能上线。'}, status=status.HTTP_409_CONFLICT)
-            revision.status = KnowledgeDocumentRevision.Status.APPROVED
-            revision.staff_approved_by = request.user
-            revision.approved_at = now
-            revision.rejection_reason = ''
-            document.approval_status = KnowledgeDocument.ApprovalStatus.APPROVED
-            document.staff_approved_by = request.user
-            document.approved_at = now
-            document.status = KnowledgeDocument.Status.INDEXING
-            document.rejection_reason = ''
-            revision.save()
-            document.save()
-            transaction.on_commit(lambda: reindex_knowledge_document.delay(str(document.id), str(revision.id)))
-        elif decision == 'reject':
-            revision.status = KnowledgeDocumentRevision.Status.REJECTED
-            revision.staff_approved_by = request.user
-            revision.rejection_reason = reason
-            document.approval_status = KnowledgeDocument.ApprovalStatus.REJECTED if not document.published_revision_id else document.approval_status
-            document.rejection_reason = reason
-            revision.save()
-            document.save()
-        else:
-            return Response({'code': 'invalid_review_decision', 'message': '审批动作无效。'}, status=status.HTTP_400_BAD_REQUEST)
-        audit(request, action=f'knowledge.{decision}', resource_type='KnowledgeDocument', resource_id=document.id, reason=reason, before=before, after={'approval_status': document.approval_status, 'revision_status': revision.status})
-        return Response({'id': str(document.id), 'approval_status': document.approval_status, 'index_status': document.status})
+        operation = None
+        with transaction.atomic():
+            # Lock only the document row. PostgreSQL rejects FOR UPDATE across
+            # nullable outer-joined draft_revision/created_by relations.
+            document = KnowledgeDocument.objects.select_for_update().filter(
+                pk=document_id,
+            ).first()
+            revision = document.draft_revision if document else None
+            if not document or not revision or revision.status != KnowledgeDocumentRevision.Status.PENDING_REVIEW:
+                return Response({'code': 'knowledge_not_reviewable', 'message': '当前版本不在待审核状态。'}, status=status.HTTP_409_CONFLICT)
+            before = {'approval_status': document.approval_status, 'revision_status': revision.status}
+            now = timezone.now()
+            if decision == 'approve':
+                if document.parse_status != KnowledgeDocument.ParseStatus.PARSED:
+                    return Response({'code': 'knowledge_not_parsed', 'message': '文档解析完成后才能上线。'}, status=status.HTTP_409_CONFLICT)
+                if not document.created_by:
+                    return Response({
+                        'code': 'knowledge_operation_owner_missing',
+                        'message': '该知识文档缺少可审计的业务所有者，无法创建异步 Operation。',
+                    }, status=status.HTTP_409_CONFLICT)
+                revision.status = KnowledgeDocumentRevision.Status.APPROVED
+                revision.staff_approved_by = request.user
+                revision.approved_at = now
+                revision.rejection_reason = ''
+                document.approval_status = KnowledgeDocument.ApprovalStatus.APPROVED
+                document.staff_approved_by = request.user
+                document.approved_at = now
+                document.status = KnowledgeDocument.Status.INDEXING
+                document.rejection_reason = ''
+                revision.save()
+                document.save()
+                operation = create_knowledge_operation(
+                    user=document.created_by,
+                    operation_type=REINDEX_OPERATION,
+                    source_model='KnowledgeDocument',
+                    source_id=document.id,
+                    input_version=str(revision.id),
+                    title=f'发布并索引知识文档：{document.title}',
+                    metadata={
+                        'triggered_by_staff_id': str(request.user.id),
+                        'operation_reason': reason,
+                    },
+                )
+            elif decision == 'reject':
+                revision.status = KnowledgeDocumentRevision.Status.REJECTED
+                revision.staff_approved_by = request.user
+                revision.rejection_reason = reason
+                document.approval_status = KnowledgeDocument.ApprovalStatus.REJECTED if not document.published_revision_id else document.approval_status
+                document.rejection_reason = reason
+                revision.save()
+                document.save()
+            else:
+                return Response({'code': 'invalid_review_decision', 'message': '审批动作无效。'}, status=status.HTTP_400_BAD_REQUEST)
+            audit(request, action=f'knowledge.{decision}', resource_type='KnowledgeDocument', resource_id=document.id, reason=reason, before=before, after={'approval_status': document.approval_status, 'revision_status': revision.status})
+        response = {
+            'id': str(document.id),
+            'approval_status': document.approval_status,
+            'index_status': document.status,
+        }
+        if operation:
+            response.update({
+                'operation_id': str(operation.pk),
+                'status': 'accepted',
+                'events_url': f'/api/v2/operations/{operation.pk}/events/',
+                'result_url': f'/api/v2/operations/{operation.pk}/',
+            })
+            return Response(response, status=status.HTTP_202_ACCEPTED)
+        return Response(response)
 
     def post(self, request, document_id, decision):
         return run_staff_idempotent(

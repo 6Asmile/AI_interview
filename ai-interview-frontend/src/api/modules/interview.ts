@@ -301,6 +301,39 @@ export const generateQuestionTTSApi = (
   });
 };
 
+export async function streamQuestionTTSApi(sessionId: string, questionId: number): Promise<Response> {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+  const url = `${baseURL.replace(/\/$/, '')}/interviews/${sessionId}/questions/${questionId}/tts-stream/`;
+  const execute = (token: string | null) => fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  let response = await execute(getAccessToken());
+  if (response.status === 401) {
+    const token = await refreshAccessToken();
+    response = await execute(token);
+  }
+  if (!response.ok || !response.body) throw new Error(`tts_stream_http_${response.status}`);
+  return response;
+}
+
+export type SpeechMetricType = 'asr_first_partial' | 'asr_final' | 'tts_first_audio' | 'barge_in_stop' | 'transcript_duplicate';
+
+export function recordSpeechMetricApi(sessionId: string, payload: {
+  metric_type: SpeechMetricType;
+  latency_ms: number;
+  question_id?: number;
+  language?: string;
+  network_profile?: string;
+}): Promise<{ id: number; status: string }> {
+  return request({
+    url: `/interviews/${sessionId}/speech-metrics/`,
+    method: 'post',
+    data: payload,
+  });
+}
+
 export const getInterviewMediaArtifactsApi = (sessionId: string): Promise<InterviewMediaArtifact[]> => {
   return request({
     url: `/interviews/${sessionId}/media-artifacts/`,

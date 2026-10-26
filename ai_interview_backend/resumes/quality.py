@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from interviews.configuration import resolve_agent_config, validate_prompt_output
+from system.model_gateway import ModelGateway
+
 from .schema import validation_errors
 
 
@@ -63,11 +66,84 @@ def build_quality_report(payload: dict, evidence_pointers: set[str] | None = Non
         'score': score,
         'checks': checks,
         'issues': common,
-        'reviewers': {
-            'recruiter': {'focus': ['清晰度', '相关性', '快速扫描'], 'issues': common[:5]},
-            'hiring_manager': {'focus': ['职责深度', '影响力', '可信证据'], 'issues': [i for i in common if i['priority'] != 'low'][:5]},
-            'domain_reviewer': {'focus': ['技能准确性', '项目复杂度', '可验证成果'], 'issues': [i for i in common if i['code'].startswith(('evidence.', 'content.'))][:5]},
-        },
-        'consensus': common[:10],
+        'reviewers': {},
+        'consensus': [],
         'ai_review_status': 'not_requested',
+    }
+
+
+def _normalize_ai_issue(value, perspective: str) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    message = str(value.get('message') or '').strip()[:1000]
+    if not message:
+        return None
+    priority = str(value.get('priority') or 'medium').lower()
+    if priority not in {'high', 'medium', 'low'}:
+        priority = 'medium'
+    pointer = str(value.get('pointer') or '')[:500]
+    if pointer and not pointer.startswith('/'):
+        pointer = ''
+    return _issue(
+        f'ai.{perspective}',
+        message,
+        priority,
+        pointer,
+        source=f'ai:{perspective}',
+    )
+
+
+def build_multi_perspective_review(version, deterministic_report: dict) -> tuple[dict, dict]:
+    """Run the governed resume quality prompt and preserve independent perspectives."""
+    from .intelligence import _context_item, _render_resume_prompt, build_resume_context
+
+    snapshot = resolve_agent_config()
+    envelope = build_resume_context(version=version, task_key='resume.quality_review')
+    envelope['evidence_context'].append(_context_item(
+        'deterministic_quality_report',
+        'ResumeQualityEngine',
+        'system',
+        {
+            'score': deterministic_report.get('score'),
+            'checks': deterministic_report.get('checks'),
+            'issues': deterministic_report.get('issues'),
+        },
+        [version.pk],
+    ))
+    messages, prompt_metadata = _render_resume_prompt(snapshot, 'resume.quality_review', envelope)
+    value = ModelGateway(version.resume.user).chat_json(
+        messages,
+        max_tokens=int(prompt_metadata.get('max_output_tokens', 1800)),
+        temperature=float(prompt_metadata.get('temperature', 0.1)),
+        alias_slug=prompt_metadata.get('model_alias') or 'chat.default',
+    )
+    validate_prompt_output(value, prompt_metadata.get('output_contract'))
+    perspectives = {}
+    for key in ('recruiter', 'hiring_manager', 'domain_reviewer'):
+        normalized = [
+            issue
+            for item in (value.get(key) or [])[:20]
+            if (issue := _normalize_ai_issue(item, key))
+        ]
+        perspectives[key] = {
+            'label': {
+                'recruiter': '招聘负责人',
+                'hiring_manager': '用人经理',
+                'domain_reviewer': '岗位专业评审',
+            }[key],
+            'issues': normalized,
+        }
+    consensus = [
+        issue
+        for item in (value.get('consensus') or [])[:20]
+        if (issue := _normalize_ai_issue(item, 'consensus'))
+    ]
+    return {
+        'reviewers': perspectives,
+        'consensus': consensus,
+        'ai_review_status': 'completed',
+    }, {
+        'config_hash': snapshot.get('config_hash', ''),
+        'prompt_hash': prompt_metadata.get('prompt_hash', ''),
+        'model_alias': prompt_metadata.get('model_alias') or 'chat.default',
     }

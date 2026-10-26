@@ -22,7 +22,11 @@ def etag_for(resume_json: dict, design_json: dict, revision: int) -> str:
 
 @transaction.atomic
 def ensure_studio(resume: Resume, user=None) -> tuple[ResumeDraft, ResumeDesignRevision]:
-    locked = Resume.objects.select_for_update().select_related('current_version', 'current_design_revision').get(pk=resume.pk)
+    # 只锁定 Resume 主表。current_version 与 current_design_revision 都是可空
+    # 外键；把它们 select_related 进 FOR UPDATE 查询会生成 LEFT OUTER JOIN，
+    # PostgreSQL 会以 “FOR UPDATE cannot be applied to the nullable side of an
+    # outer join” 拒绝执行。关联对象在持有主表行锁后按需单独读取即可。
+    locked = Resume.objects.select_for_update().get(pk=resume.pk)
     if not locked.current_version_id:
         from .versioning import ensure_resume_version
         ensure_resume_version(locked, user=user)
@@ -93,7 +97,9 @@ def update_draft(*, resume: Resume, user, if_match: str, resume_json=None, desig
 @transaction.atomic
 def commit_draft(*, resume: Resume, user, if_match: str, change_summary: str, source: str, evidence_links=None):
     draft, current_design = ensure_studio(resume, user)
-    draft = ResumeDraft.objects.select_for_update().select_related('resume', 'base_version').get(pk=draft.pk)
+    # base_version 可为空；PostgreSQL 禁止对外连接的可空侧加行锁。
+    # ensure_studio 已锁定 Resume，这里只锁 Draft，关联快照按需读取。
+    draft = ResumeDraft.objects.select_for_update().get(pk=draft.pk)
     if (if_match or '').strip().strip('"') != draft.etag:
         raise VersionConflict()
     version = create_resume_version(

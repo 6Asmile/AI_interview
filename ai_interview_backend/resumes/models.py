@@ -220,8 +220,10 @@ class ResumeArtifact(models.Model):
     class Format(models.TextChoices):
         PREVIEW = 'preview', '预览图'
         PDF = 'pdf', 'PDF'
+        PNG = 'png', 'PNG 长图'
         DOCX = 'docx', 'DOCX'
         JSON = 'json', 'JSON Resume'
+        MARKDOWN = 'markdown', 'Markdown'
 
     class Status(models.TextChoices):
         PENDING = 'pending', '等待生成'
@@ -362,6 +364,96 @@ class ResumeImportJob(models.Model):
         ordering = ['-created_at']
 
 
+class ResumeOperationRequest(models.Model):
+    """Database-owned input snapshot for one asynchronous resume operation.
+
+    RabbitMQ only receives the authoritative ``AsyncOperation`` identifier.
+    User instructions and all domain references stay in PostgreSQL and are
+    reloaded by the registered operation handler under the owning user.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='resume_operation_requests',
+    )
+    resume = models.ForeignKey(Resume, on_delete=models.CASCADE, related_name='operation_requests')
+    operation_type = models.CharField(max_length=80, db_index=True)
+    artifact = models.ForeignKey(
+        ResumeArtifact,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='operation_requests',
+    )
+    import_job = models.ForeignKey(
+        ResumeImportJob,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='operation_requests',
+    )
+    quality_report = models.ForeignKey(
+        ResumeQualityReport,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='operation_requests',
+    )
+    base_version = models.ForeignKey(
+        ResumeVersion,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='operation_requests',
+    )
+    task_key = models.CharField(max_length=80, blank=True)
+    instruction = models.TextField(blank=True)
+    job_target_id = models.PositiveBigIntegerField(null=True, blank=True)
+    input_hash = models.CharField(max_length=64, db_index=True)
+    result_suggestion = models.ForeignKey(
+        'ResumeSuggestion',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='operation_requests',
+    )
+    result_json = models.JSONField(default=dict, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(
+                fields=['user', 'operation_type', 'created_at'],
+                name='resume_opreq_owner_idx',
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        operation_type__in=[
+                            'resume.preview',
+                            'resume.export',
+                            'resume.share_export',
+                        ],
+                        artifact__isnull=False,
+                    )
+                    | Q(operation_type='resume.quality_review', quality_report__isnull=False)
+                    | Q(
+                        operation_type__in=['resume.import', 'resume.import.retry'],
+                        import_job__isnull=False,
+                    )
+                    | Q(operation_type='resume.suggestion', base_version__isnull=False)
+                ),
+                name='resume_opreq_target_required',
+            ),
+        ]
+
+
 class ResumeSuggestion(models.Model):
     class Status(models.TextChoices):
         PENDING = 'pending', '待处理'
@@ -375,6 +467,14 @@ class ResumeSuggestion(models.Model):
     rationale = models.TextField(blank=True)
     evidence_fact_ids = models.JSONField(default=list, blank=True)
     evidence_links = models.JSONField(default=list, blank=True)
+    task_key = models.CharField(max_length=80, blank=True, db_index=True)
+    job_target = models.ForeignKey(
+        'careers.JobTarget',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='resume_suggestions',
+    )
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
     accepted_version = models.ForeignKey(ResumeVersion, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='resume_suggestions')
@@ -396,6 +496,9 @@ class ResumeVariant(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['resume', 'version'], name='uniq_resume_variant_version'),
+        ]
 
 
 class Education(models.Model):

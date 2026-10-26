@@ -4,6 +4,10 @@ from django.conf import settings
 from django.db import models
 
 
+def default_operation_queue():
+    return settings.CELERY_DEFAULT_QUEUE
+
+
 class IdempotencyRecord(models.Model):
     """Atomically claims and stores non-streaming API operations."""
 
@@ -18,7 +22,18 @@ class IdempotencyRecord(models.Model):
     key = models.CharField(max_length=160)
     request_hash = models.CharField(max_length=64)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
-    operation_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    # ``legacy_operation_id`` preserves the request identity exposed by the
+    # original idempotency implementation. New asynchronous requests bind to
+    # the authoritative ``AsyncOperation`` below; this legacy value is retained
+    # only for migration/audit and is never exposed as a public operation ID.
+    legacy_operation_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    operation = models.ForeignKey(
+        'AsyncOperation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='idempotency_claims',
+    )
     claim_token = models.UUIDField(null=True, blank=True, editable=False)
     response_status = models.PositiveSmallIntegerField(default=200)
     response_body = models.JSONField(default=dict, blank=True)
@@ -36,12 +51,21 @@ class IdempotencyRecord(models.Model):
 
 
 class AsyncOperation(models.Model):
-    """A lightweight cross-module task registry used by the candidate task center."""
+    """Authoritative lifecycle for a user-visible asynchronous operation.
+
+    Domain rows remain the source of their business result, while this record
+    owns dispatch, claiming, retry/cancel and the public operation identity.
+    Legacy source fields are retained so the existing task center can migrate
+    incrementally without rewriting historical rows.
+    """
 
     class Status(models.TextChoices):
         PENDING = 'pending', '排队中'
+        CLAIMED = 'claimed', '已领取'
         RUNNING = 'running', '处理中'
+        RETRYING = 'retrying', '等待重试'
         REVIEW_REQUIRED = 'review_required', '待确认'
+        CANCEL_REQUESTED = 'cancel_requested', '取消中'
         SUCCEEDED = 'succeeded', '已完成'
         FAILED = 'failed', '失败'
         CANCELED = 'canceled', '已取消'
@@ -59,6 +83,27 @@ class AsyncOperation(models.Model):
     error_message = models.TextField(blank=True)
     retryable = models.BooleanField(default=False)
     metadata = models.JSONField(default=dict, blank=True)
+    idempotency_key_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    input_type = models.CharField(max_length=80, blank=True)
+    input_id = models.CharField(max_length=120, blank=True)
+    input_version = models.CharField(max_length=120, blank=True)
+    input_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    result_type = models.CharField(max_length=80, blank=True)
+    result_id = models.CharField(max_length=120, blank=True)
+    result_json = models.JSONField(default=dict, blank=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=5)
+    lease_owner = models.CharField(max_length=160, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    fencing_token = models.PositiveBigIntegerField(default=0)
+    version = models.PositiveBigIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    celery_task_id = models.CharField(max_length=80, blank=True)
+    correlation_id = models.UUIDField(default=uuid.uuid4, db_index=True)
+    trace_id = models.CharField(max_length=64, blank=True, db_index=True)
+    cancel_requested_at = models.DateTimeField(null=True, blank=True)
+    last_event_sequence = models.PositiveBigIntegerField(default=0)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -68,9 +113,115 @@ class AsyncOperation(models.Model):
         ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(
-                fields=['user', 'source_app', 'source_model', 'source_id'],
-                name='uniq_async_operation_source',
+                fields=['user', 'operation_type', 'idempotency_key_hash'],
+                condition=~models.Q(idempotency_key_hash=''),
+                name='uniq_operation_business_idempotency',
             ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status__in=['claimed', 'running'])
+                    | (
+                        ~models.Q(lease_owner='')
+                        & models.Q(lease_expires_at__isnull=False)
+                    )
+                ),
+                name='operation_active_requires_lease',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status__in=['succeeded', 'failed', 'canceled'])
+                    | models.Q(completed_at__isnull=False)
+                ),
+                name='operation_terminal_has_completed_at',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attempt_count__lte=models.F('max_attempts')),
+                name='operation_attempt_within_limit',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(progress__lte=100),
+                name='operation_progress_valid',
+            ),
+        ]
+
+
+class OperationDispatchOutbox(models.Model):
+    """Durable command intent for one authoritative operation.
+
+    The payload is deliberately limited to identifiers by the operation
+    service. Workers always reload inputs and authorization context from
+    PostgreSQL.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', '待投递'
+        PUBLISHING = 'publishing', '投递中'
+        PUBLISHED = 'published', '已投递'
+        FAILED = 'failed', '待重试'
+        DEAD = 'dead', '已进入死信'
+        CANCELED = 'canceled', '已取消'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation = models.ForeignKey(
+        AsyncOperation,
+        on_delete=models.CASCADE,
+        related_name='dispatches',
+    )
+    task_name = models.CharField(max_length=200, default='core.tasks.execute_operation', editable=False)
+    queue = models.CharField(max_length=80, default=default_operation_queue)
+    routing_key = models.CharField(max_length=120, blank=True)
+    payload = models.JSONField(default=dict, blank=True, editable=False)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempts = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=12)
+    available_at = models.DateTimeField(db_index=True)
+    locked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    celery_task_id = models.CharField(max_length=80, blank=True)
+    last_error = models.TextField(blank=True)
+    fencing_token = models.PositiveBigIntegerField(default=0)
+    version = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['status', 'available_at', 'created_at'], name='core_opdisp_ready_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['operation', 'fencing_token'],
+                name='uniq_operation_dispatch_fence',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        # Dispatch rows are data, never executable instructions supplied by an
+        # API caller. Keep the task fixed and carry only the authoritative ID.
+        self.task_name = 'core.tasks.execute_operation'
+        self.payload = {'operation_id': str(self.operation_id)}
+        return super().save(*args, **kwargs)
+
+
+class OperationEvent(models.Model):
+    """Append-only durable progress/event stream for an operation."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation = models.ForeignKey(AsyncOperation, on_delete=models.CASCADE, related_name='events')
+    sequence = models.PositiveBigIntegerField()
+    event_type = models.CharField(max_length=120, db_index=True)
+    status = models.CharField(max_length=24, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['sequence']
+        constraints = [
+            models.UniqueConstraint(fields=['operation', 'sequence'], name='uniq_operation_event_sequence'),
+        ]
+        indexes = [
+            models.Index(fields=['operation', 'created_at'], name='core_opevent_time_idx'),
         ]
 
 
@@ -150,6 +301,11 @@ class ConsumerInbox(models.Model):
         db_index=True,
     )
     attempts = models.PositiveIntegerField(default=1)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    lease_owner = models.CharField(max_length=160, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    fencing_token = models.PositiveBigIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
     result = models.JSONField(default=dict, blank=True)
     last_error = models.TextField(blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)

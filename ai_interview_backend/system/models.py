@@ -319,10 +319,13 @@ class ModelAttempt(models.Model):
     attempt_number = models.PositiveSmallIntegerField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.RUNNING, db_index=True)
     retryable = models.BooleanField(default=False)
+    error_category = models.CharField(max_length=32, blank=True)
     error_code = models.CharField(max_length=120, blank=True)
     http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    provider_request_id = models.CharField(max_length=200, blank=True)
     input_tokens = models.PositiveIntegerField(default=0)
     output_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost = models.DecimalField(max_digits=12, decimal_places=6, default=0)
     latency_ms = models.PositiveIntegerField(default=0)
     metadata = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
@@ -333,3 +336,9 @@ class ModelAttempt(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['request', 'attempt_number'], name='uniq_model_request_attempt'),
         ]
+
+
+# ``ModelRequestLedger`` is retained as the database/API compatibility name.
+# New gateway code may use the shorter platform contract name without creating
+# a second source of truth or another table.
+ModelRequest = ModelRequestLedger

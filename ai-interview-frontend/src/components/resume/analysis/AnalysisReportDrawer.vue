@@ -78,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import type { AnalysisReport } from '@/api/modules/resumeEditor';
+import type { AnalysisReport } from '@/api/modules/report';
 import { CircleCheckFilled, WarningFilled, Opportunity } from '@element-plus/icons-vue';
 
 defineProps<{

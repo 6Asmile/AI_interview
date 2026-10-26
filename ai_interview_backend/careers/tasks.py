@@ -10,26 +10,19 @@ from .models import CareerTimelineEvent, JobApplication, JobMatchAnalysis, Learn
 from .services import record_timeline_event, stable_hash
 
 
-@shared_task(
-    bind=True,
-    autoretry_for=(ConnectionError, TimeoutError),
-    retry_backoff=True,
-    retry_jitter=True,
-    max_retries=3,
-    acks_late=True,
-    reject_on_worker_lost=True,
-    soft_time_limit=150,
-    time_limit=180,
-)
-def run_job_match_analysis(self, analysis_id: str):
-    analysis = JobMatchAnalysis.objects.select_related(
-        'user', 'job_target', 'resume_version'
-    ).get(pk=analysis_id)
+def execute_job_match_analysis(analysis: JobMatchAnalysis, *, legacy_operation=None):
+    """Execute the domain transition without owning the unified Operation.
+
+    ``legacy_operation`` exists only for already-published direct Celery
+    messages. Registered operation handlers always pass ``None`` and the core
+    worker exclusively owns operation state, retries, fencing and completion.
+    """
+
     if analysis.status == JobMatchAnalysis.Status.SUCCEEDED:
         return {'analysis_id': str(analysis.pk), 'status': analysis.status}
     JobMatchAnalysis.objects.filter(pk=analysis.pk).update(status=JobMatchAnalysis.Status.RUNNING)
-    if analysis.operation_id:
-        AsyncOperation.objects.filter(pk=analysis.operation_id).update(
+    if legacy_operation:
+        AsyncOperation.objects.filter(pk=legacy_operation.pk).update(
             status=AsyncOperation.Status.RUNNING,
             progress=10,
             started_at=timezone.now(),
@@ -64,8 +57,8 @@ def run_job_match_analysis(self, analysis_id: str):
                 config_hash=stable_hash(config_snapshot),
                 completed_at=now,
             )
-            if analysis.operation_id:
-                AsyncOperation.objects.filter(pk=analysis.operation_id).update(
+            if legacy_operation:
+                AsyncOperation.objects.filter(pk=legacy_operation.pk).update(
                     status=AsyncOperation.Status.SUCCEEDED,
                     progress=100,
                     metadata={'result_type': 'JobMatchAnalysis', 'result_id': str(analysis.pk)},
@@ -101,8 +94,8 @@ def run_job_match_analysis(self, analysis_id: str):
             error_code=type(exc).__name__[:120],
             completed_at=now,
         )
-        if analysis.operation_id:
-            AsyncOperation.objects.filter(pk=analysis.operation_id).update(
+        if legacy_operation:
+            AsyncOperation.objects.filter(pk=legacy_operation.pk).update(
                 status=AsyncOperation.Status.FAILED,
                 progress=100,
                 error_code=type(exc).__name__[:120],
@@ -111,6 +104,30 @@ def run_job_match_analysis(self, analysis_id: str):
                 completed_at=now,
             )
         raise
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_jitter=True,
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=150,
+    time_limit=180,
+)
+def run_job_match_analysis(self, analysis_id: str, operation_id='linked'):
+    analysis = JobMatchAnalysis.objects.select_related(
+        'user', 'job_target', 'resume_version', 'operation',
+    ).get(pk=analysis_id)
+    if operation_id == 'linked':
+        legacy_operation = analysis.operation
+    elif operation_id:
+        legacy_operation = AsyncOperation.objects.filter(pk=operation_id).first()
+    else:
+        legacy_operation = None
+    return execute_job_match_analysis(analysis, legacy_operation=legacy_operation)
 
 
 @shared_task

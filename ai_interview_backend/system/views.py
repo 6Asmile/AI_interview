@@ -7,6 +7,7 @@ from django.conf import settings
 from django.core.cache import caches
 from django.db import connection
 from django.db.models import Q
+from django.http import HttpResponse
 from rest_framework import generics, permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -36,6 +37,12 @@ from .serializers import (
     UsageBudgetSerializer,
 )
 from .model_gateway import ModelGateway
+from .observability import (
+    build_runtime_capabilities,
+    inspect_celery_workers,
+    operational_queue_snapshot,
+    render_prometheus_metrics,
+)
 
 
 class SystemReadinessView(APIView):
@@ -101,12 +108,7 @@ class SystemReadinessView(APIView):
                 return {}
 
         def check_worker():
-            from ai_interview_backend.celery_app import app
-            timeout = float(getattr(settings, 'CELERY_INSPECT_TIMEOUT_SECONDS', 2))
-            replies = app.control.inspect(timeout=timeout).ping() or {}
-            if not replies:
-                raise RuntimeError('no_worker_heartbeat')
-            return {'workers': len(replies)}
+            return inspect_celery_workers()
 
         def check_http(url, headers=None):
             response = requests.get(url, headers=headers or {}, timeout=2)
@@ -121,9 +123,13 @@ class SystemReadinessView(APIView):
             critical=agent_db_critical,
         )
         run('redis_cache', lambda: check_cache('default'), critical=False)
-        run('redis_realtime', lambda: check_cache('realtime'), critical=True)
-        run('rabbitmq', check_broker, critical=True)
-        run('celery_worker', check_worker, critical=True)
+        run('redis_coordination', lambda: check_cache('coordination'), critical=False)
+        run('redis_realtime', lambda: check_cache('realtime'), critical=False)
+        # Broker and workers are capability dependencies, not global API
+        # readiness dependencies: durable outboxes keep accepted work pending.
+        run('rabbitmq', check_broker, critical=False)
+        run('celery_worker', check_worker, critical=False)
+        run('async_state', lambda: {'snapshot': operational_queue_snapshot()}, critical=False)
 
         qdrant_url = str(getattr(settings, 'QDRANT_URL', '') or '').rstrip('/')
         if qdrant_url:
@@ -155,12 +161,40 @@ class SystemReadinessView(APIView):
             else:
                 checks['langfuse_database'] = {'ok': False, 'critical': False, 'reason': 'not_configured'}
 
+        worker_state = checks.get('celery_worker', {})
+        capabilities = build_runtime_capabilities(checks, worker_state)
         critical_ok = all(item['ok'] for item in checks.values() if item.get('critical'))
         return Response({
             'ok': critical_ok,
-            'async_jobs_available': bool(checks.get('celery_worker', {}).get('ok')),
+            'async_jobs_available': capabilities['async_jobs'],
+            'capabilities': capabilities,
+            'topology': {
+                'version': settings.CELERY_TOPOLOGY_VERSION,
+                'main_queues': settings.CELERY_MAIN_QUEUE_NAMES,
+                'dead_letter_queues': settings.CELERY_DLQ_NAMES,
+                'publisher_queue': settings.CELERY_PUBLISHER_QUEUE,
+            },
+            'async_state': checks.get('async_state', {}).get('snapshot', {}),
             'components': checks,
         }, status=200 if critical_ok else 503)
+
+
+class InternalMetricsView(APIView):
+    """Prometheus endpoint containing aggregate, low-cardinality runtime data."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        try:
+            snapshot = operational_queue_snapshot()
+            payload = render_prometheus_metrics(snapshot)
+        except Exception:
+            payload = render_prometheus_metrics(None, collection_error=True)
+        return HttpResponse(
+            payload,
+            content_type='text/plain; version=0.0.4; charset=utf-8',
+        )
 
 class AIModelListView(generics.ListAPIView):
     """

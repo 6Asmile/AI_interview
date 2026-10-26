@@ -4,6 +4,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from core.models import AsyncOperation
+
 from .models import KnowledgeChunk, KnowledgeDocument, KnowledgeImportBatch
 from .services import index_document, search_knowledge_context, split_text
 from .tasks import process_import_file
@@ -419,11 +421,12 @@ class KnowledgeDocumentViewSetTests(TestCase):
         request = self.factory.post(f'/knowledge/documents/{document.id}/reindex/')
         force_authenticate(request, user=self.user)
 
-        with patch('knowledge.views.reindex_knowledge_document.delay') as delay:
-            response = view(request, pk=str(document.id))
+        response = view(request, pk=str(document.id))
 
         self.assertEqual(response.status_code, 202)
-        delay.assert_called_once_with(str(document.id))
+        operation = AsyncOperation.objects.get(pk=response.data['operation_id'])
+        self.assertEqual(operation.input_id, str(document.id))
+        self.assertEqual(operation.dispatches.get().payload, {'operation_id': str(operation.pk)})
         document.refresh_from_db()
         self.assertEqual(document.status, KnowledgeDocument.Status.INDEXING)
 
@@ -436,14 +439,13 @@ class KnowledgeDocumentViewSetTests(TestCase):
         }, format='json')
         force_authenticate(request, user=self.user)
 
-        with patch('knowledge.views.reindex_knowledge_document.delay') as delay:
-            response = view(request)
+        response = view(request)
 
         self.assertEqual(response.status_code, 201)
         document = KnowledgeDocument.objects.get(id=response.data['id'])
         self.assertEqual(document.status, KnowledgeDocument.Status.DRAFT)
         self.assertEqual(document.approval_status, KnowledgeDocument.ApprovalStatus.DRAFT)
-        delay.assert_not_called()
+        self.assertFalse(AsyncOperation.objects.filter(source_id=str(document.pk)).exists())
 
     def test_submit_review_and_hr_approve_dispatches_index(self):
         document = KnowledgeDocument.objects.create(title='待审核库', content='content', created_by=self.user)
@@ -460,14 +462,14 @@ class KnowledgeDocumentViewSetTests(TestCase):
         approve_request = self.factory.post(f'/knowledge/documents/{document.id}/approve/')
         force_authenticate(approve_request, user=self.hr)
 
-        with patch('knowledge.views.reindex_knowledge_document.delay') as delay:
-            approve_response = approve_view(approve_request, pk=str(document.id))
+        approve_response = approve_view(approve_request, pk=str(document.id))
 
         self.assertEqual(approve_response.status_code, 200)
         document.refresh_from_db()
         self.assertEqual(document.approval_status, KnowledgeDocument.ApprovalStatus.APPROVED)
         self.assertEqual(document.status, KnowledgeDocument.Status.INDEXING)
-        delay.assert_called_once_with(str(document.id))
+        operation = AsyncOperation.objects.get(pk=approve_response.data['operation']['operation_id'])
+        self.assertEqual(operation.dispatches.get().payload, {'operation_id': str(operation.pk)})
 
     def test_candidate_cannot_approve_document(self):
         document = KnowledgeDocument.objects.create(
@@ -496,7 +498,8 @@ class KnowledgeDocumentViewSetTests(TestCase):
 
         response = view(request)
 
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(response.data['operations']), 1)
         self.assertEqual(KnowledgeImportBatch.objects.count(), 1)
         batch = KnowledgeImportBatch.objects.get()
         import_file = batch.import_files.get()
@@ -516,7 +519,8 @@ class KnowledgeDocumentViewSetTests(TestCase):
 
         response = view(request)
 
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.data['operations'], [])
         batch = KnowledgeImportBatch.objects.get()
         import_file = batch.import_files.get()
         with self.assertRaises(Exception):

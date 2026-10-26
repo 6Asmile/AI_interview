@@ -10,7 +10,7 @@ from django.utils import timezone
 from core.models import AsyncOperation
 from .json_resume import imported_text_to_json_resume
 from .models import Resume, ResumeArtifact, ResumeImportJob, ResumeQualityReport
-from .quality import build_quality_report
+from .quality import build_multi_perspective_review, build_quality_report
 from .rendering import RenderFailure, render_artifact
 
 
@@ -107,8 +107,15 @@ def process_resume_import_job(self, job_id: int, operation_id: str | None = None
         job.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
         resume.status = Resume.Status.FAILED
         resume.save(update_fields=['status', 'updated_at'])
-        _operation_failed(operation, 'resume_import_failed', job.error_message, retryable=True)
-        return {'status': job.status, 'error': job.error_message}
+        retryable = isinstance(exc, (ConnectionError, TimeoutError, RuntimeError))
+        _operation_failed(operation, 'resume_import_failed', job.error_message, retryable=retryable)
+        return {
+            'status': job.status,
+            'error': job.error_message,
+            'error_code': 'resume_import_failed',
+            'exception_type': type(exc).__name__[:120],
+            'retryable': retryable,
+        }
 
 
 @transaction.atomic
@@ -191,7 +198,7 @@ def render_resume_artifact(self, artifact_id: str, operation_id: str | None = No
         artifact.save(update_fields=['status', 'error_code', 'error_message', 'completed_at'])
         retryable = exc.code in {'renderer_timeout', 'renderer_unavailable'}
         _operation_failed(operation, exc.code, str(exc), retryable=retryable)
-        return {'status': artifact.status, 'error_code': exc.code}
+        return {'status': artifact.status, 'error_code': exc.code, 'retryable': retryable}
     except Exception as exc:
         artifact.status = ResumeArtifact.Status.FAILED
         artifact.error_code = 'renderer_internal_error'
@@ -199,7 +206,7 @@ def render_resume_artifact(self, artifact_id: str, operation_id: str | None = No
         artifact.completed_at = timezone.now()
         artifact.save(update_fields=['status', 'error_code', 'error_message', 'completed_at'])
         _operation_failed(operation, 'renderer_internal_error', str(exc), retryable=True)
-        return {'status': artifact.status, 'error_code': artifact.error_code}
+        return {'status': artifact.status, 'error_code': artifact.error_code, 'retryable': True}
 
 
 @shared_task(bind=True, autoretry_for=(), retry_backoff=False)
@@ -218,11 +225,25 @@ def review_resume_quality(self, report_id: int, operation_id: str | None = None)
     try:
         pointers = set(report.content_version.evidence_links.values_list('json_pointer', flat=True))
         result = build_quality_report(report.content_version.resume_json, pointers)
+        try:
+            ai_result, ai_metadata = build_multi_perspective_review(report.content_version, result)
+            result.update(ai_result)
+            result['ai_metadata'] = ai_metadata
+            report.config_hash = ai_metadata.get('config_hash') or report.config_hash
+        except Exception as ai_exc:
+            # Deterministic ATS checks remain useful and must not be hidden by a
+            # provider outage. The UI exposes this as a separate degraded layer.
+            result.update({
+                'ai_review_status': 'unavailable',
+                'ai_error_code': type(ai_exc).__name__[:120],
+                'reviewers': {},
+                'consensus': [],
+            })
         report.report_json = result
         report.score = result['score']
         report.status = ResumeQualityReport.Status.COMPLETED
         report.completed_at = timezone.now()
-        report.save(update_fields=['report_json', 'score', 'status', 'completed_at'])
+        report.save(update_fields=['report_json', 'score', 'config_hash', 'status', 'completed_at'])
         _operation_succeeded(operation, {'quality_report_id': report.id})
         return {'status': report.status, 'quality_report_id': report.id}
     except Exception as exc:
@@ -230,8 +251,14 @@ def review_resume_quality(self, report_id: int, operation_id: str | None = None)
         report.error_message = str(exc)[:2000]
         report.completed_at = timezone.now()
         report.save(update_fields=['status', 'error_message', 'completed_at'])
-        _operation_failed(operation, 'quality_review_failed', str(exc), retryable=True)
-        return {'status': report.status, 'error_code': 'quality_review_failed'}
+        retryable = isinstance(exc, (ConnectionError, TimeoutError, RuntimeError))
+        _operation_failed(operation, 'quality_review_failed', str(exc), retryable=retryable)
+        return {
+            'status': report.status,
+            'error_code': 'quality_review_failed',
+            'exception_type': type(exc).__name__[:120],
+            'retryable': retryable,
+        }
 
 
 @shared_task(bind=True, autoretry_for=(), retry_backoff=False)

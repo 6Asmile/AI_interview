@@ -9,14 +9,17 @@ const status = ref('');
 const tasks = ref<AsyncTaskItem[]>([]);
 let timer: number | undefined;
 const statusLabels: Record<AsyncTaskStatus, string> = {
-  pending: '排队中', running: '处理中', review_required: '待确认',
+  pending: '排队中', claimed: '已领取', running: '处理中', retrying: '等待重试',
+  review_required: '待人工确认', cancel_requested: '取消中',
   succeeded: '已完成', failed: '失败', canceled: '已取消',
 };
 const statusType = (value: AsyncTaskStatus) => ({
-  pending: 'info', running: 'primary', review_required: 'warning',
+  pending: 'info', claimed: 'primary', running: 'primary', retrying: 'warning',
+  review_required: 'warning', cancel_requested: 'warning',
   succeeded: 'success', failed: 'danger', canceled: 'info',
 }[value] as any);
-const activeCount = computed(() => tasks.value.filter(item => ['pending', 'running'].includes(item.status)).length);
+const activeStatuses: AsyncTaskStatus[] = ['pending', 'claimed', 'running', 'retrying', 'cancel_requested'];
+const activeCount = computed(() => tasks.value.filter(item => activeStatuses.includes(item.status)).length);
 
 const load = async (silent = false) => {
   if (!silent) loading.value = true;
@@ -57,7 +60,7 @@ onUnmounted(() => timer && window.clearInterval(timer));
       <article v-for="item in tasks" :key="item.id" class="task-row">
         <div class="task-main">
           <div class="task-title"><strong>{{ item.title }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabels[item.status] }}</el-tag></div>
-          <el-progress v-if="['pending', 'running'].includes(item.status)" :percentage="item.progress" :stroke-width="8" />
+          <el-progress v-if="activeStatuses.includes(item.status)" :percentage="item.progress" :stroke-width="8" />
           <p v-if="item.error_message" class="task-error">{{ item.error_message }}</p>
           <small>创建于 {{ formatDateTime(item.created_at) }}<template v-if="item.completed_at"> · 完成于 {{ formatDateTime(item.completed_at) }}</template></small>
         </div>

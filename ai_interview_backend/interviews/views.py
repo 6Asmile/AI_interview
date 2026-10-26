@@ -47,6 +47,7 @@ from .models import (
     InterviewReferenceAnswer,
     InterviewRubric,
     InterviewSession,
+    SpeechLatencyMetric,
     InterviewTemplate,
 )
 from .execution import create_answer_execution, durable_execution_snapshot, short_lock_timeout
@@ -76,7 +77,7 @@ from .ai_services import (
 from .agent import get_interview_agent_engine
 from .configuration import assemble_generation_context, resolve_agent_config, stable_hash
 from .agent_v4.events import publish_agent_event, read_agent_events
-from .speech_services import synthesize_question_tts
+from .speech_services import stream_question_tts, synthesize_question_tts
 from urllib.parse import quote
 
 def format_resume_to_text(resume: Resume) -> str:
@@ -257,16 +258,80 @@ class EvaluationRunViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.none()
 
-    def perform_create(self, serializer):
-        if not can_manage_interview_system(self.request.user):
-            raise PermissionDenied('只有管理员或HR可以运行离线评估。')
-        run = serializer.save(created_by=self.request.user)
-        try:
-            from .tasks import run_evaluation_run
-            run_evaluation_run.delay(run.id)
-        except Exception:
-            from .evaluation import run_offline_rule_evaluation
-            run_offline_rule_evaluation(run)
+    def create(self, request, *args, **kwargs):
+        if not can_manage_interview_system(request.user):
+            raise PermissionDenied('只有管理员或 HR 可以运行离线评估。')
+        operation_reason = str(
+            request.data.get('operation_reason')
+            or request.headers.get('Operation-Reason')
+            or ''
+        ).strip()
+        if not operation_reason:
+            return Response({
+                'code': 'operation_reason_required',
+                'message': '创建离线评估必须填写 operation_reason。',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        def create_run():
+            payload = request.data.copy()
+            if hasattr(payload, 'pop'):
+                payload.pop('operation_reason', None)
+            serializer = self.get_serializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            with transaction.atomic():
+                run = serializer.save(created_by=request.user)
+                snapshot = {
+                    'evaluation_run_id': run.id,
+                    'dataset_id': run.dataset_id,
+                    'template_id': run.template_id,
+                    'config_snapshot': run.config_snapshot,
+                }
+                input_hash = hashlib.sha256(json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(',', ':'),
+                    default=str,
+                ).encode('utf-8')).hexdigest()
+                from core.operations import create_operation_with_dispatch
+
+                operation = create_operation_with_dispatch(
+                    user=request.user,
+                    operation_type='interview.evaluation',
+                    source_app='interviews',
+                    source_model='EvaluationRun',
+                    source_id=str(run.id),
+                    title=f'离线评估：{run.dataset.name}',
+                    input_type='EvaluationRun',
+                    input_id=str(run.id),
+                    input_version='1',
+                    input_hash=input_hash,
+                    metadata={
+                        'evaluation_run_id': run.id,
+                        'dataset_id': run.dataset_id,
+                        'operation_reason': operation_reason,
+                    },
+                    max_attempts=3,
+                    queue=getattr(settings, 'CELERY_CAREER_QUEUE', 'ifaceoff.v2.career.analysis'),
+                    routing_key='career.analysis',
+                )
+                run.operation = operation
+                run.save(update_fields=['operation'])
+            response_data = self.get_serializer(run).data
+            response_data.update({
+                'operation_id': str(operation.id),
+                'operation_status': 'accepted',
+                'events_url': f'/api/v2/operations/{operation.id}/events/',
+                'result_url': f'/api/v2/operations/{operation.id}/',
+            })
+            return Response(response_data, status=status.HTTP_202_ACCEPTED)
+
+        return run_idempotent(
+            request,
+            'interview_evaluation_run',
+            create_run,
+            required=True,
+        )
 
 
 class InterviewSessionViewSet(viewsets.ModelViewSet):
@@ -546,6 +611,111 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             'artifact': serializer.data,
             'audio_url': serializer.data.get('file_url'),
         }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'], url_path=r'questions/(?P<question_id>\d+)/tts-stream')
+    def question_tts_stream(self, request, pk=None, question_id=None):
+        session = self.get_object()
+        try:
+            question = session.questions.get(id=question_id)
+        except InterviewQuestion.DoesNotExist:
+            return Response({'error': '问题不存在'}, status=status.HTTP_404_NOT_FOUND)
+        response_format = str(request.query_params.get('format') or 'pcm').lower()
+        result = stream_question_tts(
+            user=request.user,
+            text=question.question_text,
+            response_format=response_format,
+        )
+        if not result.ok or result.chunks is None:
+            return Response({
+                'status': 'failed',
+                'fallback': 'browser_tts',
+                'error': result.error or 'tts_stream_failed',
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        content_type = (
+            'audio/opus' if result.response_format == 'opus'
+            else f'audio/L16; rate={result.sample_rate}; channels=1'
+        )
+        response = StreamingHttpResponse(
+            result.chunks,
+            content_type=content_type,
+        )
+        response['Cache-Control'] = 'no-store'
+        response['X-Accel-Buffering'] = 'no'
+        response['X-Speech-Stream-Format'] = result.response_format
+        response['X-Speech-Sample-Rate'] = str(result.sample_rate)
+        return response
+
+    @action(detail=True, methods=['get', 'post'], url_path='speech-metrics')
+    def speech_metrics(self, request, pk=None):
+        session = self.get_object()
+        targets = {
+            SpeechLatencyMetric.MetricType.ASR_FIRST_PARTIAL: 500,
+            SpeechLatencyMetric.MetricType.ASR_FINAL: 1200,
+            SpeechLatencyMetric.MetricType.TTS_FIRST_AUDIO: 700,
+            SpeechLatencyMetric.MetricType.BARGE_IN_STOP: 200,
+            SpeechLatencyMetric.MetricType.TRANSCRIPT_DUPLICATE: 0,
+        }
+        if request.method == 'POST':
+            metric_type = str(request.data.get('metric_type') or '')
+            if metric_type not in targets:
+                return Response({'error': 'unsupported_metric_type'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                latency_ms = float(request.data.get('latency_ms', 0))
+            except (TypeError, ValueError):
+                return Response({'error': 'invalid_latency_ms'}, status=status.HTTP_400_BAD_REQUEST)
+            if latency_ms < 0 or latency_ms > 120_000:
+                return Response({'error': 'invalid_latency_ms'}, status=status.HTTP_400_BAD_REQUEST)
+            question = None
+            question_id = request.data.get('question_id')
+            if question_id:
+                try:
+                    question = session.questions.get(id=question_id)
+                except InterviewQuestion.DoesNotExist:
+                    return Response({'error': 'question_not_found'}, status=status.HTTP_404_NOT_FOUND)
+            metric = SpeechLatencyMetric.objects.create(
+                session=session,
+                question=question,
+                user=request.user,
+                metric_type=metric_type,
+                latency_ms=latency_ms,
+                language=str(request.data.get('language') or '')[:20],
+                network_profile=str(request.data.get('network_profile') or '')[:32],
+                model_alias='speech.tts' if metric_type in {
+                    SpeechLatencyMetric.MetricType.TTS_FIRST_AUDIO,
+                    SpeechLatencyMetric.MetricType.BARGE_IN_STOP,
+                } else 'speech.asr',
+                metadata={'client': 'web'},
+            )
+            return Response({'id': metric.id, 'status': 'recorded'}, status=status.HTTP_201_CREATED)
+
+        rows = SpeechLatencyMetric.objects.filter(session=session).order_by('-created_at')[:1000]
+        grouped = {key: [] for key in targets}
+        for item in rows:
+            grouped.setdefault(item.metric_type, []).append(float(item.latency_ms))
+        summary = {}
+        for metric_type, target_ms in targets.items():
+            values = sorted(grouped.get(metric_type, []))
+            if not values:
+                summary[metric_type] = {
+                    'sample_count': 0,
+                    'p95_ms': None,
+                    'target_ms': target_ms,
+                    'passed': None,
+                }
+                continue
+            p95_index = max(0, min(len(values) - 1, int((len(values) * 0.95) + 0.999999) - 1))
+            p95_ms = round(values[p95_index], 2)
+            summary[metric_type] = {
+                'sample_count': len(values),
+                'p95_ms': p95_ms,
+                'target_ms': target_ms,
+                'passed': p95_ms <= target_ms,
+            }
+        return Response({
+            'session_id': str(session.id),
+            'metrics': summary,
+            'verification_status': 'measured' if any(item['sample_count'] for item in summary.values()) else 'pending-verification',
+        })
 
     @action(detail=False, methods=['get'], url_path='check-unfinished')
     def check_unfinished(self, request):
@@ -1364,7 +1534,10 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 def enqueue_dispatch():
                     try:
                         from .tasks import publish_pending_agent_dispatches
-                        publish_pending_agent_dispatches.apply_async(queue='notifications')
+                        publish_pending_agent_dispatches.apply_async(
+                            queue=getattr(settings, 'CELERY_PUBLISHER_QUEUE', 'ifaceoff.v2.publisher'),
+                            mandatory=True,
+                        )
                     except Exception:
                         pass
 
@@ -1384,14 +1557,27 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
             raise
 
         response = Response({
+            'operation_id': str(execution.operation_id) if execution.operation_id else None,
             'run_id': str(execution.run_id),
             'status': execution.status,
-            'events_url': f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/',
+            'events_url': (
+                f'/api/v2/operations/{execution.operation_id}/events/'
+                if execution.operation_id else
+                f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/'
+            ),
+            'result_url': (
+                f'/api/v2/operations/{execution.operation_id}/'
+                if execution.operation_id else
+                f'/api/v1/interviews/{session.id}/resume-state/'
+            ),
+            'agent_events_url': f'/api/v1/interviews/{session.id}/agent-executions/{execution.run_id}/events/',
             'resume_url': f'/api/v1/interviews/{session.id}/resume-state/',
             'generation_job': InterviewQuestionGenerationJobSerializer(generation_job).data,
         }, status=status.HTTP_202_ACCEPTED)
         response['X-Agent-Run-Id'] = str(execution.run_id)
-        response['Access-Control-Expose-Headers'] = 'X-Agent-Run-Id'
+        if execution.operation_id:
+            response['X-Operation-Id'] = str(execution.operation_id)
+        response['Access-Control-Expose-Headers'] = 'X-Agent-Run-Id, X-Operation-Id'
         return response
 
     def _complete_recovered_execution(self, session, answered_question, result_question=None):
@@ -1887,17 +2073,10 @@ class InterviewSessionViewSet(viewsets.ModelViewSet):
                 video_status = 'transcoding'
                 progress = 0
                 if upload_task.merged_file_path:
-                    try:
-                        from video_uploads.tasks import transcode_video_task
-                        if not transcode_task.original_file:
-                            transcode_task.original_file = upload_task.merged_file_path
-                        transcode_task.status = 'processing'
-                        transcode_task.started_at = timezone.now()
-                        transcode_task.save(update_fields=['original_file', 'status', 'started_at'])
-                        transcode_video_task.delay(str(transcode_task.id))
-                    except Exception as e:
-                        error_message = f'转码任务调度失败: {str(e)[:300]}'
-                        transcode_error_message = error_message
+                    # Read endpoints never dispatch expensive work. New merge
+                    # requests create a durable media Operation + Dispatch in
+                    # the write transaction; a reconciler owns legacy recovery.
+                    error_message = '录像已合并，正在等待后台转码调度。'
             elif transcode_task.status == 'processing':
                 video_status = 'transcoding'
                 progress = transcode_task.progress or 0

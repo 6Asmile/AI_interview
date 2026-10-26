@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 from careers.models import CareerFact
 
 from .json_resume import JSON_RESUME_SCHEMA_VERSION, legacy_resume_to_json_resume, normalize_json_resume
-from .models import Resume, ResumeDraft, ResumeEvidenceLink, ResumeSuggestion, ResumeVersion
+from .models import Resume, ResumeDraft, ResumeEvidenceLink, ResumeSuggestion, ResumeVariant, ResumeVersion
 from .schema import sha256_json, validate_resume
 
 
@@ -44,6 +44,7 @@ def create_resume_version(
     evidence_fact_ids: list[int] | None = None,
     evidence_links: list[dict] | None = None,
     language: str = 'zh-CN',
+    activate: bool = True,
 ) -> ResumeVersion:
     locked = Resume.objects.select_for_update().get(pk=resume.pk)
     next_number = (locked.versions.aggregate(value=Max('version_number'))['value'] or 0) + 1
@@ -65,10 +66,11 @@ def create_resume_version(
         change_summary=change_summary[:255],
         created_by=user if getattr(user, 'is_authenticated', False) else locked.user,
     )
-    locked.current_version = version
-    locked.canonical_schema_version = JSON_RESUME_SCHEMA_VERSION
-    locked.save(update_fields=['current_version', 'canonical_schema_version', 'updated_at'])
-    resume.current_version = version
+    if activate:
+        locked.current_version = version
+        locked.canonical_schema_version = JSON_RESUME_SCHEMA_VERSION
+        locked.save(update_fields=['current_version', 'canonical_schema_version', 'updated_at'])
+        resume.current_version = version
     requested_links = list(evidence_links or [])
     requested_links.extend(
         {'json_pointer': '/', 'fact_id': fact_id}
@@ -112,7 +114,7 @@ def create_resume_version(
                 fact_hash=sha256_json(snapshot),
             )
     draft = ResumeDraft.objects.select_for_update().filter(resume=locked).first()
-    if draft:
+    if draft and activate:
         draft.base_version = version
         draft.resume_json = normalized
         draft.revision += 1
@@ -203,7 +205,9 @@ def apply_json_patch(document: dict, operations: list[dict]) -> dict:
 
 @transaction.atomic
 def accept_suggestion(suggestion: ResumeSuggestion, user) -> ResumeVersion:
-    suggestion = ResumeSuggestion.objects.select_for_update().select_related('resume', 'base_version').get(pk=suggestion.pk)
+    suggestion = ResumeSuggestion.objects.select_for_update().select_related(
+        'resume', 'base_version', 'job_target',
+    ).get(pk=suggestion.pk)
     if suggestion.resume.user_id != user.id:
         raise ValidationError('无权处理该建议。')
     if suggestion.status != ResumeSuggestion.Status.PENDING:
@@ -212,19 +216,30 @@ def accept_suggestion(suggestion: ResumeSuggestion, user) -> ResumeVersion:
     if current.id != suggestion.base_version_id:
         raise ValidationError('简历版本已变化，请重新生成建议。')
     patched = apply_json_patch(current.resume_json, suggestion.patch)
+    is_job_variant = suggestion.task_key == 'resume.jd_tailor' and suggestion.job_target_id
     version = create_resume_version(
         resume=suggestion.resume,
         resume_json=patched,
         layout_json=current.layout_json,
         user=user,
-        source=ResumeVersion.Source.AI_SUGGESTION,
+        source=ResumeVersion.Source.JD_VARIANT if is_job_variant else ResumeVersion.Source.AI_SUGGESTION,
         change_summary=suggestion.summary,
         parent=current,
         evidence_links=suggestion.evidence_links or [
             {'json_pointer': '/', 'fact_id': fact_id}
             for fact_id in suggestion.evidence_fact_ids
         ],
+        activate=not is_job_variant,
     )
+    if is_job_variant:
+        ResumeVariant.objects.create(
+            user=user,
+            resume=suggestion.resume,
+            source_version=current,
+            version=version,
+            job_target=suggestion.job_target,
+            title=f'{suggestion.job_target.company_name} · {suggestion.job_target.position_name}',
+        )
     suggestion.status = ResumeSuggestion.Status.ACCEPTED
     suggestion.accepted_version = version
     suggestion.decided_at = timezone.now()
