@@ -61,6 +61,7 @@ let previewTimer: number | undefined;
 let hydrating = true;
 let saveQueued = false;
 let previewSerial = 0;
+let activeSave: Promise<boolean> | null = null;
 
 const sectionDefinitions: SectionDefinition[] = [
   { key: 'work', title: '工作经历', description: '组织、岗位、职责与可验证成果', defaults: { name: '', position: '', location: '', url: '', startDate: '', endDate: '', summary: '', highlights: [] }, fields: [
@@ -116,19 +117,64 @@ async function loadAll() {
     await nextTick(); schedulePreview(120);
   } finally { hydrating = false; loading.value = false; }
 }
-async function persistBeforeAssetChange() { if (saveTimer) window.clearTimeout(saveTimer); await saveDraft(); }
+async function persistBeforeAssetChange() {
+  if (saveTimer) window.clearTimeout(saveTimer);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (activeSave) await activeSave;
+    if (saveState.value === 'saved') return;
+    if (saveState.value === 'conflict' || saveState.value === 'error') break;
+    const saved = await saveDraft();
+    if (saved && saveState.value === 'saved') return;
+  }
+  throw new Error('resume_draft_save_failed');
+}
 async function uploadAvatar(event: Event) { const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file || !draft.value) return; avatarUploading.value = true; try { await persistBeforeAssetChange(); const result = await uploadResumeAvatarApi(resumeId, draft.value.etag, file); avatarUrl.value = result.avatar.url; draft.value = await getResumeDraftApi(resumeId); content.value = draft.value.resume_json; schedulePreview(50); } finally { avatarUploading.value = false; input.value = ''; } }
 async function removeAvatar() { if (!draft.value) return; await persistBeforeAssetChange(); await deleteResumeAvatarApi(resumeId, draft.value.etag); draft.value = await getResumeDraftApi(resumeId); content.value = draft.value.resume_json; avatarUrl.value = ''; schedulePreview(50); }
 
 async function saveDraft() {
-  if (!draft.value || !content.value || !design.value || hydrating) return;
-  if (saving.value) { saveQueued = true; return; }
+  if (!draft.value || !content.value || !design.value || hydrating) return false;
+  if (activeSave) {
+    saveQueued = true;
+    await activeSave;
+    if (saveQueued && saveState.value !== 'conflict' && saveState.value !== 'error') {
+      saveQueued = false;
+      return saveDraft();
+    }
+    return saveState.value === 'saved';
+  }
   saving.value = true; saveState.value = 'saving';
-  try {
-    const updated = await patchResumeDraftApi(resumeId, draft.value.etag, { resume_json: structuredClone(content.value), design_json: structuredClone(design.value) });
-    hydrating = true; draft.value = updated; content.value = updated.resume_json; design.value = updated.design_json; await nextTick(); hydrating = false; saveState.value = 'saved'; schedulePreview(350);
-  } catch (error: any) { saveState.value = error?.response?.status === 409 ? 'conflict' : 'error'; if (error?.response?.status === 409) ElMessage.warning('草稿已在其他页面更新，请刷新后继续。'); }
-  finally { saving.value = false; if (saveQueued) { saveQueued = false; scheduleSave(80); } }
+  const submittedContent = JSON.parse(JSON.stringify(content.value)) as JsonResume;
+  const submittedDesign = JSON.parse(JSON.stringify(design.value)) as ResumeDesign;
+  const submittedSignature = JSON.stringify([submittedContent, submittedDesign]);
+  activeSave = (async () => {
+    try {
+      const updated = await patchResumeDraftApi(resumeId, draft.value!.etag, { resume_json: submittedContent, design_json: submittedDesign });
+      // Vue reactive proxies cannot be passed to structuredClone. Also keep newer
+      // edits made while this request was in flight instead of replacing them.
+      const currentSignature = JSON.stringify([content.value, design.value]);
+      draft.value = updated;
+      if (currentSignature === submittedSignature) {
+        hydrating = true; content.value = updated.resume_json; design.value = updated.design_json;
+        await nextTick(); hydrating = false; saveState.value = 'saved'; schedulePreview(350);
+      } else {
+        saveState.value = 'pending'; saveQueued = true;
+      }
+      return true;
+    } catch (error: any) {
+      hydrating = false;
+      saveState.value = error?.response?.status === 409 ? 'conflict' : 'error';
+      if (error?.response?.status === 409) ElMessage.warning('草稿已在其他页面更新，请刷新后继续。');
+      return false;
+    } finally {
+      saving.value = false;
+      activeSave = null;
+      if (saveQueued && saveState.value !== 'conflict' && saveState.value !== 'error') {
+        saveQueued = false;
+        scheduleSave(80);
+      }
+    }
+  })();
+  return activeSave;
 }
 function scheduleSave(delay = 700) { if (hydrating) return; saveState.value = 'pending'; previewState.value = 'waiting_save'; if (saveTimer) window.clearTimeout(saveTimer); saveTimer = window.setTimeout(() => saveDraft(), delay); }
 function schedulePreview(delay = 450) { if (previewTimer) window.clearTimeout(previewTimer); previewTimer = window.setTimeout(() => generatePreview(true), delay); }

@@ -11,12 +11,30 @@ from .services import (
     _expand_parent_contexts,
     _plan_registered_queries,
     _switch_qdrant_alias,
+    _vector_search_ranking,
     _wait_for_meili_task,
     rrf_fuse,
 )
 
 
 class QdrantCollectionSafetyTests(SimpleTestCase):
+    @patch('knowledge.services._embed_text', return_value=([0.1, 0.2], 'embedding.test'))
+    @patch('knowledge.services._qdrant_client')
+    def test_vector_search_uses_query_points_contract(self, qdrant_client, _embed_text):
+        client = qdrant_client.return_value
+        client.query_points.return_value = SimpleNamespace(points=[
+            SimpleNamespace(payload={'chunk_id': 'chunk-1'}, score=0.91),
+        ])
+
+        ranking, trace = _vector_search_ranking('RAG 检索', topn=5)
+
+        self.assertEqual(ranking, [('chunk-1', 1, 0.91)])
+        self.assertEqual(trace['status'], 'ok')
+        client.query_points.assert_called_once()
+        kwargs = client.query_points.call_args.kwargs
+        self.assertEqual(kwargs['query'], [0.1, 0.2])
+        self.assertNotIn('query_vector', kwargs)
+
     def test_transport_failure_never_calls_create_or_recreate(self):
         client = Mock()
         client.get_aliases.return_value = SimpleNamespace(aliases=[])

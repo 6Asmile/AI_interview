@@ -87,7 +87,9 @@ def run_composite_v4_turn(self, payload: dict):
     if turn.event != AgentEvent.SUBMIT_ANSWER:
         raise ValueError('unsupported_agent_event')
     with transaction.atomic():
-        session = InterviewSession.objects.select_for_update().select_related('user', 'resume').get(
+        # 只锁定会话主表；resume 是可空外键，若与 FOR UPDATE 一起
+        # select_related，PostgreSQL 会拒绝锁定 LEFT OUTER JOIN 的可空侧。
+        session = InterviewSession.objects.select_for_update().get(
             id=turn.session_id,
             user_id=turn.user_id,
             status=InterviewSession.Status.RUNNING,
@@ -189,7 +191,9 @@ def _claim_agent_projection(execution_id, *, lease_owner: str):
     """Claim the Agent execution and its public Operation under one DB transaction."""
 
     with transaction.atomic():
-        execution_ref = InterviewAgentExecution.objects.select_for_update().select_related('operation').get(
+        # operation 是可空投影，关联对象按需独立读取，避免 PostgreSQL
+        # 对可空外连接执行 FOR UPDATE。
+        execution_ref = InterviewAgentExecution.objects.select_for_update().get(
             id=execution_id,
         )
         operation_claim = None
@@ -713,9 +717,11 @@ def publish_pending_agent_dispatches(self, batch_size=100):
     for dispatch_id in ids:
         try:
             with transaction.atomic():
-                dispatch = InterviewAgentDispatch.objects.select_for_update(skip_locked=True).select_related(
-                    'execution__operation',
-                ).filter(id=dispatch_id).first()
+                # 只 claim Dispatch 行。execution.operation 可空，不能放进
+                # PostgreSQL 的 FOR UPDATE 外连接；属性访问会独立查询。
+                dispatch = InterviewAgentDispatch.objects.select_for_update(skip_locked=True).filter(
+                    id=dispatch_id,
+                ).first()
                 if not dispatch or dispatch.status == InterviewAgentDispatch.Status.PUBLISHED:
                     continue
                 operation = dispatch.execution.operation
@@ -789,9 +795,9 @@ def recover_stale_agent_executions():
     )
     for execution_id in candidate_ids:
         with transaction.atomic():
-            execution = InterviewAgentExecution.objects.select_for_update(skip_locked=True).select_related(
-                'operation',
-            ).filter(id=execution_id).first()
+            execution = InterviewAgentExecution.objects.select_for_update(skip_locked=True).filter(
+                id=execution_id,
+            ).first()
             if not execution:
                 continue
             lease_is_stale = bool(execution.lease_expires_at and execution.lease_expires_at <= now)

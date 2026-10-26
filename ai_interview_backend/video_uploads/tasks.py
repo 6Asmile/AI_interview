@@ -120,7 +120,7 @@ def start_transcode_after_merge(merge_result: dict, transcode_task_id: str):
 
 
 @shared_task(bind=True, max_retries=2)
-def transcode_video_task(self, transcode_task_id: str):
+def transcode_video_task(self, transcode_task_id: str, cancellation_check=None):
     """视频转码任务"""
     try:
         transcode_task = VideoTranscodeTask.objects.get(id=transcode_task_id)
@@ -150,6 +150,8 @@ def transcode_video_task(self, transcode_task_id: str):
     output_path = os.path.join(output_dir, f"{name}_transcoded.mp4")
     
     def update_progress(progress: int):
+        if cancellation_check:
+            cancellation_check()
         transcode_task.progress = progress
         transcode_task.save(update_fields=['progress'])
     
@@ -167,10 +169,13 @@ def transcode_video_task(self, transcode_task_id: str):
             audio_denoise=transcode_task.audio_denoise,
             video_denoise_params=transcode_task.video_denoise_params,
             audio_denoise_params=transcode_task.audio_denoise_params,
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            cancellation_check=cancellation_check,
         )
         
         if success:
+            if cancellation_check:
+                cancellation_check()
             transcode_task.transcoded_file = output_path
             transcode_task.transcoded_size = os.path.getsize(output_path)
             transcode_task.status = VideoTranscodeTask.Status.COMPLETED
@@ -194,6 +199,9 @@ def transcode_video_task(self, transcode_task_id: str):
             
     except Exception as e:
         logger.error(f"视频转码失败: {e}")
+        from core.operations import OperationCanceled, OperationLeaseLost
+        if isinstance(e, (OperationCanceled, OperationLeaseLost)):
+            raise
         transcode_task.status = VideoTranscodeTask.Status.FAILED
         transcode_task.error_message = str(e)[:1000]
         transcode_task.save()

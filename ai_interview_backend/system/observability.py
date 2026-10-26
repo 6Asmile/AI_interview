@@ -127,6 +127,9 @@ def inspect_celery_workers() -> dict:
         'missing_required_queues': [name for name in required if not consumers.get(name)],
         'publisher_available': bool(consumers.get(settings.CELERY_PUBLISHER_QUEUE)),
         'agent_worker_available': bool(consumers.get(settings.CELERY_AGENT_QUEUE)),
+        'missing_domain_queues': [
+            name for name in settings.CELERY_MAIN_QUEUE_NAMES if not consumers.get(name)
+        ],
     }
 
 
@@ -142,7 +145,7 @@ def build_runtime_capabilities(checks: dict, worker_state: dict | None = None) -
     coordination = healthy('redis_coordination')
     realtime = healthy('redis_realtime')
     agent_database = healthy('agent_database')
-    return {
+    capabilities = {
         'database_reads': database,
         'database_writes': database,
         'cache_reads': database,
@@ -164,6 +167,16 @@ def build_runtime_capabilities(checks: dict, worker_state: dict | None = None) -
             and bool(worker_state.get('agent_worker_available'))
         ),
     }
+    for domain, setting_name in (
+        ('resume_render', 'CELERY_RESUME_RENDER_QUEUE'),
+        ('resume_ai', 'CELERY_RESUME_AI_QUEUE'),
+        ('media_processing', 'CELERY_MEDIA_QUEUE'),
+        ('document_processing', 'CELERY_DOCUMENT_QUEUE'),
+        ('career_analysis', 'CELERY_CAREER_QUEUE'),
+    ):
+        capabilities[domain] = bool(database and broker and coordination and
+            worker_state.get('queue_consumers', {}).get(getattr(settings, setting_name), 0))
+    return capabilities
 
 
 def _escape_label(value) -> str:

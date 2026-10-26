@@ -35,6 +35,53 @@ from .templates import default_design, template_catalog, validate_design
 from .versioning import accept_suggestion, create_resume_version
 
 
+class ResumeCreationQueryTests(TestCase):
+    def test_policy_scope_reads_once_and_does_not_leak_to_next_creation(self):
+        from core.models import RuntimePolicy
+        from .runtime import resume_runtime_config, resume_runtime_policy_scope
+        policy = RuntimePolicy.objects.create(key='resume-config', name='合成策略', config={'max_input_bytes': 5000})
+        with self.assertNumQueries(1), resume_runtime_policy_scope():
+            config = resume_runtime_config()
+            config['max_input_bytes'] = 1
+            with resume_runtime_policy_scope():
+                self.assertEqual(resume_runtime_config()['max_input_bytes'], 5000)
+        policy.config = {'max_input_bytes': 6000}
+        policy.save()
+        with self.assertNumQueries(1), resume_runtime_policy_scope():
+            self.assertEqual(resume_runtime_config()['max_input_bytes'], 6000)
+
+    def test_creation_response_and_policy_query_budget(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from .models import ResumeVersion, ResumeDesignRevision, ResumeDraft
+        user = User.objects.create_user(username='creation-budget', email='creation-budget@example.invalid')
+        client = APIClient()
+        client.force_authenticate(user)
+        with CaptureQueriesContext(connection) as queries:
+            response = client.post('/api/v2/resumes/', {'title': '合成创建'}, format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(sum('core_runtimepolicy' in entry['sql'] for entry in queries), 1)
+        resume = Resume.objects.get(pk=response.data['id'])
+        self.assertEqual(response.data['current_version']['id'], resume.current_version_id)
+        self.assertEqual(response.data['current_design_revision']['id'], resume.current_design_revision_id)
+        self.assertEqual(response.data['draft_etag'], resume.draft.etag)
+        self.assertEqual(ResumeVersion.objects.filter(resume=resume).count(), 1)
+        self.assertEqual(ResumeDesignRevision.objects.filter(resume=resume).count(), 1)
+        self.assertEqual(ResumeDraft.objects.filter(resume=resume).count(), 1)
+
+    def test_creation_failure_rolls_back_all_rows_and_resets_policy_scope(self):
+        from .runtime import resume_runtime_config
+        user = User.objects.create_user(username='creation-rollback', email='creation-rollback@example.invalid')
+        client = APIClient()
+        client.force_authenticate(user)
+        with patch('resumes.views_v2.ensure_studio', side_effect=ValueError('synthetic_failure')):
+            with self.assertRaisesRegex(ValueError, 'synthetic_failure'):
+                client.post('/api/v2/resumes/', {'title': '应回滚'}, format='json')
+        self.assertFalse(Resume.objects.filter(user=user).exists())
+        with self.assertNumQueries(1):
+            resume_runtime_config()
+
+
 class ResumeParsingServiceTests(TestCase):
     def _temp_file(self, suffix: str, content: bytes) -> str:
         handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
@@ -149,6 +196,19 @@ class ResumeIntelligenceTests(TestCase):
         )
         self.assertEqual(payload['cv']['photo'], 'avatar.png')
 
+    def test_rendercv_keeps_non_international_phone_without_rejecting_resume(self):
+        payload = _rendercv_payload(
+            {'basics': {'name': '候选人', 'phone': '138-1234-5678'}},
+            default_design('ats-classic'),
+        )
+
+        self.assertIsNone(payload['cv']['phone'])
+        self.assertEqual(payload['cv']['custom_connections'], [{
+            'fontawesome_icon': 'phone',
+            'placeholder': '138-1234-5678',
+            'url': None,
+        }])
+
     def test_six_template_payloads_match_reviewed_golden_contract(self):
         sample = {
             'basics': {
@@ -178,6 +238,18 @@ class ResumeIntelligenceTests(TestCase):
         design.template_key = 'engineering'
         with self.assertRaises(ValidationError):
             design.save()
+
+    def test_studio_can_lock_resume_with_nullable_current_relations(self):
+        """PostgreSQL must not lock nullable outer joins when bootstrapping Studio."""
+        resume = Resume.objects.create(user=self.user, title='待初始化简历')
+
+        draft, design = ensure_studio(resume, self.user)
+
+        resume.refresh_from_db()
+        self.assertEqual(draft.resume_id, resume.id)
+        self.assertEqual(design.resume_id, resume.id)
+        self.assertIsNotNone(resume.current_version_id)
+        self.assertEqual(resume.current_design_revision_id, design.id)
 
     def test_draft_etag_conflict_and_commit(self):
         resume, _, draft, _ = self.create_resume()

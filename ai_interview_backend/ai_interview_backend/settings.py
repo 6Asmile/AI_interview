@@ -518,6 +518,7 @@ CELERY_AGENT_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.agent.interactive'
 CELERY_CAREER_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.career.analysis'
 CELERY_DOCUMENT_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.documents'
 CELERY_RESUME_RENDER_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.resume.render'
+CELERY_RESUME_AI_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.resume.ai'
 CELERY_MEDIA_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.media'
 CELERY_COMMUNITY_MODERATION_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.community.moderation'
 CELERY_NOTIFICATION_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.notifications'
@@ -529,14 +530,17 @@ CELERY_PUBLISHER_QUEUE = f'{CELERY_TOPOLOGY_PREFIX}.publisher'
 CELERY_EVENTS_QUEUE = CELERY_EVENT_QUEUE
 
 CELERY_COMMAND_EXCHANGE = 'ifaceoff.commands'
-CELERY_EVENT_EXCHANGE = 'ifaceoff.events'
+# event_exchange is a reserved Celery monitoring setting. Never bind its
+# worker heartbeats to the domain-event task queue.
+CELERY_EVENT_EXCHANGE = 'ifaceoff.celery-monitoring'
+CELERY_DOMAIN_EVENT_EXCHANGE = 'ifaceoff.events'
 CELERY_DEAD_EXCHANGE = 'ifaceoff.dlx'
 CELERY_COMMANDS_EXCHANGE = CELERY_COMMAND_EXCHANGE
-CELERY_EVENTS_EXCHANGE = CELERY_EVENT_EXCHANGE
+CELERY_EVENTS_EXCHANGE = CELERY_DOMAIN_EVENT_EXCHANGE
 CELERY_DLX_EXCHANGE = CELERY_DEAD_EXCHANGE
 
 _commands_exchange = Exchange(CELERY_COMMAND_EXCHANGE, type='direct', durable=True)
-_events_exchange = Exchange(CELERY_EVENT_EXCHANGE, type='topic', durable=True)
+_events_exchange = Exchange(CELERY_DOMAIN_EVENT_EXCHANGE, type='topic', durable=True)
 _dead_exchange = Exchange(CELERY_DEAD_EXCHANGE, type='topic', durable=True)
 
 
@@ -594,6 +598,7 @@ _queue_specs = (
     (CELERY_CAREER_QUEUE, 'career.analysis', 'career.analysis', _commands_exchange, True),
     (CELERY_DOCUMENT_QUEUE, 'documents', 'documents', _commands_exchange, True),
     (CELERY_RESUME_RENDER_QUEUE, 'resume.render', 'resume.render', _commands_exchange, True),
+    (CELERY_RESUME_AI_QUEUE, 'resume.ai', 'resume.ai', _commands_exchange, True),
     (CELERY_MEDIA_QUEUE, 'media', 'media', _commands_exchange, True),
     (
         CELERY_COMMUNITY_MODERATION_QUEUE,

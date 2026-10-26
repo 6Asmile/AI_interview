@@ -103,14 +103,18 @@ class OperationExecutionContext:
 
     def raise_if_canceled(self) -> None:
         current = AsyncOperation.objects.filter(pk=self.claim.operation_id).values(
-            'status', 'fencing_token',
+            'status', 'fencing_token', 'lease_owner', 'lease_expires_at',
         ).first()
         if not current or current['status'] in {
             AsyncOperation.Status.CANCEL_REQUESTED,
             AsyncOperation.Status.CANCELED,
         }:
             raise OperationCanceled('operation_canceled')
-        if int(current['fencing_token']) != self.claim.fencing_token:
+        if (int(current['fencing_token']) != self.claim.fencing_token
+                or current['lease_owner'] != self.claim.worker_id
+                or current['status'] not in ACTIVE_STATUSES
+                or not current['lease_expires_at']
+                or current['lease_expires_at'] <= timezone.now()):
             raise OperationLeaseLost('operation_fenced')
 
 
@@ -698,7 +702,35 @@ def recover_stale_operations(*, batch_size: int = 200, now=None) -> dict[str, in
             if operation.status == AsyncOperation.Status.RETRYING and uses_generic_dispatch:
                 _create_dispatch_generation_locked(operation, available_at=now)
             _append_event_locked(operation, event_type, payload={'attempt': operation.attempt_count})
-    return {'recovered': retried, 'failed': failed, 'canceled': canceled}
+    # Publisher confirmation is not a consumer claim. Recover commands lost
+    # between those stages, with a bounded number of dispatch generations.
+    unclaimed_seconds = max(60, int(getattr(settings, 'OPERATION_UNCLAIMED_TIMEOUT_SECONDS', 300)))
+    cutoff = now - timedelta(seconds=unclaimed_seconds)
+    waiting_ids = list(AsyncOperation.objects.filter(
+        status__in=[AsyncOperation.Status.PENDING, AsyncOperation.Status.RETRYING],
+        dispatches__status=OperationDispatchOutbox.Status.PUBLISHED,
+        dispatches__published_at__lte=cutoff,
+    ).order_by('created_at').values_list('id', flat=True).distinct()[:max(1, min(batch_size, 1000))])
+    redispatched = 0
+    for operation_id in waiting_ids:
+        with transaction.atomic():
+            operation = AsyncOperation.objects.select_for_update(skip_locked=True).filter(pk=operation_id).first()
+            if not operation or operation.status not in {AsyncOperation.Status.PENDING, AsyncOperation.Status.RETRYING}:
+                continue
+            latest = operation.dispatches.order_by('-fencing_token').first()
+            if not latest or latest.status != OperationDispatchOutbox.Status.PUBLISHED:
+                continue
+            if not latest.published_at or latest.published_at > cutoff:
+                continue
+            if latest.fencing_token >= 3:
+                mark_dispatch_dead(operation.pk, error_code='operation_unclaimed',
+                                   error_message='已投递任务长期未被消费，请检查队列消费者后重试')
+                failed += 1
+                continue
+            _create_dispatch_generation_locked(operation, available_at=now)
+            _append_event_locked(operation, 'operation.redispatched', payload={'reason': 'claim_timeout'})
+            redispatched += 1
+    return {'recovered': retried, 'failed': failed, 'canceled': canceled, 'redispatched': redispatched}
 
 
 def normalize_handler_result(value: OperationHandlerResult | dict[str, Any] | None) -> OperationHandlerResult:

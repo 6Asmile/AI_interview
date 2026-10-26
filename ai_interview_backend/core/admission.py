@@ -380,7 +380,8 @@ def admit_expensive_operation(request, *, scope: str, company_id=None):
     """Fail closed and make all user/IP/company rate decisions atomically."""
 
     from django.utils import timezone
-    from .models import IntegrationOutbox, RuntimePolicy
+    from .models import AsyncOperation, OperationDispatchOutbox, RuntimePolicy
+    from .worker_roles import queue_for_scope
 
     policy = RuntimePolicy.objects.filter(
         key='reliability-admission',
@@ -440,21 +441,28 @@ def admit_expensive_operation(request, *, scope: str, company_id=None):
             error_code='dependency_unavailable',
         ) from exc
 
-    pending = IntegrationOutbox.objects.filter(
+    queue_name = queue_for_scope(scope)
+    pending = OperationDispatchOutbox.objects.filter(
+        queue=queue_name,
+        operation__status__in=[AsyncOperation.Status.PENDING, AsyncOperation.Status.RETRYING],
         status__in=[
-            IntegrationOutbox.Status.PENDING,
-            IntegrationOutbox.Status.PUBLISHING,
-            IntegrationOutbox.Status.FAILED,
+            OperationDispatchOutbox.Status.PENDING,
+            OperationDispatchOutbox.Status.PUBLISHING,
+            OperationDispatchOutbox.Status.FAILED,
+            OperationDispatchOutbox.Status.PUBLISHED,
         ],
     )
-    if pending.count() >= max_backlog:
+    # Count operations, not repeated dispatch generations. Published-but-unclaimed
+    # commands are still capacity usage; unrelated integration events are not.
+    pending = pending.filter(available_at__lte=timezone.now())
+    if pending.values('operation_id').distinct().count() >= max_backlog:
         raise CapacityRejected(
             scope=f'{scope}:outbox-backlog',
             retry_after_ms=5000,
             overloaded=True,
             error_code='async_backpressure',
         )
-    oldest = pending.order_by('available_at').values_list('available_at', flat=True).first()
+    oldest = pending.order_by('created_at').values_list('created_at', flat=True).first()
     if oldest and (timezone.now() - oldest).total_seconds() > max_age_seconds:
         raise CapacityRejected(
             scope=f'{scope}:outbox-age',

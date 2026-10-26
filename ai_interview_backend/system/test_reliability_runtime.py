@@ -18,7 +18,11 @@ class CeleryTopologySettingsTests(SimpleTestCase):
         self.assertEqual(settings.CELERY_TOPOLOGY_VERSION, 'v2')
         self.assertTrue(all(name.startswith('ifaceoff.v2.') for name in settings.CELERY_MAIN_QUEUE_NAMES))
         self.assertEqual(settings.CELERY_COMMAND_EXCHANGE, 'ifaceoff.commands')
-        self.assertEqual(settings.CELERY_EVENT_EXCHANGE, 'ifaceoff.events')
+        self.assertEqual(settings.CELERY_DOMAIN_EVENT_EXCHANGE, 'ifaceoff.events')
+        self.assertEqual(settings.CELERY_EVENTS_EXCHANGE, 'ifaceoff.events')
+        self.assertNotEqual(settings.CELERY_EVENT_EXCHANGE, settings.CELERY_DOMAIN_EVENT_EXCHANGE)
+        from ai_interview_backend.celery_app import app
+        self.assertEqual(app.conf.event_exchange, settings.CELERY_EVENT_EXCHANGE)
         self.assertEqual(settings.CELERY_DEAD_EXCHANGE, 'ifaceoff.dlx')
         self.assertFalse(any('.retry' in queue.name for queue in settings.CELERY_TASK_QUEUES))
 

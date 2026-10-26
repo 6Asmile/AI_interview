@@ -111,7 +111,7 @@ services:
       - ifaceoff_infra_network
 
   qdrant:
-    image: qdrant/qdrant:v1.12.4
+    image: qdrant/qdrant:v1.13.6
     container_name: Ifaceoff-infra-qdrant
     restart: unless-stopped
     ports:

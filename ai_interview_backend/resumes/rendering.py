@@ -197,15 +197,26 @@ def _rendercv_payload(resume_json: dict, design_json: dict, avatar_filename: str
         'MMM YYYY': 'MONTH_ABBREVIATION YEAR',
         'YYYY': 'YEAR',
     }.get(design_json.get('date_format'), 'YEAR-MONTH_NUMBER')
+    # RenderCV 会把 cv.phone 强制解析成国际电话号码。JSON Resume 则允许
+    # 用户保留诸如分机、校园短号或本地展示格式；直接透传会让整份简历无法
+    # 预览。使用受控自定义联系方式可完整展示原文，同时避免渲染器替业务
+    # Schema 追加更严格且不一致的校验。
+    display_phone = _safe_text(basics.get('phone'))
     cv = {
             'name': _safe_text(basics.get('name')) or 'Resume',
             'headline': _safe_text(basics.get('label')),
             'location': location_text,
             'email': _safe_text(basics.get('email')) or None,
-            'phone': _safe_text(basics.get('phone')) or None,
+            'phone': None,
             'website': _safe_text(basics.get('url')) or None,
             'sections': ordered,
         }
+    if display_phone:
+        cv['custom_connections'] = [{
+            'fontawesome_icon': 'phone',
+            'placeholder': display_phone,
+            'url': None,
+        }]
     if avatar_filename and design_json.get('show_avatar'):
         cv['photo'] = avatar_filename
     return {
@@ -396,6 +407,7 @@ def _render_with_rendercv(
             '--pdf-path', str(pdf_path),
             '--png-path', str(png_path),
             '--dont-generate-html', '--dont-generate-markdown',
+            '--quiet',
         ]
         environment = {
             'PATH': os.environ.get('PATH', ''),
@@ -409,6 +421,11 @@ def _render_with_rendercv(
             'NO_PROXY': '*',
             'HTTP_PROXY': '',
             'HTTPS_PROXY': '',
+            # Windows 服务/Worker 常继承 GBK 控制台。RenderCV/Rich 成功输出
+            # 包含 Unicode 对勾，若不强制 UTF-8，会在文件已经生成后反而以
+            # UnicodeEncodeError 退出并把成功任务标成失败。
+            'PYTHONUTF8': '1',
+            'PYTHONIOENCODING': 'utf-8',
         }
         if os.name == 'nt':
             environment.update({
@@ -432,6 +449,8 @@ def _render_with_rendercv(
                 env=environment,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=int(resume_runtime_config().get('render_timeout_seconds', 20)),
                 check=False,
             )

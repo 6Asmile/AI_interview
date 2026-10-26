@@ -189,6 +189,13 @@ services:
     cpus: 1.5
     pids_limit: 128
 
+  celery-resume-ai-worker:
+    <<: *worker-base
+    command: python manage.py run_isolated_worker --role resume-ai --pool prefork --concurrency=${RESUME_AI_WORKER_CONCURRENCY:-2}
+    environment:
+      <<: *worker-environment
+      CELERY_WORKER_ROLE: resume-ai
+
   celery-community-worker:
     <<: *worker-base
     command: celery -A ai_interview_backend worker -l info --hostname=community@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.community.moderation --concurrency=${COMMUNITY_WORKER_CONCURRENCY:-2} --prefetch-multiplier=1

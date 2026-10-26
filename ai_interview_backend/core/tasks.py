@@ -306,7 +306,7 @@ def recover_stale_operations_task(batch_size=200):
     from .operations import recover_stale_operations
 
     result = recover_stale_operations(batch_size=batch_size)
-    if result['recovered']:
+    if result['recovered'] or result.get('redispatched'):
         publish_operation_dispatch_outbox.apply_async(
             queue=settings.CELERY_PUBLISHER_QUEUE,
         )

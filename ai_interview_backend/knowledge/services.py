@@ -1605,12 +1605,14 @@ def _vector_search_ranking(
             job_position=job_position,
             difficulty=difficulty,
         )
-        search_result = client.search(
+        # qdrant-client 1.14 统一使用 Query API；返回对象的 points 才是
+        # 带 payload/score 的命中列表。旧 search() 在新客户端中已移除。
+        search_result = client.query_points(
             collection_name=collection,
-            query_vector=vector,
+            query=vector,
             query_filter=query_filter,
             limit=topn,
-        )
+        ).points
         ranking = []
         for rank, point in enumerate(search_result, start=1):
             chunk_id = point.payload.get('chunk_id') if getattr(point, 'payload', None) else None

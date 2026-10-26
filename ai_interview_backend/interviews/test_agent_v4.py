@@ -27,7 +27,7 @@ from .models import (
     InterviewQuestionGenerationJob,
     InterviewSession,
 )
-from .tasks import run_composite_v4_turn, run_interview_execution
+from .tasks import publish_pending_agent_dispatches, run_composite_v4_turn, run_interview_execution
 
 
 class AgentV4ContractTests(SimpleTestCase):
@@ -326,6 +326,28 @@ class DurableSubmissionApiTests(TestCase):
             answered_question=self.question,
             status=InterviewQuestionGenerationJob.Status.PENDING,
         ).exists())
+
+    def test_agent_dispatch_publisher_claims_nullable_operation_projection(self):
+        response = self.client.post(
+            f'/api/v1/interviews/{self.session.id}/submit-answer-stream/?async=true',
+            {'question_id': self.question.id, 'answer_text': '我负责可靠异步链路。'},
+            format='json',
+            HTTP_PREFER='respond-async',
+            HTTP_IDEMPOTENCY_KEY='answer-dispatch-publish',
+        )
+        self.assertEqual(response.status_code, 202, response.data)
+
+        with patch(
+            'interviews.tasks.run_interview_execution.apply_async',
+            return_value=SimpleNamespace(id='agent-task-id'),
+        ) as apply_async:
+            result = publish_pending_agent_dispatches.run()
+
+        self.assertEqual(result, {'published': 1, 'failed': 0})
+        dispatch = InterviewAgentDispatch.objects.get(execution__operation_id=response.data['operation_id'])
+        self.assertEqual(dispatch.status, InterviewAgentDispatch.Status.PUBLISHED)
+        self.assertEqual(dispatch.celery_task_id, 'agent-task-id')
+        apply_async.assert_called_once()
 
     def test_public_operation_cancel_fences_the_agent_execution(self):
         response = self.client.post(

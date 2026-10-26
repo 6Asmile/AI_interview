@@ -90,6 +90,9 @@ export const mergeUploadApi = (data: MergeUploadData): Promise<MergeUploadRespon
     url: '/merge/',
     method: 'post',
     data,
+    // 合并/转码属于高成本异步写入。相同上传任务重试时必须复用同一个
+    // Operation（权威异步操作），不能因为网络重试重复创建转码任务。
+    headers: { 'Idempotency-Key': `video.merge.${data.task_id}` },
   });
 };
 

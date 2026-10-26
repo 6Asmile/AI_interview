@@ -35,6 +35,8 @@ export const useAuthStore = defineStore('auth', {
       if (this.initializing) return this.initializing;
       this.initializing = (async () => {
         try {
+          // Access Token 只保存在内存。新标签/刷新后它为空，但 HttpOnly
+          // refresh cookie 仍可能存在；总是让服务端判定是否能恢复会话。
           await ensureCsrfApi();
           const session = await browserSessionApi();
           this.setSession(session.access, session.user);

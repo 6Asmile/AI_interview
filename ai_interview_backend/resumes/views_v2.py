@@ -108,19 +108,25 @@ class ResumeV2ViewSet(viewsets.ModelViewSet):
         ).prefetch_related('current_version__evidence_links').order_by('-updated_at')
 
     def perform_create(self, serializer):
-        with transaction.atomic():
+        from .runtime import resume_runtime_policy_scope
+        with transaction.atomic(), resume_runtime_policy_scope():
             if serializer.validated_data.get('is_default'):
                 Resume.objects.filter(user=self.request.user, is_default=True).update(is_default=False)
             resume = serializer.save(user=self.request.user)
             version = create_resume_version(
                 resume=resume,
-                resume_json=validate_resume({}),
+                resume_json={},  # create_resume_version performs canonical validation.
                 user=self.request.user,
                 source=ResumeVersion.Source.EDITOR,
                 change_summary='创建简历',
             )
-            ensure_studio(resume, self.request.user)
+            draft, design = ensure_studio(resume, self.request.user)
             resume.refresh_from_db()
+            # These persisted objects were just created inside this transaction.
+            # Restore ORM relation caches after refresh, not another round of SQL.
+            resume.current_version = version
+            resume.current_design_revision = design
+            resume.draft = draft
 
     def perform_update(self, serializer):
         instance = serializer.instance

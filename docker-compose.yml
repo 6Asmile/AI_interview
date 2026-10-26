@@ -91,17 +91,25 @@ services:
     networks:
       - ifaceoff_network
 
-  celery-worker:
+  celery-worker: &isolated-worker
     image: ifaceoff/backend:latest
     container_name: Ifaceoff-celery-worker
-    command: celery -A ai_interview_backend worker -l info -P solo --hostname=dev@%h -Q ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.default,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.agent.interactive,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.career.analysis,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.documents,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.resume.render,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.media,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.community.moderation,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.notifications,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.search.index,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.events,ifaceoff.${CELERY_TOPOLOGY_VERSION:-v2}.publisher
+    command: python manage.py run_isolated_worker --role auxiliary --pool prefork --concurrency=${AUXILIARY_WORKER_CONCURRENCY:-2}
     restart: unless-stopped
     stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A ai_interview_backend inspect ping -d $${CELERY_WORKER_ROLE}@$${HOSTNAME} --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     env_file:
       - ./.env.docker
-    environment:
+    environment: &local-worker-environment
       IFACEOFF_RUN_MIGRATIONS: "0"
       IFACEOFF_COLLECTSTATIC: "0"
+      IFACEOFF_SETUP_AGENT_CHECKPOINT: "0"
+      CELERY_WORKER_ROLE: auxiliary
       IFACEOFF_DATABASE_URL: postgresql://${IFACEOFF_DB_USER:-ifaceoff_app}:${IFACEOFF_DB_PASSWORD:-ifaceoff-app-change-me}@postgres:5432/${IFACEOFF_DB_NAME:-ifaceoff_app}
       AGENT_DATABASE_URL: postgresql://${AGENT_DB_USER:-ifaceoff_agent}:${AGENT_DB_PASSWORD:-ifaceoff-agent-change-me}@postgres:5432/${AGENT_DB_NAME:-ifaceoff_agent}
       REDIS_HOST: redis
@@ -125,6 +133,78 @@ services:
         condition: service_healthy
     networks:
       - ifaceoff_network
+
+  celery-publisher-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-publisher
+    command: python manage.py run_isolated_worker --role publisher --pool prefork --concurrency=${PUBLISHER_WORKER_CONCURRENCY:-2}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: publisher
+
+  celery-agent-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-agent
+    command: python manage.py run_isolated_worker --role agent --pool prefork --concurrency=${AGENT_WORKER_CONCURRENCY:-2}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: agent
+
+  celery-career-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-career
+    command: python manage.py run_isolated_worker --role career --pool prefork --concurrency=${CAREER_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: career
+
+  celery-document-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-document
+    command: python manage.py run_isolated_worker --role document --pool prefork --concurrency=${DOCUMENT_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: document
+
+  celery-resume-render-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-resume-render
+    command: python manage.py run_isolated_worker --role resume-render --pool prefork --concurrency=${RESUME_RENDER_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: resume-render
+
+  celery-resume-ai-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-resume-ai
+    command: python manage.py run_isolated_worker --role resume-ai --pool prefork --concurrency=${RESUME_AI_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: resume-ai
+
+  celery-media-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-media
+    command: python manage.py run_isolated_worker --role media --pool prefork --concurrency=${MEDIA_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: media
+
+  celery-community-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-moderation
+    command: python manage.py run_isolated_worker --role moderation --pool prefork --concurrency=${COMMUNITY_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: moderation
+
+  celery-events-worker:
+    <<: *isolated-worker
+    container_name: Ifaceoff-celery-events
+    command: python manage.py run_isolated_worker --role events --pool prefork --concurrency=${EVENT_WORKER_CONCURRENCY:-1}
+    environment:
+      <<: *local-worker-environment
+      CELERY_WORKER_ROLE: events
 
   celery-beat:
     image: ifaceoff/backend:latest
@@ -279,7 +359,7 @@ services:
       - ifaceoff_network
 
   qdrant:
-    image: qdrant/qdrant:v1.12.4
+    image: qdrant/qdrant:v1.13.6
     container_name: Ifaceoff-qdrant
     ports:
       - "${QDRANT_PORT:-6333}:6333"

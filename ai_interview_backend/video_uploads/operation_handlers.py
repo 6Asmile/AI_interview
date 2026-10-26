@@ -11,6 +11,8 @@ from django.conf import settings
 from core.operation_registry import OperationHandlerResult, register_operation_handler
 from core.operations import (
     RetryableOperationError,
+    OperationCanceled,
+    OperationLeaseLost,
     TerminalOperationError,
     create_operation_with_dispatch,
 )
@@ -54,9 +56,14 @@ class _HeartbeatGuard:
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
-        while not self.stop_event.wait(self.interval):
-            if not self.context.heartbeat():
-                return
+        from django.db import connections, close_old_connections
+        close_old_connections()
+        try:
+            while not self.stop_event.wait(self.interval):
+                if not self.context.heartbeat():
+                    return
+        finally:
+            connections.close_all()
 
     def __enter__(self):
         self.thread.start()
@@ -68,6 +75,8 @@ class _HeartbeatGuard:
 
 
 def _retry_or_raise(exc: Exception):
+    if isinstance(exc, (OperationCanceled, OperationLeaseLost)):
+        raise exc
     if isinstance(exc, FileNotFoundError):
         raise TerminalOperationError('media_input_missing', str(exc)) from exc
     if isinstance(exc, (Retry, ConnectionError, TimeoutError, OSError)):
@@ -128,7 +137,9 @@ def process_video(context):
         transcode_task.save(update_fields=['original_file'])
         try:
             with _HeartbeatGuard(context):
-                transcode_result = transcode_video_task.run(str(transcode_task.pk))
+                transcode_result = transcode_video_task.run(
+                    str(transcode_task.pk), cancellation_check=context.raise_if_canceled,
+                )
         except Exception as exc:
             _retry_or_raise(exc)
     if not transcode_result.get('success'):

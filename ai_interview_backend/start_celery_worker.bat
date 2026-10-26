@@ -3,7 +3,7 @@ setlocal
 
 cd /d "%~dp0"
 
-echo Starting Celery worker...
-celery -A ai_interview_backend worker -l info -P solo
+echo Starting isolated Celery worker roles...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\scripts\ifaceoff-dev.ps1" -Action up -Components celery-worker
 
 endlocal

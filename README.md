@@ -611,6 +611,28 @@ python manage.py reconcile_interview_sessions --apply
 
 ## 质量验证
 
+### 不调用 AI/RAG 的统一评估
+
+在仓库根目录使用项目 Python，运行确定性功能回归和量化采样：
+
+```powershell
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --media
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --repeat 3 --samples 50 --media
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --groups platform --repeat 2
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --real-infra --groups operation,worker_contract
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --browser
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --browser-platform
+& '.\.venv\Scripts\python.exe' scripts/run_deterministic_evaluation.py --groups platform --http-benchmark
+```
+
+无需先启动前端、Redis、RabbitMQ 或开发数据库。入口采用临时 SQLite、进程内缓存和合成数据，并阻止测试进程建立网络连接；`--media` 可选执行本机 FFmpeg/FFprobe 合并转码验证，缺少工具会标记待验证。
+
+以上“无需启动”仅指默认离线模式。`--real-infra` 需要 Docker 和已有测试镜像，在专属容器运行 PostgreSQL、Redis 与 RabbitMQ 协议故障实验；`--browser` 需要运行本地应用及 Chrome/Playwright CLI，创建合成账号，测真实页面和上传，不调用 AI。它们不停止现有基础设施，不消费业务队列，也不证明集群高可用。
+
+覆盖 Operation（异步操作）/幂等/Inbox（消费登记）、Redis 契约、Worker（执行进程）隔离契约、简历版本/分享/导出/预览调度、Career、Community、Chat、Staff、账号安全、视频命令及确定性 API。`platform` 组排除面试及 AI/RAG 执行；GitHub OAuth 只测模拟供应商的服务端契约。报告包含逐例结果、进程内 p50/p95/p99、顺序业务写 TPS、可选本机 CSRF 引导接口的真实 HTTP QPS，以及真实媒体处理比。CSRF 引导接口没有业务提交，因此 TPS 显示为不适用；同时记录其 200 与 429，不能把总请求 QPS 当作成功吞吐或生产容量。`--browser-platform` 测新标签登录恢复和 Studio 保存，`--groups api_measurement,resume` 选择子集；失败退出非零，总体 `partial` 表示仍有系统方面未验证。
+
+Mock（模拟替身）通过不代表真实 Redis/MQ 故障恢复；APIClient（进程内接口客户端）耗时不代表生产 API 延迟。默认离线模式不验证浏览器或 PostgreSQL 行锁，需要显式选择真实模式；AI/RAG、ASR/TTS、集群故障补偿及生产容量仍不在范围内。操作和证据边界见 [运行手册](docs/ifaceoff-vault/10-运行与故障手册.md) §20。
+
 ```powershell
 cd ai_interview_backend
 python manage.py check
@@ -637,6 +659,45 @@ npm run test:e2e
 - 本轮 Resume/语音/模型网关聚焦测试 **47 项通过**，候选人端 production build（生产构建）通过；RenderCV 容器六母版像素级 Golden Render（黄金渲染）、真实 ASR/TTS p95、中文/英文长回答、弱网和模型切换压测仍为 **pending-verification（待验证）**
 
 测试业务数据来自本地真实或匿名化样例；provider boundary fake 仅用于超时、异常和降级故障注入，不作为简历、知识库、评分或社区内容。
+
+非 AI 评估新增分路由 HTTP（网络接口）指标与真实简历链路：
+
+```powershell
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --browser-platform --repeat 3
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --authenticated-http --http-users 8 --http-concurrency 8 --http-duration 5
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --authenticated-http --http-users 8 --http-concurrency 8 --http-duration 5 --http-arrival-rate 20 --http-writes
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --operation-faults
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --groups render_matrix
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --groups api_measurement --http-benchmark --http-url http://127.0.0.1:8000/api/v1/auth/csrf/
+```
+
+浏览器运行前需启动 Django、前端、Publisher（投递进程）、Resume Render Worker（简历排版进程）和 Beat（定时调度器）。入口核验自动保存、权威预览和 JSON/DOCX/PDF 的正文、校验和、成功 Operation（异步操作），汇总至 `output/playwright/browser-evaluation-summary.json`。HTTP 可重复传 `--http-url`；429 只说明观测到限流，标记部分验证，匿名请求受保护接口的 401 不记为成功吞吐。低样本、本地结果不证明生产容量；完整运行步骤见运行手册 §20。
+
+固定到达率入口同时统计实际成功请求、429、5xx、超时和客户端并发槽丢弃；`--http-writes` 最多创建40份合成简历，并由数据库核对归属、内容版本与设计后计算 TPS（每秒成功事务数）。2026-10-07 本地20次/秒基线：读取200/200、写入40/40成功，写入约19.16 TPS，p95约117毫秒；不是最大容量结论。`--operation-faults` 独占临时 PostgreSQL/RabbitMQ 与 Worker（任务执行进程），仅测试 JSON 导出命令链；不停止开发容器，不包含 AI/RAG，结果按实际执行标记，不能据此宣称生产高可用。
+
+早期未修复施压工具的80次/秒探测只有约50%的计划读取能发出，不能作为后端容量上限。已修复逐请求证书上下文构造，新增调度/线程等待指标与专属ASGI（异步服务接口）对照：池化场景两条读取各400/400，无背压，列表p95约60ms；40次创建经数据库核验成功，但创建p95约569ms超过普通接口500ms目标。详见运行手册§20。异步故障已扩展至8项通过，新增Publisher（投递器）确认后、Outbox（命令表）落库前崩溃；投递锁等待在实验中加速，不等同生产恢复时间。
+
+```powershell
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --authenticated-http --http-users 16 --http-concurrency 64 --http-duration 5 --http-arrival-rate 80 --http-isolated-server asgi-pooled --http-writes
+```
+
+对照进程只占临时回环端口，不修改8000服务；**数据库和缓存仍使用开发环境**，不得在生产运行。所有结果保留失败和未达性能目标的记录。
+
+
+创建链后续优化保留事务/行锁，减少重复策略读取和新建关联回查，SQL27→22。两轮真实创建各40/40核验成功，p95=411/312ms；后一次两条读取各800/800。这是有限本地基线，40次写入窗口不代表持续TPS。运行策略缓存只在一次创建上下文内存在，下次创建仍重新读取。
+
+```powershell
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --broker-dlq
+```
+
+该入口只测专属 Broker（消息代理）协议。管理端已增加 `/operations/events` 中的真实死信读取、试运行与受控重放；权限、操作原因、幂等与逐条审计均由服务端校验，最多100条一批，未知旧任务保留，不自动重置失败 Operation（操作）。确认发布并写入审计后才确认原消息，仍是至少一次运输。
+
+```powershell
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --groups broker_admin
+./.venv/Scripts/python.exe scripts/run_deterministic_evaluation.py --broker-admin-real
+```
+
+第二条经真实管理 API 操作本次专属 PostgreSQL/RabbitMQ，测试试运行、不可达路由、发布拒绝、幂等与审计；不触碰业务队列。页面操作路径：**事件与队列 → 选择死信队列 → 读取深度 → 试运行 → 检查原因 → 确认重放**。没有 `platform_events.replay` 权限不能操作。单节点组件/API验证和合成页面检查不代表生产HA或真实登录端到端验收。
 
 ## License
 

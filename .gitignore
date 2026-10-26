@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 /venv/
+/.venv/
 /.idea/
 /db.sqlite3
 /.env
@@ -15,6 +16,8 @@ __pycache__/
 /创新创业项目/
 /说明.txt
 logs/
+output/evaluation/
+output/playwright/
 *.log
 .ifaceoff-dev-pids.json
 ai-interview-frontend/test-results/

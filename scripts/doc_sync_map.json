@@ -23,6 +23,34 @@
   ],
   "rules": [
     {
+      "name": "broker-dlq-admin",
+      "patterns": ["ai_interview_backend/staff_admin/broker_dlq.py", "ai_interview_backend/staff_admin/broker_views.py", "ai_interview_backend/staff_admin/test_broker_dlq.py", "ai_interview_backend/staff_admin/urls.py", "scripts/broker_admin_evaluation.py", "scripts/broker_admin_browser_setup.js"],
+      "targets": [
+        {"document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md", "sections": ["## 3. Staff 独立认证、MFA 与 RBAC", "## 4. 审计与防篡改", "## 7. Outbox/Inbox", "## 21. 可观测性", "## 23. 测试策略"]},
+        {"document": "docs/ifaceoff-vault/10-运行与故障手册.md", "sections": ["## 17. 发布与回滚", "## 20. 发布验收清单"]}
+      ]
+    },
+    {
+      "name": "authenticated-http-evaluation",
+      "patterns": ["scripts/authenticated_http_evaluation.py", "scripts/operation_fault_evaluation.py", "ai_interview_backend/core/management/commands/prepare_http_evaluation.py"],
+      "targets": [
+        {"document": "docs/ifaceoff-vault/00-开始这里.md", "sections": ["## 这本书如何组织"]},
+        {"document": "docs/ifaceoff-vault/04-卷三-Career与Resume实现.md", "sections": ["## 18. 测试矩阵"]},
+        {"document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md", "sections": ["## 23. 测试策略"]},
+        {"document": "docs/ifaceoff-vault/10-运行与故障手册.md", "sections": ["## 20. 发布验收清单"]}
+      ]
+    },
+    {
+      "name": "deterministic-evaluation",
+      "patterns": ["scripts/run_deterministic_evaluation.py", "scripts/real_infrastructure_evaluation.py", "scripts/http_qps_evaluation.py", "scripts/browser_evaluation*", "scripts/tests/test_deterministic_evaluation.py", "ai_interview_backend/core/management/commands/*browser_evaluation.py", "ai_interview_backend/core/test_deterministic_measurements.py", "ai_interview_backend/core/test_worker_isolation.py", "ai_interview_backend/users/tests.py", "ai_interview_backend/careers/tests.py", "ai_interview_backend/community/tests.py", "ai_interview_backend/chat/tests.py", "ai_interview_backend/staff_admin/tests.py", "ai_interview_backend/resumes/tests.py"],
+      "targets": [
+        {"document": "docs/ifaceoff-vault/00-开始这里.md", "sections": ["## 这本书如何组织"]},
+        {"document": "docs/ifaceoff-vault/04-卷三-Career与Resume实现.md", "sections": ["## 18. 测试矩阵", "## 25. Studio 保存、发布与冲突处理"]},
+        {"document": "docs/ifaceoff-vault/07-卷六-平台工程可靠性安全与运维.md", "sections": ["## 23. 测试策略"]},
+        {"document": "docs/ifaceoff-vault/10-运行与故障手册.md", "sections": ["## 20. 发布验收清单"]}
+      ]
+    },
+    {
       "name": "celery-topology",
       "patterns": [
         "ai_interview_backend/ai_interview_backend/settings.py",

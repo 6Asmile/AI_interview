@@ -107,7 +107,11 @@ class JobTargetViewSet(OwnedModelViewSet):
     search_fields = ('company_name', 'position_name', 'jd_text')
 
     def get_queryset(self):
-        return super().get_queryset().annotate(application_count=Count('applications'))
+        # 聚合查询后显式固定分页顺序，避免同一更新时间的岗位在翻页时漂移，
+        # 也消除 DRF 的 UnorderedObjectListWarning。
+        return super().get_queryset().annotate(
+            application_count=Count('applications'),
+        ).order_by('-updated_at', '-id')
 
     def perform_create(self, serializer):
         jd_text = serializer.validated_data.get('jd_text', '')

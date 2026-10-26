@@ -2,6 +2,10 @@ import os
 import subprocess
 import json
 import logging
+import queue
+import threading
+import time
+import signal
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 from django.conf import settings
@@ -157,7 +161,10 @@ class FFmpegService:
         audio_denoise: bool = True,
         video_denoise_params: Optional[Dict] = None,
         audio_denoise_params: Optional[Dict] = None,
-        progress_callback=None
+        progress_callback=None,
+        timeout_seconds=None,
+        stall_timeout_seconds=None,
+        cancellation_check=None,
     ) -> Tuple[bool, str]:
         """
         执行视频转码
@@ -192,38 +199,74 @@ class FFmpegService:
             audio_denoise_params=audio_denoise_params
         )
         
-        logger.info(f"执行 FFmpeg 命令: {' '.join(cmd)}")
-        
+        deadline = float(timeout_seconds or getattr(settings, 'MEDIA_TRANSCODE_TIMEOUT_SECONDS', 600))
+        stall_deadline = float(stall_timeout_seconds or getattr(settings, 'MEDIA_TRANSCODE_STALL_SECONDS', 120))
+        if not 0 < deadline <= 3600 or not 0 < stall_deadline <= 3600:
+            raise ValueError('视频转码超时必须在 0 到 3600 秒之间')
+        cmd[1:1] = ['-nostdin', '-progress', 'pipe:2', '-nostats']
+        process = None
+        reader = None
+        lines = queue.Queue(maxsize=128)
+        stopped = threading.Event()
+        finished = threading.Event()
+        started = last_progress = time.monotonic()
+        last_position = -1.0
+        stderr_tail = []
+
+        def read_stderr():
+            try:
+                for line in process.stderr:
+                    while not stopped.is_set():
+                        try:
+                            lines.put(line, timeout=0.1)
+                            break
+                        except queue.Full:
+                            continue
+                    if stopped.is_set():
+                        break
+            finally:
+                finished.set()
+
         try:
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                universal_newlines=True,
+                start_new_session=os.name != 'nt',
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
             )
-            
+            reader = threading.Thread(target=read_stderr, daemon=True)
+            reader.start()
             import re
-            time_pattern = re.compile(r'time=(\d+):(\d+):(\d+\.?\d*)')
-            stderr_tail = []
-
-            if process.stderr:
-                for line in process.stderr:
-                    stderr_tail.append(line.strip())
-                    stderr_tail = stderr_tail[-20:]
-
-                    if not duration or not progress_callback:
-                        continue
-
-                    match = time_pattern.search(line)
-                    if match:
-                        hours = int(match.group(1))
-                        minutes = int(match.group(2))
-                        seconds = float(match.group(3))
-                        current_time = hours * 3600 + minutes * 60 + seconds
-                        progress = min(int((current_time / duration) * 100), 99)
-                        progress_callback(progress)
-            
-            process.wait()
+            time_pattern = re.compile(r'(?:time=|out_time=)(\d+):(\d+):(\d+\.?\d*)')
+            checked_at = 0.0
+            while True:
+                now = time.monotonic()
+                if cancellation_check and now - checked_at >= 1:
+                    cancellation_check()
+                    checked_at = now
+                if now - started >= deadline:
+                    return False, '转码超时'
+                if now - last_progress >= stall_deadline:
+                    return False, '转码进度停滞'
+                try:
+                    line = lines.get(timeout=0.1)
+                except queue.Empty:
+                    if process.poll() is not None and finished.is_set():
+                        break
+                    continue
+                stderr_tail = (stderr_tail + [line.strip()])[-20:]
+                match = time_pattern.search(line)
+                if match:
+                    position = int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3])
+                    if position > last_position:
+                        last_position = position
+                        last_progress = now
+                        if duration and progress_callback:
+                            progress_callback(min(int(position / duration * 100), 99))
+            process.wait(timeout=max(0.1, deadline - (time.monotonic() - started)))
             
             if process.returncode == 0:
                 if progress_callback:
@@ -237,8 +280,41 @@ class FFmpegService:
         except subprocess.TimeoutExpired:
             return False, "转码超时"
         except Exception as e:
+            from core.operations import OperationCanceled, OperationLeaseLost
+            if isinstance(e, (OperationCanceled, OperationLeaseLost)):
+                raise
             logger.error(f"转码异常: {e}")
             return False, f"转码异常: {str(e)}"
+        finally:
+            stopped.set()
+            if process is not None:
+                self._terminate_process(process)
+            if reader:
+                reader.join(timeout=2)
+            if process is not None and process.stderr and (not reader or not reader.is_alive()):
+                process.stderr.close()
+
+    @staticmethod
+    def _terminate_process(process):
+        """只终止本次任务创建的进程组，不能杀死其他视频任务。"""
+        if process.poll() is not None:
+            return
+        try:
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            if os.name != 'nt':
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            process.wait(timeout=3)
     
     def get_file_size(self, file_path: str) -> int:
         """获取文件大小"""
