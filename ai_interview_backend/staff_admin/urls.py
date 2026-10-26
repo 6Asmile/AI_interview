@@ -1,4 +1,5 @@
 from django.urls import path
+from .broker_views import BrokerDLQAdminView
 
 from .views import (
     AdminAuditListView, AdminDashboardView, AdminSystemHealthView, AdminTaskListView,
@@ -116,6 +117,7 @@ urlpatterns = [
     path('community/moderation/', CommunityModerationAdminView.as_view()),
     path('community/moderation/<uuid:case_id>/<str:decision>/', CommunityModerationAdminView.as_view()),
     path('operations/events/', PlatformEventsAdminView.as_view()),
+    path('operations/broker-dlq/', BrokerDLQAdminView.as_view()),
     path('operations/events/<uuid:event_id>/replay/', PlatformEventsAdminView.as_view()),
     path('reliability/', ReliabilityAdminView.as_view()),
 ]

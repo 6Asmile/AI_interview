@@ -3,12 +3,20 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '@/api';
+import { staffAuth } from '@/auth';
 
 const route = useRoute();
 const loading = ref(false);
 const data = ref<any>(null);
 const saving = ref(false);
 const loadError = ref('');
+const dlqQueue = ref('');
+const dlqLimit = ref(10);
+const dlqBusy = ref(false);
+const dlqError = ref('');
+const dlqResult = ref<any>(null);
+const dlqDepth = ref<any>(null);
+const dlqRequest = ref<{ key: string; body: any } | null>(null);
 const resumeForm = ref({
   enabled: true,
   enabled_templates: [] as string[],
@@ -145,6 +153,57 @@ async function replay(row: any) {
   await load();
 }
 
+function resetDLQ() {
+  dlqResult.value = null;
+  dlqDepth.value = null;
+  dlqError.value = '';
+  dlqRequest.value = null;
+}
+
+async function inspectDLQ() {
+  if (!dlqQueue.value) return;
+  dlqBusy.value = true;
+  dlqError.value = '';
+  try {
+    dlqDepth.value = await api.get('/operations/broker-dlq/', { params: { queue: dlqQueue.value } });
+  } catch {
+    dlqError.value = '无法读取死信队列，请检查 Broker 连接、队列是否存在及账号权限。';
+  } finally { dlqBusy.value = false; }
+}
+
+async function replayDLQ(dryRun: boolean, retry = false) {
+  if (!dlqQueue.value || dlqBusy.value) return;
+  if (!retry) {
+    const reason = await ElMessageBox.prompt(
+      dryRun ? '试运行只校验当前批次并保留原消息，请填写原因。'
+        : '确认将当前批次重新投递？不保证与试运行是同一批消息，也不会重置已失败的 Operation。请填写原因。',
+      dryRun ? '试运行死信重放' : '确认重放 RabbitMQ 死信',
+      { inputPattern: /\S+/, inputErrorMessage: '必须填写操作原因' },
+    ).then(result => result.value).catch(() => '');
+    if (!reason) return;
+    dlqRequest.value = { key: crypto.randomUUID(), body: {
+      queue: dlqQueue.value, limit: dlqLimit.value, dry_run: dryRun, operation_reason: reason,
+    } };
+  }
+  if (!dlqRequest.value) return;
+  dlqBusy.value = true;
+  dlqError.value = '';
+  try {
+    dlqResult.value = await api.post('/operations/broker-dlq/', dlqRequest.value.body,
+      { headers: { 'Idempotency-Key': dlqRequest.value.key } });
+    dlqRequest.value = null;
+  } catch (error: any) {
+    const code = error?.response?.data?.code;
+    if (code === 'broker_replay_outcome_uncertain') {
+      dlqError.value = '该批次结果待核对。请先查看审计和队列状态；核对后重新试运行，再以新操作处理下一批。原幂等键不会继续消费消息。';
+      dlqResult.value = null;
+      dlqRequest.value = null;
+    } else {
+      dlqError.value = `请求未确认完成（${code || '网络或依赖异常'}）。可用同一幂等键查询结果；如果服务返回待核对，请先检查审计。`;
+    }
+  } finally { dlqBusy.value = false; }
+}
+
 onMounted(load);
 watch(() => route.name, load);
 </script>
@@ -231,8 +290,27 @@ watch(() => route.name, load);
 
       <section class="ops-section broker-section" aria-labelledby="broker-dlq-title">
         <div class="section-heading"><div><h2 id="broker-dlq-title">RabbitMQ Broker DLQ</h2><p>{{ summary.broker_dead_letters?.message }}</p></div><el-tag type="warning">{{ summary.broker_dead_letters?.status }}</el-tag></div>
-        <el-alert type="warning" :closable="false" show-icon title="受控 Broker DLQ 重放尚未在管理端开放" description="当前深度、Unacked 与 Consumer 由 RabbitMQ Prometheus 指标提供。本页不会把数据库 Dead 记录冒充为 Broker 死信。" />
-        <ul class="queue-list"><li v-for="queue in summary.broker_dead_letters?.queues || []" :key="queue"><code>{{ queue }}</code></li></ul>
+        <el-alert type="info" :closable="false" show-icon title="先试运行，再确认重放" description="仅开放耐久任务；未知任务保留。发布确认并保存审计后才确认原死信，崩溃窗口仍可能重复投递。队列深度不含正在被消费的消息。" />
+        <div class="dlq-controls">
+          <el-select v-model="dlqQueue" aria-label="选择死信队列" placeholder="选择死信队列" :disabled="dlqBusy" @change="resetDLQ">
+            <el-option v-for="queue in summary.broker_dead_letters?.queues || []" :key="queue" :label="queue" :value="queue" />
+          </el-select>
+          <el-input-number v-model="dlqLimit" aria-label="本批最多消息数" :min="1" :max="100" :disabled="dlqBusy" @change="resetDLQ" />
+          <el-button :disabled="!dlqQueue || dlqBusy" @click="inspectDLQ">读取深度</el-button>
+          <el-button :loading="dlqBusy" :disabled="!dlqQueue || !!dlqRequest || !staffAuth.has('platform_events.replay')" @click="replayDLQ(true)">试运行</el-button>
+          <el-button type="danger" :disabled="dlqBusy || !!dlqRequest || !dlqResult?.dry_run || !staffAuth.has('platform_events.replay')" @click="replayDLQ(false)">确认重放</el-button>
+        </div>
+        <p v-if="dlqDepth" class="dlq-feedback">待处理 {{ dlqDepth.ready }} 条 · 消费者 {{ dlqDepth.consumers }} 个</p>
+        <el-alert v-if="dlqError" type="error" :closable="false" :title="dlqError" aria-live="polite">
+          <template #default><el-button v-if="dlqRequest" :disabled="dlqBusy" @click="replayDLQ(dlqRequest.body.dry_run, true)">使用原幂等键重试</el-button></template>
+        </el-alert>
+        <p v-if="dlqResult" class="dlq-feedback" aria-live="polite">检查 {{ dlqResult.examined }} 条 · 已重放 {{ dlqResult.replayed }} 条 · 保留 {{ dlqResult.retained }} 条 {{ dlqResult.complete ? '' : '（本批未全部完成；先检查审计再开始新批次）' }}</p>
+        <el-table v-if="dlqResult?.messages?.length" :data="dlqResult.messages" stripe>
+          <el-table-column prop="body_hash" label="消息校验和（不展示正文）" min-width="280" />
+          <el-table-column prop="status" label="处理状态" width="110" />
+          <el-table-column prop="code" label="保留原因" min-width="220" />
+          <el-table-column prop="routing_key" label="原路由键" min-width="170" />
+        </el-table>
       </section>
     </div>
 
@@ -326,6 +404,9 @@ p { margin: 0; color: #667085; }
 .status-band dt, .contract-list dt, .topology-facts dt { color: #475467; font-size: 13px; font-weight: 600; }
 .status-band dd { margin: 8px 0 0; color: #101828; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
 .broker-section :deep(.el-alert) { margin: 18px 22px 4px; }
+.dlq-controls { display: flex; flex-wrap: wrap; gap: 10px; padding: 18px 22px; }
+.dlq-controls :deep(.el-select) { flex: 1 1 320px; }
+.dlq-feedback { padding: 0 22px 18px; }
 .queue-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 22px 22px; padding: 0; list-style: none; }
 .queue-list li { max-width: 100%; padding: 6px 9px; border: 1px solid #d0d5dd; border-radius: 6px; background: #f8fafc; }
 code { overflow-wrap: anywhere; color: #344054; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }

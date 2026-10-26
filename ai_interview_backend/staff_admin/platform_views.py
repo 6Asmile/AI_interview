@@ -412,9 +412,9 @@ class PlatformEventsAdminView(StaffProtectedView):
                 'source': 'rabbitmq',
                 'queues': list(getattr(settings, 'CELERY_DLQ_NAMES', ())),
                 'metrics_source': 'rabbitmq_prometheus',
-                'replay_supported': False,
-                'status': 'pending_verification',
-                'message': '管理端尚未消费 Broker DLQ；请在 Prometheus 查看深度与 Unacked，不将数据库 Dead 冒充为 Broker 死信。',
+                'replay_supported': True,
+                'status': 'implemented-partial',
+                'message': '支持耐久任务的受控重放；先试运行，发布确认并写入审计后才确认原死信。未知任务保留；不自动重试终态 Operation。',
             },
         })
 
@@ -473,7 +473,7 @@ class ReliabilityAdminView(StaffProtectedView):
                 'main_queues': list(getattr(settings, 'CELERY_MAIN_QUEUE_NAMES', ())),
                 'dead_letter_queues': list(getattr(settings, 'CELERY_DLQ_NAMES', ())),
                 'publisher_queue': getattr(settings, 'CELERY_PUBLISHER_QUEUE', ''),
-                'broker_dlq_replay': 'pending-verification',
+                'broker_dlq_replay': 'implemented-partial',
             },
             'durable_async': operational_queue_snapshot(),
             'stale_operation_leases': stale_operation_leases,
