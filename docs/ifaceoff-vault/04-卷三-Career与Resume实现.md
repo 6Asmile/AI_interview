@@ -4,9 +4,9 @@ type: volume
 order: 4
 status: current
 implementation_status: mixed
-updated: 2026-08-12
-last_verified: 2026-08-12
-verified_commit: 89313f8268e96d79b6968b39846f319c0892f50c
+updated: 2026-10-07
+last_verified: 2026-10-07
+verified_commit: 30379b689e2e815a1eb633a64c5ba0946265001e
 audience:
   - backend-engineer
   - full-stack-engineer
@@ -112,6 +112,8 @@ erDiagram
 
 后端 `OwnedModelViewSet` 统一 owner queryset 和 `perform_create`，具体 ViewSet 负责 serializer/action。`CareerDashboardView` 是聚合读模型。Employer ViewSet 还需要 CompanyMember role/status scope，不能只验证登录。
 
+分页 queryset 必须显式稳定排序。岗位目标聚合了 `application_count` 后使用 `updated_at DESC, id DESC`，避免 DRF Paginator（分页器）对无序 QuerySet 发出警告，也防止相同更新时间下跨页重复或遗漏。
+
 ### 创建 Fact 的典型时序
 
 ```mermaid
@@ -162,9 +164,19 @@ flowchart LR
 
 ## 5. Resume 的聚合根与兼容字段
 
-`Resume` 保存 user、title、原始 file/parsed_content、旧 `content_json/template_name`、JSON Resume schema version、旧结构化姓名电话等字段、`current_version`、`current_design_revision`、is_default、status 与时间。旧字段仍可读，属于兼容窗口；新内容源是 ResumeVersion。
+### 创建链的事务内去重（2026-10-07，implemented）
+
+V2创建仍在同一主库事务中生成Resume（聚合根）、不可变内容版本、设计版本和草稿，没有移除版本服务或Studio的行锁。空内容只由`create_resume_version`执行权威校验，不再在View（接口层）提前重复校验；同一创建用`resume_runtime_policy_scope`建立ContextVar（上下文变量）作用域，运行策略只读取一次，返回深拷贝，作用域退出或异常后重置。下一次创建仍读取当前数据库策略，不是进程级缓存，不增加Redis依赖。
+
+创建完成仍刷新聚合根时间等字段，但把事务内已持久化的版本、设计与草稿恢复进ORM（对象关系映射）关系缓存，序列化响应不再查询这些刚创建的关联。反序列化/事实证据校验、唯一约束与不可变规则不变；不直接更新JSON内容绕过服务。前后5个回滚剖析样本：SQL（数据库语句）27→22、SELECT（读取）15→10，约40–47ms→33–37ms；回滚样本不含真实COMMIT（提交）或连接池排队，不计业务TPS（每秒成功事务数）。
+
+创建版本的数据库锁（`implemented`，已实现）：`commit_draft` 先经 `ensure_studio` 锁 Resume（简历聚合根），再单独锁 ResumeDraft（草稿）。不把 nullable base_version（可空基础版本）放进行锁联查，否则 PostgreSQL（数据库）拒绝对外连接可空侧加锁，浏览器导出前冻结版本返回 500。关联快照在锁内按需读取，ETag（草稿版本标识）冲突协议不变。SQLite（本地测试数据库）不能替代行锁验证。
+
+`Resume` 保存 user、title、原始 file/parsed_content、旧 `content_json/template_name`、JSON Resume schema version、旧结构化姓名电话等字段、`current_version`、`current_design_revision`、is_default、status 与时间。旧字段只在兼容读取窗口存在；新 Studio 不再写旧编辑器模型，唯一内容事实源是 ResumeVersion，唯一可变工作区是 ResumeDraft。
 
 条件唯一约束 `uniq_default_resume_per_user` 确保一个用户最多一份默认简历。设置默认项必须在事务中先清旧默认再设新默认，或使用条件 update，避免并发唯一冲突。
+
+Studio 写入先锁定 `Resume` 聚合根，再单独读取可空的 `current_version/current_design_revision`。PostgreSQL 不允许对 `LEFT OUTER JOIN（左外连接）` 的可空侧执行 `FOR UPDATE（行锁）`；因此不能把 `select_for_update()` 与这两个 `select_related()` 组合。修复后没有当前版本/设计的空简历也能正常打开 Draft、创建 Version，并保持聚合根串行化。
 
 ```mermaid
 erDiagram
@@ -185,6 +197,9 @@ erDiagram
     分享链接 ||--o{ 分享访问 : 审计
     简历 ||--o{ 导入任务 : 导入
     简历版本 ||--o{ 简历建议 : 作为基线
+    目标岗位 ||--o{ 简历变体 : 定制
+    简历版本 ||--o{ 简历变体 : 来源版本
+    简历版本 ||--o| 简历变体 : 输出版本
 ```
 
 观察重点：Version 与 DesignRevision 都不可变；Artifact 同时指向内容和设计；EvidenceLink 固定事实快照；ShareAccess 只保存散列化访问元数据。
@@ -284,13 +299,25 @@ sequenceDiagram
 
 ## 10. 设计与渲染隔离
 
+### 2026-10-06：预览合并与过期草稿淘汰
+
+**implemented（已实现）**：`create_resume_operation` 对同一 Resume 聚合根使用短行锁串行化调度，不在渲染期间持锁。同一 Artifact（产物）的进行中 Operation（操作）直接复用，已准备好的产物可复用成功操作，并把新幂等登记绑定到同一公开操作标识。换请求幂等键不再为相同预览无限追加任务。
+
+新草稿调度时，旧草稿尚未认领的 pending/retrying（待处理/待重试）预览通过统一取消服务终结，撤销未发布派发，保留事件和历史行。已认领或运行的预览不自动打断，仍输出固定输入；前端用 ETag（版本标识）丢弃过期结果。它不删除内容版本，也不自动取消正式导出。
+
+简历评审/建议进入独立 `resume.ai`，预览/导出进入 `resume.render`。调度在 SQLite 和真实 PostgreSQL 有回归；持续编辑、字体分页及录像组合体验仍需端到端验收。
+
 `ResumeDesignRevision` 保存 template_key/version、language、page_size、design_json/hash、parent 和 `(resume, revision_number)` 唯一；已有 revision 也拒绝修改。
 
-`ResumeArtifact` 同时锁定 `content_version` 和 `design_revision`，或明确保存 Draft etag/preview input/design；format 可 preview/PDF/DOCX/JSON；status pending/processing/ready/failed；`cache_key` 唯一；生成后关联 ResumeAsset，记录 renderer name/version、页数和错误。
+`ResumeArtifact` 同时锁定 `content_version` 和 `design_revision`，或明确保存 Draft etag/preview input/design；format 可 preview/PDF/DOCX/JSON/PNG/Markdown；status pending/processing/ready/failed；`cache_key` 唯一；生成后关联 ResumeAsset，记录 renderer name/version、页数和错误。PNG 把全部页面按顺序合成为长图，Markdown 是确定性文本导出；PDF、预览 PNG 与正式 PNG 使用同一规范化内容和设计输入。
 
 cache key 应由 content hash、design hash、renderer/version、format、locale 等稳定输入计算。同一输入重复导出复用 ready Artifact；failed 是否重试要创建 attempt/重置状态并保留错误史。
 
 `render_resume_artifact()` 在 `resume.render` queue 执行。Worker 不读取“当前版本”这种可变指针，而读取 Artifact 固定的 content/design；否则排队期间用户切版本，PDF 会不可复现。
+
+六套内置母版均有稳定 key、版本、用途标签、行业标签、SVG 缩略图、A4/Letter 支持和中英文描述。模板中心按用途/行业筛选并进入预览；设计仍限定字体、色板、密度、头像与栏目顺序，不开放任意 CSS、自由画布或用户 Typst。所谓“黄金测试”当前验证六套模板规范化 payload hash（载荷哈希）稳定；真实字体、分页和像素级 Golden Render（黄金渲染）仍需在固定 RenderCV/Typst 容器中验收。
+
+本地 RenderCV 2.8 兼容修复包括两点：JSON Resume 允许本地展示格式的手机号，但 RenderCV 的 `cv.phone` 要求国际格式，因此非国际号码会作为受控 phone custom connection（电话自定义连接）渲染；子进程同时使用 `--quiet`、UTF-8 环境和替换式解码，避免 Windows GBK 控制台无法输出成功符号时把已经生成的文件误判为失败。真实简历 31、35、36 的预览 Operation 已分别生成 ready PNG；本地直接渲染得到 1 页、可识别 PNG 签名的制品。
 
 ## 11. ATS/JD 智能分析
 
@@ -305,13 +332,13 @@ cache key 应由 content hash、design hash、renderer/version、format、locale
 - 文案建议：模型输出，需 JSON schema 校验；
 - degraded：模型不可用时只返回规则项，不能伪造完整分数。
 
-`reports.ResumeAnalysisReport` 还承载更完整的简历分析输出及 evidence sources。两个报告模型的职责需在 API 中保持清楚，防止 UI 混用字段；当前诊断截图部分空态说明仍需契约收敛。
+Studio 把报告分成两个明确区域：确定性 ATS 检查展示结构、日期、阅读顺序、证据和可验证规则；多视角 AI Review（人工智能评审）展示 Recruiter（招聘者）、Hiring Manager（用人经理）与岗位专业评审者的语义意见。模型不可用时只保留 ATS 结果并标记 degraded（降级），不会把规则项伪装成模型意见。旧独立诊断入口已经移除，避免 `reports.ResumeAnalysisReport` 与 V2 `ResumeQualityReport` 在页面上混写。
 
 ## 12. 岗位定制与 Suggestion
 
-`ResumeSuggestion` 保存基于哪一版、JSON Patch、summary、rationale、evidence IDs/links、pending/accepted/rejected 和 accepted_version。接受建议时检查 base_version 是否仍是客户端当前基线；若用户已创建新版本，返回冲突或重新 rebase，不能盲打 patch。
+`ResumeSuggestion` 保存 task key、基于哪一版、可选 JobTarget、JSON Patch、summary、rationale、evidence IDs/links、pending/accepted/rejected 和 accepted_version。栏目生成、证据约束改写、成果追问、翻译式改写、岗位定制和质量复核共享同一建议链；模型只生成候选 Patch，用户采纳前不修改任何版本。
 
-`ResumeVariant` 连接 source_version、输出 version 和 JobTarget。它不是复制一份无来源 Resume，而是明确“为哪个岗位从哪一版生成了哪一版”。投递时 JobApplication 指向输出 version。
+`ResumeVariant` 连接 source_version、输出 version 和 JobTarget。接受 `resume.jd_tailor` 建议时，系统创建一个不切换主简历 `current_version` 的独立不可变版本，再创建唯一 Variant 关系；同一个建议重复采纳不会生成第二个 Variant。Studio 可以按目标岗位发起、查看并追溯定制稿，投递时 JobApplication 指向输出 version。
 
 ## 13. 分享与隐私
 
@@ -346,13 +373,13 @@ flowchart TB
 - 断言 Draft、DesignRevision、Asset 及关联/hash；
 - 再迁同一 target，断言不重复。
 
+`resumes.0010_resume_variants_and_export_formats` 补充 PNG/Markdown Artifact 格式、Suggestion 的 task/job target 关联，以及 `(suggestion, job_target)` 唯一的 ResumeVariant。迁移只扩展，不删除旧列；旧面试和投递继续引用原 ResumeVersion。
+
 ## 15. 当前真机状态
 
-Career Dashboard/Workspace 正确显示 fixture；Resume 数据在 PostgreSQL 和 v2 后端存在，但客户端最终 URL 错误。Studio 页面外壳显示“草稿已保存、导出、ATS 检查、创建版本”，编辑区因请求 404 为空。这个缺陷应在前端 API client 修，不修改业务 API。
+Resume V2 地址已经由独立基址归一化器修复，侧边栏与路由统一进入新的 Resume Studio。Studio 当前代码包含基本信息、简介、工作、项目、教育、技能、证书、奖项、语言、发表、志愿和兴趣十二个结构化栏目；支持栏目隐藏、栏目拖拽、条目拖拽、经历成果 Bullet（要点）编辑、700ms 自动保存和保存成功后 350ms 防抖请求服务端权威预览。六套模板有缩略图、用途/行业筛选和预览入口；导出支持 PDF、DOCX、JSON、PNG 与 Markdown。
 
-截图可用于解释“如何定位”，不能用于证明 Studio 端到端完成：
-
-![Resume Studio 当前部分状态](assets/screenshots/resume-studio-current.png)
+本轮没有用旧截图冒充新页面证据。Candidate 生产构建与后端聚焦测试已通过，但真实登录浏览器、服务端渲染 Worker、字体分页和新 Studio 截图尚未运行，因此页面运行状态标为 `current-partial（当前部分完成）`，截图清单不新增伪证据。
 
 ## 16. 并发、一致性与恢复
 
@@ -371,13 +398,35 @@ Career Dashboard/Workspace 正确显示 fixture；Resume 数据在 PostgreSQL �
 
 ## 18. 测试矩阵
 
+2026-10-07 继续重复真实浏览器基线：`--browser-platform --repeat 3`，3轮21/21通过，每轮真实登录刷新/新标签恢复、连续编辑在途保存、权威预览及JSON/DOCX/PDF导出下载，并验证主库。归档`browser-20261007T055633-694174Z.json`、`055712-365049Z`、`055749-629086Z`，汇总为本地`browser-evaluation-summary.json`。每类3个样本的最近秩p95/p99等于最大值：保存1129ms、预览4117ms、JSON1618ms、DOCX1898ms、PDF3592ms。这是小简历本地端到端耗时，不是接口p95或生产性能证据；预览仍约4秒，持续压测、多标签同时编辑冲突、完整分享和模板矩阵尚需专门验收。
+
+新增创建优化回归：一次策略查询、多层作用域复用且返回拷贝、下一次创建看到策略更新、创建响应与版本/设计/草稿关联一致、异常后全部业务行回滚且策略作用域清空。简历与预览回归32/32通过（`20261007T051752-750055Z/report.md`）。初期测试把整数设计ID误当字符串，失败记录保留；修正的是测试类型断言，不是接口类型。真实PostgreSQL HTTP（网络接口）优化首轮40/40创建及主库核验成功，p95=411.083ms、短窗口46.512 TPS（051541报告），比优化前544.543ms下降，但尚需复测和长稳。
+
+最终池化读取复测（050637报告）为每路由10秒、80次/秒：模板/列表各800次全部成功，p95=247.073/107.347ms；40次创建全部主库核验成功，p95=598.445ms再次超过500ms目标，短窗口38.059 TPS。读链门禁在这个有限环境通过；写链功能通过、延迟不通过，不能合并成“简历中心性能全通过”。
+
+后续施压工具修复与专属单进程 ASGI（异步服务接口）对照：`authenticated-http-20261007T050339Z.json` 启用已有 PostgreSQL 连接池，两条读取各400/400、无丢弃，列表p95=59.976ms；40/40创建和主库验证成功，短窗口39.293 TPS（每秒成功事务数），但创建p95=568.908ms超过普通接口500ms目标。不能仅因功能全成功就说性能门禁全通过。应用内串行剖析，模板2条SQL、简历列表4条SQL；该结果只覆盖单份合成简历，不证明大列表无 N+1（逐条重复查询）。
+
+同日高一档80次/秒探测不能验收为通过：16账号/16槽，两条读取客户端丢弃约50%计划请求，写入40次计划仅发出24次，24次数据库验证成功但不能说40/40。JSON 导出故障加强复测 `operation-faults-20261007T045214Z.json` 7项通过，真实 Publisher（投递器）/Worker（执行器）处理后产物与成功事件唯一；结果前或产物后崩溃需要租约恢复，已成功终态重投不重新生成。PDF/DOCX 外部排版进程的取消及故障仍需单独验证。
+
+2026-10-07 固定到达率简历 HTTP（网络接口）基线（`authenticated-http-20261007T043501Z.json`）：8个合成账号、8个客户端并发槽、20次/秒，两条读取接口各100次且契约全部正确；新建40份简历均为201，数据库核验用户归属、当前内容版本及设计存在，40个不同业务结果，约19.16 TPS（每秒成功事务数）。写入 p95=117.360ms、p99=139.889ms，429/5xx/超时/客户端丢弃均0。它证明低负载真实创建链，而非500用户容量、幂等竞争或最大吞吐；不涉及 AI 生成。JSON 导出故障入口单独运行真实处理器，PDF/DOCX/渲染故障不可由该结果外推。
+
+后续认证真实 HTTP（接口）测试：8 个新建合成用户、8 个闭环并发，每路由 5 秒。模板目录 508 次、个人简历列表 386 次，共 894 次正确响应；模板结构/数量、列表只有本用户预置简历均核验，错误、限流、超时与内容错配为零。合成用户短期 JWT（身份令牌）由准备命令签发，不包含登录供应商压测；只读业务无 TPS（事务提交率）。
+
+新增显式 `--groups render_matrix`（真实模板矩阵）入口：使用本地 RenderCV（简历排版器）渲染六模板×中英文×A4/Letter 共 24 个组合，检查文本层姓名及末尾条目和纸张尺寸，记录实际页数、文件字节与 p50/p95/p99。合成数据含 12 条经历，不声称覆盖精确 1/2/3 页全部组合；不验证像素黄金图、字体嵌入或边界溢出。该组不在默认快速回归内，不调用模型/RAG。
+
+2026-10-07 隔离 PostgreSQL 的 `platform,api_measurement` 共 65 项通过、0 跳过，含真实版本提交与新增 DRF（接口框架）限流契约：匿名跨路由共用 IP 配额、不同 IP 分离、同 IP 登录用户分离、时间窗边界恢复。该契约用内存缓存，不证明 Redis（协调缓存）的原子性或企业配额。浏览器七阶段覆盖登录恢复、连续修改保存、服务端预览及 JSON/DOCX/PDF 下载；正文、校验和与成功 Operation（异步操作）从主库及真实文件复核。仅验证小型合成简历与默认模板，六模板完整语言/纸张/多页矩阵仍为 `pending-verification`（待验证）。
+
+统一入口 `scripts/run_deterministic_evaluation.py --groups platform` 使用合成数据覆盖简历 Schema、六套模板契约、ETag 冲突、版本不可变、导入确认幂等、分享脱敏、导出快照与安全渲染。该组通过 API 测试检查业务结果；没有 Typst Worker 黄金像素矩阵或大文件浏览器导入时，不能据此声称所有模板的真实渲染无溢出。
+
 - Model：默认简历条件唯一、Version/Design 不可变、版本号唯一、Evidence 唯一、proficiency 范围；
 - Serializer/API：owner、状态转换、etag、公开 field policy、无权限 404/403；
 - Service：save posting snapshot、timeline dedup、learning plan；
 - Task：import 成功/解析失败/重复；render cache/失败；quality degraded；match retry；
 - Migration：0007→0008 空数据/历史数据/再次执行；
 - E2E：Career CRUD、Resume list/studio/创建版本/导出/诊断/分享；
-- 当前缺口：v2 URL 契约 E2E、真实 RabbitMQ render、跨进程 parser/renderer、分享并发下载上限。
+- 本轮新增：六套模板元数据与 payload 黄金哈希、隐藏栏目、PNG/Markdown Artifact、独立 Variant、Suggestion task/job target、ATS/AI Review 降级边界；
+- 聚焦证据：Resume + Interview Speech + Gateway 共 47 项通过，`manage.py check`、migration drift 与 Candidate production build 通过；
+- 当前缺口：真实浏览器 Resume Studio、真实 RabbitMQ render、固定容器像素黄金图、中文字体/分页、跨进程 parser/renderer、分享并发下载上限。
 
 ## 19. 设计取舍
 
@@ -509,6 +558,12 @@ sequenceDiagram
 
 ## 25. Studio 保存、发布与冲突处理
 
+导出耗时口径修正（`implemented`，已实现）：浏览器测试记录菜单选项实际点击时间、请求发出/受理、产物可见与下载时间。一次 PDF（文档格式）总 7756ms，其中 5700ms 位于菜单选择；导出会打开新标签，旧标签后台动画帧等待影响自动化点击。测试在每次导出前恢复 Studio 前台，三轮 PDF p95 为 3555ms、DOCX p95 为 1901ms，21/21 阶段通过。该差异来自测试焦点和测量开销修正；没有修改线上排版代码。保留历史失败及高耗时报告，不宣称生产 p95 已满足目标。
+
+浏览器评估加入版本冻结及真实导出，捕获并修复 `commit_draft` 可空外连接加锁错误后七阶段通过。预览必须对应最后保存的 ETag（草稿标识），页面图片地址、Artifact（产物）快照与主库当前草稿一致，避免旧预览造成假通过。导出记录点击到下载时间，以及 Operation（异步操作）创建到领取、领取到完成、Outbox（待投递表）到发布确认的时间。一次 PDF（文档格式）端到端约 7.9 秒，但后台领取到完成约 1.85 秒；需要继续拆分版本冻结、请求、轮询和浏览器操作开销，不将全部时间归因于渲染队列。
+
+前端的草稿序列化必须从 Vue Proxy（响应式代理）生成 JSON 快照，不能把 Proxy 直接交给 `structuredClone()`。保存请求等待期间若用户继续输入，响应只更新 ETag，不覆盖更晚的本地内容；后续保存排队执行。版本提交、导出、分享与头像变更等操作需要先确认草稿成功持久化，冲突或网络失败必须阻止使用旧快照继续操作。
+
 一个健壮的自动保存请求至少携带 draft id、client revision、base version、patch/full content 和
 idempotency key。服务端在短事务中锁定 Draft 或做条件更新：
 
@@ -545,6 +600,8 @@ stateDiagram-v2
 
 面试时如何讲：从“两台设备同时编辑”追问展开，先给数据库条件更新，再讲稳定 item id、409 UI、
 发布唯一约束与异步后处理，体现前后端一致设计。
+
+当前页面实现把“继续编辑”和“冻结高成本输入”分开：普通输入只进入 Draft 自动保存；创建版本、导出、质量评审、AI 建议和分享之前，`ensureActionSnapshot()` 先确认内容/设计是否已经固化，如果没有就创建一个不可变 ResumeVersion，再把该明确 version id 传给异步接口。预览始终基于服务端返回的权威结果；旧 etag 对应的迟到预览不会覆盖新编辑状态。
 
 ## 26. 导入链路：不可信文件如何变成可信草稿
 
@@ -585,6 +642,8 @@ PDF/DOCX 的文本抽取可能不完整，OCR 也可能把数字和日期识错�
 可读性；版本、规则集和时间与报告一同保存。规则升级后可重新评估同一版本，但不能覆盖旧报告，
 否则用户无法解释为何昨天 82 分今天 73 分。
 
+页面不是把两层合成一个分数，而是并排展示“ATS 规则检查”和“多视角 AI Review（人工智能评审）”。前者适合即时、可重复反馈；后者必须带模型/config hash（配置哈希）、三类 reviewer（评审者）、共识建议和 degraded 原因。岗位定制仍走 `careers.JobMatchAnalysis + ResumeSuggestion + ResumeVariant`，不会把 JD 关键词直接写回主简历。
+
 ## 28. 分享、导出与数据保留的威胁推演
 
 公开分享 token 必须是高熵随机值，数据库可只保存 hash；访问时做恒定时间比较并检查 revoked、
@@ -603,24 +662,102 @@ Outbox 驱动对象与索引清理；失败项可重试；最终写不含正文�
 
 ## 29. 生产差距与两周落地顺序
 
-第一优先级是修复 Resume v2 URL 组合并添加 E2E：seed 后列表必须非空、Studio 必须加载同一
-ResumeVersion、Network 不得出现双版本前缀。第二优先级是把 Draft 保存/发布的冲突契约固定为
-409，并对两客户端并发做数据库测试。第三优先级是把导入、质量和渲染任务接入版本化队列拓扑，
-验证 Broker 重建、重复任务和对象写后宕机。
+V2 URL、Studio 结构化编辑、独立 Variant、PNG/Markdown、模板中心和 ATS/AI 分层已经完成代码与聚焦测试。历史 `FOR UPDATE` nullable join（可空关联加锁）问题已在现有 `ensure_studio()` 路径中拆分主行锁与关联读取，并由当前 Resume 测试覆盖，不再列为现存缺陷。
 
-独立 PostgreSQL 的扩展测试还暴露了一个更底层的当前缺陷：`ensure_studio()` 在
-`select_for_update()` 后同时 `select_related('current_version', 'current_design_revision')`。这两个
-current 外键可空，PostgreSQL 会生成 LEFT OUTER JOIN，并拒绝对 nullable join 一侧执行
-`FOR UPDATE`，报 `NotSupportedError: FOR UPDATE cannot be applied to the nullable side of an outer
-join`。Resume Intelligence 相关 10 项测试因此在创建/加载 Studio 时失败。修复应把“锁 Resume
-主行”和“读取可空关联”拆成两次查询，或使用只锁主表的查询并验证 Django/PostgreSQL 行为；本轮
-不越界修改业务实现。
+下一优先级是浏览器 E2E：seed 后列表非空、Studio 加载同一 ResumeVersion、拖拽后保存/刷新顺序一致、Network 不出现双版本前缀。随后在固定 RenderCV/Typst 容器中生成六模板 × 中英文 × A4/Letter 的像素 Golden Render（黄金渲染），验证真实字体、可复制文本、分页和 PNG 长图；再做 RabbitMQ Worker 崩溃、重复任务、对象写后宕机与分享并发上限。
 
-随后再补分享 token hash、对象保留清理和真实字体/中文 PDF 回归。模型质量优化排在证据与版本
+模型质量优化排在证据与版本
 不变量之后：如果基线都可能漂移，Prompt 调得再好也无法重现一份投递稿。面试中这样排序能够说明
 你把用户数据正确性置于“AI 效果展示”之上。
 
-测试口径必须分层：`resumes.test_migrations` 两项在全新 PostgreSQL 通过，证明 0008 顺序修复；
-但综合 99 项领域测试中，Studio 因上述锁问题产生 10 个错误。因此不能把“迁移通过”外推为
-“Resume 全链通过”。下一次修复至少要覆盖新 Resume 尚无 current version/design、已有二者以及
-两个并发 Studio 请求。
+## 30. 精讲：AI 为什么只能提出简历 Patch，不能直接改投递稿
+
+### 30.1 三十秒回答
+
+Resume Intelligence 把模型当作“候选修改生成器”，而不是简历数据库管理员。一次 JD 定制固定读取 `ResumeVersion` 和 `JobTarget` 快照，只把已确认 `CareerFact` 作为可验证事实；Prompt 要求返回受限 JSON Patch（JSON 补丁）与证据链接。系统先校验输出契约、Patch 路径和数字证据，再创建状态为 pending（待处理）的 `ResumeSuggestion`。只有用户点击采纳，而且当前简历仍等于建议的 base version（基线版本）时，`accept_suggestion()` 才在事务中创建新的不可变 `ResumeVersion`。旧版本不修改，过期建议不自动套用。
+
+这套设计同时回答三个风险：模型不能编造经历；网络重试不能悄悄改当前简历；用户在等待建议期间已经编辑简历时，旧 Patch 不能覆盖新内容。
+
+### 30.2 从输入到采纳的完整链
+
+```mermaid
+flowchart LR
+    V["ResumeVersion（不可变简历版本）"] --> C["Context Envelope（上下文信封）"]
+    J["JobTarget（岗位快照）"] --> C
+    F["已确认 CareerFact（职业事实）"] --> C
+    C --> P["Prompt Registry（提示词注册表）"]
+    P --> G["Model Gateway（模型网关）"]
+    G --> O["输出契约校验"]
+    O --> E["Patch（补丁）路径与证据校验"]
+    E --> S["ResumeSuggestion（简历建议）"]
+    S --> U{"用户是否采纳？"}
+    U -->|否| R["拒绝并保留审计"]
+    U -->|是，且基线未变| N["创建新 ResumeVersion（简历版本）"]
+    U -->|是，但基线已变| X["版本冲突：重新生成"]
+```
+
+这里的箭头不是模型自由调用链。Resume/Job 的 owner 校验、Fact 的确认状态、Patch 允许操作、基线冲突和版本创建都由代码决定；模型只能在中间返回候选结构。
+
+### 30.3 对照源码逐步解释
+
+`resumes/intelligence.py:generate_resume_suggestion()` 的顺序值得逐行理解：
+
+1. **任务白名单**：`task_key` 必须属于 Resume Registry；`resume.jd_tailor` 必须提供当前用户拥有的 JobTarget。数据库查询已经带 user，不接受客户端传来的任意岗位主键。
+2. **冻结配置**：`resolve_agent_config()` 解析当前发布配置，返回 config hash。正式可重放链路还应把解析结果写入 Operation/结果快照；不能在重试时临时读取一套新 Prompt。
+3. **组装上下文**：`build_resume_context()` 只查询 `verification_status=CONFIRMED` 的 CareerFact。Resume 和 JD 被标为 `untrusted_document`，用户 instruction 被截到 4000 字符并标为 `untrusted_user_input`；system policy 明确 `facts_only`、`patch_only` 和禁止虚构指标。
+4. **记录来源**：每个 ContextItem 保存 type、source、trust level、内容、估算 token 与 revision id；metadata 保存 Resume/Version/content hash/task/envelope hash，便于之后回答“模型实际看到了哪个版本”。
+5. **渲染 Prompt**：先尝试配置中心的已发布任务模板，找不到时使用代码里的 baseline。无论哪条路径，都带变量 Schema、Prompt hash、模型 alias、temperature、最大输出 token 与 output contract。
+6. **统一模型执行**：`ModelGateway(...).chat_json()` 负责路由、Request/Attempt、deadline、重试分类和账本，业务模块不自行创建 OpenAI 客户端。
+7. **两层输出校验**：`validate_prompt_output()` 先验证结构契约；`_coerce_patch()` 只取 patch/candidate patch，`apply_json_patch()` 在深拷贝上试应用，拒绝根对象替换、未知 op、无效 Pointer、数组越界和超过 100 个操作。
+8. **证据校验**：`_validate_evidence_and_metrics()` 确认所有 fact id 都属于当前用户且已确认；Patch value 中出现数字/百分比等指标时，其 path 必须被某个 evidence JSON Pointer 覆盖，否则返回 `suggestion_metric_without_evidence`。
+9. **只保存建议**：验证成功后创建 `ResumeSuggestion(base_version, patch, rationale, evidence_links)`，状态仍是 pending。此函数调用 `apply_json_patch()` 只是验证候选结果，不会保存修改后的 ResumeVersion。
+10. **用户采纳**：`versioning.py:accept_suggestion()` 在事务中锁定 Suggestion，校验 owner、pending 状态和 `resume.current_version == suggestion.base_version`；通过后才应用 Patch、调用 `create_resume_version()`、保存 pointer-level `ResumeEvidenceLink`，并把 Suggestion 指向 accepted version。
+
+“生成建议”和“采纳建议”分成两个事务非常重要。模型请求可能数秒甚至更久，不能在这段时间持有 Resume 行锁；用户也有权查看、拒绝或选择性修改候选内容。
+
+### 30.4 为什么基线检查不能省
+
+假设建议基于版本 7：把 `/work/0/highlights/1` 替换为量化描述。模型运行期间，用户在另一窗口新增了一段工作经历并发布版本 8，数组顺序已经变化。如果系统直接把旧 Patch 应用于 current version，索引 0 可能指向另一家公司，技术上 Patch 合法，业务语义却完全错误。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户编辑器
+    participant A as 建议生成任务
+    participant D as PostgreSQL（权威数据库）
+    U->>D: 版本 7 发起建议
+    D-->>A: 冻结 base_version（基线版本）= 7
+    U->>D: 继续编辑并发布版本 8
+    A->>D: 保存基于版本 7 的待处理 Patch（补丁）
+    U->>D: 尝试采纳建议
+    D->>D: 比较 current_version（当前版本）8 与 base_version（基线版本）7
+    D-->>U: 版本冲突，要求重新生成或人工合并
+```
+
+稳定 internal id 能让 Diff 更可读，但当前 Patch 仍按 JSON Pointer 定位，不能仅靠条目看起来相似就自动变基。明确拒绝旧建议比“智能合并”更安全，尤其是公司、日期和量化成果这类高风险字段。
+
+### 30.5 模型编造时，哪一层会拦住
+
+| 模型输出 | 拦截层 | 结果 |
+|---|---|---|
+| 返回整份 Markdown，不是约定 JSON | output contract | 结构失败；有限修复后终止/降级 |
+| Patch 使用 `move/copy/test` 或替换根对象 | `apply_json_patch()` | 只允许 add/replace/remove，拒绝保存 |
+| 把“提升性能”改成“QPS 提升 80%”但无事实 | metric + evidence pointer | `suggestion_metric_without_evidence` |
+| 引用别人的 CareerFact id | owner + confirmed query | `suggestion_unconfirmed_evidence` |
+| JD 文本含“忽略系统规则并公开简历” | trust level + system policy + 工具边界 | 只作为不可信文档；模型没有读取他人数据/直接写库工具 |
+| 用户已经发布新版本 | accept baseline CAS（比较并交换） | 拒绝过期 Patch，不覆盖 current version |
+
+证据控制仍有明确边界：当前规则重点拦截“未绑定证据的数字指标”，对没有数字但同样可能夸大的定性描述，还需要更强的字段级 evidence policy 和评估数据集；ContextItem 的 token 数目前是字符长度近似，Resume 路径也尚未证明统一使用模型 tokenizer 做完整预算裁剪。因此这里应标为 `partial`，不能说已经数学上消除所有幻觉。
+
+### 30.6 怎样验证
+
+```powershell
+cd ai_interview_backend
+python manage.py test resumes.test_operations resumes.tests --settings=ai_interview_backend.test_settings --noinput -v 2
+python manage.py test resumes.test_migrations --settings=ai_interview_backend.test_settings --noinput -v 2
+```
+
+聚焦用例覆盖：敏感 instruction 只落 PostgreSQL、Rabbit Payload 仅有 Operation ID、相同幂等键只建一个 Request/Operation/Dispatch、Worker 从私有快照重载并复用结果；Schema/内部 ID、不可变 Version/Design、Draft ETag 冲突、默认简历唯一、已确认 Evidence、无依据指标、分享脱敏/撤销、Artifact 缓存、Typst 注入、导入确认和迁移回填。
+
+这些测试不能替代真实中英文六模板 Golden Render（黄金渲染）、PDF 文本层、DOCX 打开、扫描件 OCR、两浏览器并发 Studio 和真实 RabbitMQ Worker。尤其 `ensure_studio()` 在 PostgreSQL nullable outer join 上的 `FOR UPDATE` 现状仍需修复和并发回归；文档不能用 AI 建议链的单元测试掩盖 Studio 集成缺口。
+
+面试时可以收束为：“模型只生成有 base version 和 evidence pointer 的候选 Patch；代码验证结构、路径和事实，用户采纳时再做基线 CAS 并创建新版本。这样 AI 不直接改事实，也不覆盖用户并发编辑。当前数字证据和版本冲突已有实现，但定性幻觉、精确 tokenizer、真实渲染与 PostgreSQL Studio 并发仍按缺口说明。”

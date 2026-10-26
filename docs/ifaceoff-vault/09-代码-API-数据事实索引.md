@@ -6,7 +6,7 @@ status: generated
 implementation_status: implemented
 updated: 2026-08-12
 last_verified: 2026-08-12
-verified_commit: 89313f8268e96d79b6968b39846f319c0892f50c
+verified_commit: 30379b689e2e815a1eb633a64c5ba0946265001e
 audience:
   - engineer
   - interviewer
@@ -27,14 +27,14 @@ tags:
 
 ## 基线
 
-- Commit：`89313f8268e96d79b6968b39846f319c0892f50c`
-- 最近提交：2026-08-12T16:48:56+08:00 feat: 完善可靠异步底座与项目验证能力
+- Commit：`30379b689e2e815a1eb633a64c5ba0946265001e`
+- 最近提交：2026-08-21T11:37:00+08:00 feat: 完善简历工作室与实时语音体验
 - Django 数据模型应用：15
-- Django model classes：152
-- HTTP router/path declarations：209
-- Candidate/Staff route paths：62
+- Django model classes：153
+- HTTP router/path declarations：210
+- Candidate/Staff route paths：59
 - Celery shared tasks：35
-- 测试入口文件：40
+- 测试入口文件：46
 
 ## Django 应用与模型
 
@@ -46,11 +46,11 @@ tags:
 | `community` | `CommunityIdentity`, `CommunityTopicLink`, `CommunityWebhookEvent`, `Topic`, `CommunityContent`, `ContentRevision`, `CommunityComment`, `Reaction`, `Bookmark`, `TopicFollow`, `UserFollow`, `ContentDailyMetric`, `SharedArtifactSnapshot`, `ContentReport`, `ModerationCase`, `ModerationDecision`, `Appeal`, `ReputationLedger`, `GrowthEvent`, `StreakState`, `Challenge`, `ChallengeEnrollment` | `+`, `appeals`, `bookmarks`, `challenge_enrollments`, `comments`, `community_bookmarks`, `community_comments`, `community_contents`, `community_identity`, `community_reactions`, `community_reports`, `community_topic`, `contents`, `daily_metrics`, `decisions`, `enrollments`, `followed_community_topics`, `followers`, `growth_events`, `growth_streak`, `moderation_appeals`, `moderation_cases`, `native_followers`, `native_following`, `reactions`, `replies`, `reports`, `reputation_entries`, `revisions`, `shared_artifact_snapshots`, `uniq_challenge_enrollment`, `uniq_community_bookmark`, `uniq_community_content_daily_metric`, `uniq_community_content_revision`, `uniq_community_legacy_source_id`, `uniq_community_reaction`, `uniq_community_report_reason`, `uniq_community_topic_follow`, `uniq_community_user_follow` |
 | `core` | `IdempotencyRecord`, `AsyncOperation`, `OperationDispatchOutbox`, `OperationEvent`, `IntegrationOutbox`, `ConsumerInbox`, `RuntimePolicy` | `async_operations`, `core_opdisp_ready_idx`, `core_opevent_time_idx`, `dispatches`, `events`, `idempotency_claims`, `idempotency_records`, `operation_active_requires_lease`, `operation_attempt_within_limit`, `operation_progress_valid`, `operation_terminal_has_completed_at`, `uniq_consumer_inbox_event`, `uniq_operation_business_idempotency`, `uniq_operation_dispatch_fence`, `uniq_operation_event_sequence`, `uniq_user_idempotency_scope_key` |
 | `interactions` | `Like`, `Bookmark`, `Follow` | `bookmarked_by`, `bookmarks`, `follower_relations`, `following_relations`, `likes` |
-| `interviews` | `AgentConfigProfile`, `AgentConfigRevision`, `AgentPromptTemplate`, `AgentConfigKnowledgeBinding`, `AgentConfigEvaluationRun`, `InterviewRubric`, `RubricDimension`, `RubricLevelAnchor`, `InterviewTemplate`, `InterviewTemplateStage`, `InterviewCalibrationCase`, `InterviewSession`, `InterviewQuestion`, `InterviewQuestionGenerationJob`, `InterviewAgentRun`, `InterviewAgentExecution`, `InterviewAgentDispatch`, `InterviewReferenceAnswer`, `InterviewAgentNodeRun`, `InterviewAgentTrace`, `InterviewAgentToolCall`, `InterviewAgentMemoryEvent`, `InterviewMediaArtifact`, `EvaluationDataset`, `EvaluationCase`, `EvaluationRun`, `EvaluationRunMetric` | `+`, `AI 反馈内容`, `Agent Loop轮次`, `Agent引擎`, `Agent运行`, `Agent配置快照`, `Agent配置覆盖`, `Checkpoint命名空间`, `JD`, `JD 快照`, `LangGraph Run ID`, `LangGraph Thread ID`, `Prompt版本`, `RAG来源`, `RAG题库上下文`, `agent_config_bindings`, `agent_config_evaluation_runs`, `agent_config_overrides`, `agent_executions`, `agent_memory_events`, `agent_prompt_templates`, `agent_runs`, `agent_tool_calls`, `agent_traces`, `anchors`, `approved_agent_config_revisions`, `baseline_config_evaluation_runs`, `calibration_cases`, `cases`, `config_evaluation_runs`, `created_agent_config_profiles`, `created_agent_config_revisions`, `derived_revisions`, `dimensions`, `dispatch`, `evaluation_datasets`, `evaluation_run`, `evaluation_runs`, `execution`, `generation_jobs`, `interview_agent_execution`, `interview_calibration_cases`, `interview_media_artifacts`, `interview_reference_answers`, `interview_rubrics`, `interview_sessions`, `interview_templates`, `interviews_status_lease_idx`, `knowledge_bindings`, `media_artifacts`, `memory_events`, `metrics`, `next_generation_jobs`, `node_runs`, `prompts`, `question_generation_jobs`, `questions`, `reference_answers`, `result_agent_executions`, `revisions`, `run_metrics`, `runs`, `sessions`, `stages`, `templates`, `tool_calls`, `traces`, `uniq_agent_config_knowledge_binding`, `uniq_agent_config_revision`, `uniq_agent_execution_idempotency`, `uniq_agent_prompt_task_revision`, `uniq_interview_agent_node_attempt`, `uniq_interview_agent_run_request`, `uniq_interview_generation_job_sequence`, `uniq_interview_memory_event_dedup`, `uniq_interview_question_sequence`, `uniq_interview_reference_answer_snapshot`, `uniq_platform_agent_config_profile`, `上下文预算`, `业务事件`, `主导SubAgent`, `事件`, `会话 UUID`, `体验模式`, `候选人反问预留时长`, `允许返回上层话题`, `允许题型`, `关联简历`, `关联轨迹`, `关联问题`, `兼容运行记录`, `出题指引`, `创建时间`, `匿名化真实回答`, `匿名化简历`, `压缩上下文摘要`, `参考答案/真值`, `召回次数`, `回答时间`, `回答评估摘要`, `回答音频 URL`, `实时分析数据`, `岗位`, `岗位匹配关键词`, `工具名称`, `已回答问题`, `已覆盖话题`, `幂等请求哈希`, `幂等键`, `平台异步操作`, `开始时间`, `异常保护最大轮次`, `当前面试阶段`, `待追问话题`, `得分`, `感知摘要`, `所属会话`, `所属用户`, `执行栅栏令牌`, `持久化状态摘要`, `持续时间 (秒)`, `指标值`, `指标名称`, `指标详情`, `排序`, `无关文档修订`, `无答案样例`, `是否启用`, `是否开启录像`, `是否强制要求知识库依据`, `更新时间`, `最低分`, `最低覆盖次数`, `最低验证能力数`, `最后召回时间`, `最后持久化事件序号`, `最后活动时间`, `最少有效轮次`, `最短时长（分钟）`, `最终生成文本`, `最终问题`, `最近心跳时间`, `最长时长（分钟）`, `最高分`, `期望主题`, `期望命中的文档修订`, `期望能力标签`, `期望评分`, `期望追问方向`, `本场面试计划快照`, `权重`, `权限范围`, `来源节点`, `校准样例标题`, `校验状态`, `校验错误`, `检索上下文`, `检索轨迹`, `模型配置快照`, `模板名称`, `模板快照`, `模板说明`, `模板配置`, `求职目标`, `版本`, `状态`, `状态版本`, `生成模式`, `生成的问题`, `生成结果问题`, `用户回答文本`, `目标岗位`, `目标时长（分钟）`, `目标能力维度`, `目标题号`, `真实匿名化回答`, `短期记忆摘要`, `租约持有者`, `租约过期时间`, `等级`, `等级描述`, `简历快照`, `简历版本快照来源`, `结束时间`, `维度名称`, `维度标识`, `维度说明`, `耗时毫秒`, `能力覆盖汇总`, `节点名称`, `节点输出`, `规则评分配置`, `视频上传任务`, `触发问题`, `记忆去重键`, `记忆摘要`, `记忆键`, `评估摘要`, `评估数据集名称`, `评估时间`, `说明`, `请求哈希`, `调用SubAgent`, `输入哈希`, `输入摘要`, `输出摘要`, `过期时间`, `进入条件`, `进度计算模式`, `退出条件`, `部分生成文本`, `配置快照`, `重要性`, `重试次数`, `量表名称`, `量表说明`, `错误信息`, `问题`, `问题内容`, `问题序号`, `问题数量`, `阶段`, `阶段名称`, `阶段最短时长（分钟）`, `阶段最长时长（分钟）`, `阶段标识`, `降级原因`, `难度`, `面试会话`, `面试报告`, `面试模式`, `面试模板`, `面试风格配置`, `题目生成计划`, `题目计划`, `题目语义签名`, `题量占比` |
+| `interviews` | `AgentConfigProfile`, `AgentConfigRevision`, `AgentPromptTemplate`, `AgentConfigKnowledgeBinding`, `AgentConfigEvaluationRun`, `InterviewRubric`, `RubricDimension`, `RubricLevelAnchor`, `InterviewTemplate`, `InterviewTemplateStage`, `InterviewCalibrationCase`, `InterviewSession`, `InterviewQuestion`, `InterviewQuestionGenerationJob`, `InterviewAgentRun`, `InterviewAgentExecution`, `InterviewAgentDispatch`, `InterviewReferenceAnswer`, `InterviewAgentNodeRun`, `InterviewAgentTrace`, `InterviewAgentToolCall`, `InterviewAgentMemoryEvent`, `InterviewMediaArtifact`, `SpeechLatencyMetric`, `EvaluationDataset`, `EvaluationCase`, `EvaluationRun`, `EvaluationRunMetric` | `+`, `AI 反馈内容`, `Agent Loop轮次`, `Agent引擎`, `Agent运行`, `Agent配置快照`, `Agent配置覆盖`, `Checkpoint命名空间`, `JD`, `JD 快照`, `LangGraph Run ID`, `LangGraph Thread ID`, `Prompt版本`, `RAG来源`, `RAG题库上下文`, `agent_config_bindings`, `agent_config_evaluation_runs`, `agent_config_overrides`, `agent_executions`, `agent_memory_events`, `agent_prompt_templates`, `agent_runs`, `agent_tool_calls`, `agent_traces`, `anchors`, `approved_agent_config_revisions`, `baseline_config_evaluation_runs`, `calibration_cases`, `cases`, `config_evaluation_runs`, `created_agent_config_profiles`, `created_agent_config_revisions`, `derived_revisions`, `dimensions`, `dispatch`, `evaluation_datasets`, `evaluation_run`, `evaluation_runs`, `execution`, `generation_jobs`, `interview_agent_execution`, `interview_calibration_cases`, `interview_media_artifacts`, `interview_reference_answers`, `interview_rubrics`, `interview_sessions`, `interview_templates`, `interviews_status_lease_idx`, `knowledge_bindings`, `media_artifacts`, `memory_events`, `metrics`, `next_generation_jobs`, `node_runs`, `prompts`, `question_generation_jobs`, `questions`, `reference_answers`, `result_agent_executions`, `revisions`, `run_metrics`, `runs`, `sessions`, `speech_latency_metrics`, `speech_metric_type_time`, `stages`, `templates`, `tool_calls`, `traces`, `uniq_agent_config_knowledge_binding`, `uniq_agent_config_revision`, `uniq_agent_execution_idempotency`, `uniq_agent_prompt_task_revision`, `uniq_interview_agent_node_attempt`, `uniq_interview_agent_run_request`, `uniq_interview_generation_job_sequence`, `uniq_interview_memory_event_dedup`, `uniq_interview_question_sequence`, `uniq_interview_reference_answer_snapshot`, `uniq_platform_agent_config_profile`, `上下文预算`, `业务事件`, `主导SubAgent`, `事件`, `会话 UUID`, `体验模式`, `候选人反问预留时长`, `允许返回上层话题`, `允许题型`, `关联简历`, `关联轨迹`, `关联问题`, `兼容运行记录`, `出题指引`, `创建时间`, `匿名化真实回答`, `匿名化简历`, `压缩上下文摘要`, `参考答案/真值`, `召回次数`, `回答时间`, `回答评估摘要`, `回答音频 URL`, `实时分析数据`, `岗位`, `岗位匹配关键词`, `工具名称`, `已回答问题`, `已覆盖话题`, `幂等请求哈希`, `幂等键`, `平台异步操作`, `开始时间`, `异常保护最大轮次`, `当前面试阶段`, `待追问话题`, `得分`, `感知摘要`, `所属会话`, `所属用户`, `执行栅栏令牌`, `持久化状态摘要`, `持续时间 (秒)`, `指标值`, `指标名称`, `指标详情`, `排序`, `无关文档修订`, `无答案样例`, `是否启用`, `是否开启录像`, `是否强制要求知识库依据`, `更新时间`, `最低分`, `最低覆盖次数`, `最低验证能力数`, `最后召回时间`, `最后持久化事件序号`, `最后活动时间`, `最少有效轮次`, `最短时长（分钟）`, `最终生成文本`, `最终问题`, `最近心跳时间`, `最长时长（分钟）`, `最高分`, `期望主题`, `期望命中的文档修订`, `期望能力标签`, `期望评分`, `期望追问方向`, `本场面试计划快照`, `权重`, `权限范围`, `来源节点`, `校准样例标题`, `校验状态`, `校验错误`, `检索上下文`, `检索轨迹`, `模型配置快照`, `模板名称`, `模板快照`, `模板说明`, `模板配置`, `求职目标`, `版本`, `状态`, `状态版本`, `生成模式`, `生成的问题`, `生成结果问题`, `用户回答文本`, `目标岗位`, `目标时长（分钟）`, `目标能力维度`, `目标题号`, `真实匿名化回答`, `短期记忆摘要`, `租约持有者`, `租约过期时间`, `等级`, `等级描述`, `简历快照`, `简历版本快照来源`, `结束时间`, `维度名称`, `维度标识`, `维度说明`, `耗时毫秒`, `能力覆盖汇总`, `节点名称`, `节点输出`, `规则评分配置`, `视频上传任务`, `触发问题`, `记忆去重键`, `记忆摘要`, `记忆键`, `评估摘要`, `评估数据集名称`, `评估时间`, `说明`, `请求哈希`, `调用SubAgent`, `输入哈希`, `输入摘要`, `输出摘要`, `过期时间`, `进入条件`, `进度计算模式`, `退出条件`, `部分生成文本`, `配置快照`, `重要性`, `重试次数`, `量表名称`, `量表说明`, `错误信息`, `问题`, `问题内容`, `问题序号`, `问题数量`, `阶段`, `阶段名称`, `阶段最短时长（分钟）`, `阶段最长时长（分钟）`, `阶段标识`, `降级原因`, `难度`, `面试会话`, `面试报告`, `面试模式`, `面试模板`, `面试风格配置`, `题目生成计划`, `题目计划`, `题目语义签名`, `题量占比` |
 | `knowledge` | `RetrievalProfile`, `RetrievalProfileRevision`, `KnowledgeDocument`, `KnowledgeBase`, `KnowledgeBaseRevision`, `KnowledgeBaseRevisionDocument`, `KnowledgeDocumentRevision`, `KnowledgeChunkDraft`, `KnowledgeImportBatch`, `KnowledgeImportFile`, `KnowledgeChunk` | `+`, `Embedding模型`, `Token数量估算`, `approved_knowledge_base_revisions`, `approved_knowledge_documents`, `approved_knowledge_revisions`, `approved_retrieval_profile_revisions`, `child_chunks`, `children`, `chunk_drafts`, `chunks`, `created_knowledge_base_revisions`, `created_knowledge_bases`, `created_retrieval_profile_revisions`, `created_retrieval_profiles`, `document_bindings`, `documents`, `import_files`, `knowledge_base_bindings`, `knowledge_base_revisions`, `knowledge_documents`, `knowledge_import_batches`, `knowledge_revisions`, `published_chunks`, `revisions`, `uniq_knowledge_base_revision`, `uniq_knowledge_base_revision_document`, `uniq_knowledge_document_revision`, `uniq_knowledge_revision_chunk_index`, `uniq_knowledge_revision_chunk_order`, `uniq_retrieval_profile_revision`, `上传人`, `上传文件`, `内容哈希`, `分片内容`, `分片层级`, `分片序号`, `分片数量`, `创建人`, `原始文件名`, `发布版本`, `可见范围`, `员工审批人`, `块类型`, `处理状态`, `失败数`, `审批人`, `审批状态`, `审批通过时间`, `导入批次`, `导入状态`, `导入选项`, `当前发布版本`, `当前编辑版本`, `成功数`, `所属文档`, `拒绝原因`, `提交审核时间`, `文件总数`, `文件类型`, `文档标题`, `是否启用OCR`, `最后检索命中时间`, `最后索引时间`, `来源类型`, `标题路径`, `检索元数据`, `检索命中次数`, `源文件`, `源文件列表`, `父级分片`, `生成文档`, `知识内容`, `索引时间`, `索引状态`, `结束页`, `结构化解析结果`, `能力标签`, `解析器`, `解析器版本`, `解析状态`, `解析降级原因`, `语义组`, `起始页`, `适用岗位`, `错误信息`, `错误日志`, `难度` |
 | `notifications` | `Notification`, `NotificationOutbox` | `+`, `notification_action_objects`, `notification_actors`, `notification_outbox_events`, `notification_targets`, `notifications`, `outbox_event`, `接收者`, `是否已读`, `通知类型` |
 | `reports` | `ResumeAnalysisReport` | `AI分析报告JSON`, `analysis_reports`, `resume_analysis_reports`, `模型配置快照`, `目标岗位JD`, `目标岗位来源`, `简历版本快照`, `简历版本快照来源`, `综合匹配度得分`, `证据来源` |
-| `resumes` | `Resume`, `ResumeVersion`, `ResumeDraft`, `ResumeDesignRevision`, `ResumeEvidenceLink`, `ResumeAsset`, `ResumeArtifact`, `ResumeQualityReport`, `ResumeShareLink`, `ResumeShareAccess`, `ResumeImportJob`, `ResumeOperationRequest`, `ResumeSuggestion`, `ResumeVariant`, `Education`, `WorkExperience`, `ProjectExperience`, `Skill` | `+`, `JSON Patch`, `JSON Resume 版本`, `accesses`, `artifact`, `artifacts`, `assets`, `children`, `design_revisions`, `draft`, `drafts`, `educations`, `evidence_links`, `iFaceoff 布局 JSON`, `import_jobs`, `operation_requests`, `project_experiences`, `quality_reports`, `resume_design_revisions`, `resume_drafts`, `resume_evidence_links`, `resume_import_jobs`, `resume_operation_requests`, `resume_opreq_owner_idx`, `resume_opreq_target_required`, `resume_share_links`, `resume_suggestions`, `resume_variants`, `resume_versions`, `resumes`, `share_links`, `skills`, `suggestions`, `uniq_default_resume_per_user`, `uniq_resume_design_revision`, `uniq_resume_evidence_pointer_fact`, `uniq_resume_version_number`, `variant_outputs`, `variants`, `versions`, `work_experiences`, `上传的简历文件`, `专业`, `个人总结`, `公司名称`, `创建时间`, `城市`, `姓名`, `学位`, `学校名称`, `工作描述`, `开始日期`, `当前版本`, `当前设计版本`, `所属用户`, `所属简历`, `技能名称`, `担任角色`, `旧版优化建议`, `旧版编辑器 JSON`, `是否默认简历`, `更新时间`, `期望职位`, `标准简历 JSON`, `模板名称`, `熟练度`, `状态`, `电话`, `简历标题`, `结束日期`, `职业事实证据快照`, `职位`, `解析后的文本内容`, `邮箱`, `项目名称`, `项目描述` |
+| `resumes` | `Resume`, `ResumeVersion`, `ResumeDraft`, `ResumeDesignRevision`, `ResumeEvidenceLink`, `ResumeAsset`, `ResumeArtifact`, `ResumeQualityReport`, `ResumeShareLink`, `ResumeShareAccess`, `ResumeImportJob`, `ResumeOperationRequest`, `ResumeSuggestion`, `ResumeVariant`, `Education`, `WorkExperience`, `ProjectExperience`, `Skill` | `+`, `JSON Patch`, `JSON Resume 版本`, `accesses`, `artifact`, `artifacts`, `assets`, `children`, `design_revisions`, `draft`, `drafts`, `educations`, `evidence_links`, `iFaceoff 布局 JSON`, `import_jobs`, `operation_requests`, `project_experiences`, `quality_reports`, `resume_design_revisions`, `resume_drafts`, `resume_evidence_links`, `resume_import_jobs`, `resume_operation_requests`, `resume_opreq_owner_idx`, `resume_opreq_target_required`, `resume_share_links`, `resume_suggestions`, `resume_variants`, `resume_versions`, `resumes`, `share_links`, `skills`, `suggestions`, `uniq_default_resume_per_user`, `uniq_resume_design_revision`, `uniq_resume_evidence_pointer_fact`, `uniq_resume_variant_version`, `uniq_resume_version_number`, `variant_outputs`, `variants`, `versions`, `work_experiences`, `上传的简历文件`, `专业`, `个人总结`, `公司名称`, `创建时间`, `城市`, `姓名`, `学位`, `学校名称`, `工作描述`, `开始日期`, `当前版本`, `当前设计版本`, `所属用户`, `所属简历`, `技能名称`, `担任角色`, `旧版优化建议`, `旧版编辑器 JSON`, `是否默认简历`, `更新时间`, `期望职位`, `标准简历 JSON`, `模板名称`, `熟练度`, `状态`, `电话`, `简历标题`, `结束日期`, `职业事实证据快照`, `职位`, `解析后的文本内容`, `邮箱`, `项目名称`, `项目描述` |
 | `staff_admin` | `StaffRole`, `StaffSession`, `StaffMFADevice`, `StaffInvitation`, `StaffRecoveryCode`, `StaffEmailOutbox`, `BreakGlassGrant`, `AdminIdempotencyRecord`, `AdminAuditEvent`, `PlatformFeatureFlag`, `MaintenanceNotice` | `+`, `accounts`, `audit_events`, `break_glass_grants`, `email_events`, `idempotency_records`, `invitation`, `maintenance_notices`, `mfa_devices`, `recovery_codes`, `sent_invitations`, `sessions`, `staff_idempotency_scope_key`, `uniq_staff_recovery_code` |
 | `system` | `AIModel`, `AISetting`, `Industry`, `JobPosition`, `ProviderCredential`, `ModelDeployment`, `ModelAlias`, `RoutePolicy`, `RoutePolicyTarget`, `UsageBudget`, `ModelRequestLedger`, `ModelAttempt` | `API Base URL`, `API Key`, `API Keys 映射`, `ai_setting`, `asr_settings`, `attempts`, `chat_settings`, `credentials`, `deployments`, `embedding_settings`, `job_positions`, `legacy_settings`, `model_attempts`, `model_request_ledgers`, `model_usage_budget`, `provider_credentials`, `request_ledgers`, `rerank_settings`, `route_policy`, `route_targets`, `targets`, `tts_settings`, `uniq_model_request_attempt`, `uniq_policy_deployment`, `创建时间`, `向量维度`, `图标 SVG 代码`, `岗位名称`, `岗位描述`, `所属用户`, `所属行业`, `排序`, `支持 JSON 模式`, `是否启用`, `更新时间`, `模型供应商`, `模型描述`, `模型显示名称`, `模型类型`, `模型调用标识`, `行业名称`, `行业描述`, `默认AI模型`, `默认ASR模型`, `默认Embedding模型`, `默认Rerank模型`, `默认TTS模型`, `默认对话模型` |
 | `users` | `NotificationPreference`, `AuthSession`, `LoginAudit`, `OAuthFlow`, `PrivacyRequest` | `auth_sessions`, `login_audits`, `notification_preference`, `oauth_flows`, `privacy_requests`, `users_user_email_ci_unique`, `users_user_username_ci_unique`, `头像`, `工作年限`, `所在地区`, `所属企业`, `手机号`, `技能画像`, `新手引导完成时间`, `新手引导步骤`, `更新时间`, `求职状态`, `状态`, `目标岗位`, `职业标题`, `角色`, `资料可见性`, `邮箱` |
@@ -152,78 +152,79 @@ tags:
 | `ai_interview_backend/resumes/urls.py:21` | `resumes_router.register(r'work_experiences', WorkExperienceViewSet, basename='resume-work_experiences')` |
 | `ai_interview_backend/resumes/urls.py:22` | `resumes_router.register(r'project_experiences', ProjectExperienceViewSet, basename='resume-project_experiences')` |
 | `ai_interview_backend/resumes/urls.py:23` | `resumes_router.register(r'skills', SkillViewSet, basename='resume-skills')` |
-| `ai_interview_backend/staff_admin/urls.py:49` | `path('auth/csrf/', StaffCsrfView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:50` | `path('auth/login/', StaffLoginView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:51` | `path('auth/security-setup/', StaffSecuritySetupView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:52` | `path('auth/activate/', StaffInvitationActivateView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:53` | `path('auth/invitations/<str:token>/', StaffInvitationDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:54` | `path('auth/register/', StaffInvitationRegisterView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:55` | `path('auth/session/', StaffSessionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:56` | `path('auth/logout/', StaffLogoutView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:57` | `path('dashboard/summary/', AdminDashboardView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:58` | `path('staff/', StaffAccountListCreateView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:59` | `path('staff-invitations/', StaffAccountListCreateView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:60` | `path('staff/<uuid:account_id>/', StaffAccountDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:61` | `path('staff/<uuid:account_id>/<str:action>/', StaffAccountActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:62` | `path('staff-invitations/<uuid:invitation_id>/<str:action>/', StaffInvitationActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:63` | `path('staff/roles/', StaffRoleListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:64` | `path('knowledge-reviews/', KnowledgeReviewListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:65` | `path('knowledge-reviews/<uuid:document_id>/', KnowledgeReviewAdminDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:66` | `path('knowledge-reviews/<uuid:document_id>/<str:decision>/', KnowledgeReviewDecisionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:67` | `path('knowledge-documents/<uuid:document_id>/<str:action>/', KnowledgeDocumentAdminActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:68` | `path('knowledge-chunk-drafts/<uuid:chunk_id>/', KnowledgeChunkDraftAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:69` | `path('knowledge-chunk-drafts/<uuid:chunk_id>/<str:action>/', KnowledgeChunkDraftActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:70` | `path('interviews/', InterviewSessionAdminListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:71` | `path('interviews/<uuid:session_id>/', InterviewSessionAdminDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:72` | `path('interviews/<uuid:session_id>/<str:action>/', InterviewSessionAdminActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:73` | `path('agent-runs/', AgentRunListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:74` | `path('agent-runs/<uuid:run_id>/', AgentRunAdminDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:75` | `path('interview-config/<str:resource>/', InterviewConfigAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:76` | `path('agent-config/profiles/', AgentConfigProfileView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:77` | `path('agent-config/profiles/<uuid:profile_id>/revisions/', AgentConfigProfileRevisionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:78` | `path('agent-config/revisions/<uuid:revision_id>/', AgentConfigRevisionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:79` | `path('agent-config/revisions/<uuid:revision_id>/resolved-preview/', AgentConfigResolvedPreviewView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:80` | `path('agent-config/revisions/<uuid:revision_id>/<str:action>/', AgentConfigRevisionActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:81` | `path('agent-config/prompts/<path:task_key>/preview/', AgentPromptPreviewView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:82` | `path('agent-config/experiments/retrieval/', AgentConfigExperimentView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:83` | `path('agent-config/evaluation-datasets/', AgentConfigEvaluationDatasetView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:84` | `path('knowledge-bases/', KnowledgeBaseView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:85` | `path('knowledge-bases/revisions/<uuid:revision_id>/', KnowledgeBaseRevisionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:86` | `path('retrieval-profiles/', RetrievalProfileView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:87` | `path('retrieval-profiles/revisions/<uuid:revision_id>/<str:action>/', RetrievalProfileActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:88` | `path('model-gateway/summary/', ModelGatewaySummaryView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:89` | `path('model-gateway/<str:resource>/', GatewayResourceAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:90` | `path('model-gateway/<str:resource>/<int:object_id>/', GatewayResourceAdminDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:91` | `path('tasks/', AdminTaskListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:92` | `path('tasks/<uuid:operation_id>/<str:action>/', AdminTaskActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:93` | `path('system/readiness/', AdminSystemHealthView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:94` | `path('system/resilience/', ResilienceMetricsAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:95` | `path('candidates/', CandidateAccountListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:96` | `path('candidates/<int:candidate_id>/', CandidateAccountDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:97` | `path('candidates/<int:candidate_id>/break-glass/', CandidateBreakGlassView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:98` | `path('candidates/<int:candidate_id>/<str:action>/', CandidateAccountActionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:99` | `path('privacy-requests/', PrivacyRequestListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:100` | `path('privacy-requests/<int:request_id>/<str:decision>/', PrivacyRequestDecisionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:101` | `path('moderation/reports/', ModerationReportListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:102` | `path('moderation/reports/<int:report_id>/<str:decision>/', ModerationReportDecisionView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:103` | `path('content/operations/', ContentOperationsAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:104` | `path('notifications/operations/', NotificationOperationsAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:105` | `path('analytics/', AnalyticsAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:106` | `path('feature-flags/', FeatureFlagAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:107` | `path('feature-flags/<int:flag_id>/', FeatureFlagAdminDetailView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:108` | `path('maintenance-notices/', MaintenanceNoticeAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:109` | `path('audit-logs/', AdminAuditListView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:110` | `path('career-config/', CareerConfigAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:111` | `path('resume-config/', ResumeConfigAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:112` | `path('companies/', CompanyReviewAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:113` | `path('companies/<uuid:company_id>/<str:decision>/', CompanyReviewAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:114` | `path('jobs/', JobReviewAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:115` | `path('jobs/<uuid:job_id>/<str:decision>/', JobReviewAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:116` | `path('community/moderation/', CommunityModerationAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:117` | `path('community/moderation/<uuid:case_id>/<str:decision>/', CommunityModerationAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:118` | `path('operations/events/', PlatformEventsAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:119` | `path('operations/events/<uuid:event_id>/replay/', PlatformEventsAdminView.as_view())` |
-| `ai_interview_backend/staff_admin/urls.py:120` | `path('reliability/', ReliabilityAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:50` | `path('auth/csrf/', StaffCsrfView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:51` | `path('auth/login/', StaffLoginView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:52` | `path('auth/security-setup/', StaffSecuritySetupView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:53` | `path('auth/activate/', StaffInvitationActivateView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:54` | `path('auth/invitations/<str:token>/', StaffInvitationDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:55` | `path('auth/register/', StaffInvitationRegisterView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:56` | `path('auth/session/', StaffSessionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:57` | `path('auth/logout/', StaffLogoutView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:58` | `path('dashboard/summary/', AdminDashboardView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:59` | `path('staff/', StaffAccountListCreateView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:60` | `path('staff-invitations/', StaffAccountListCreateView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:61` | `path('staff/<uuid:account_id>/', StaffAccountDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:62` | `path('staff/<uuid:account_id>/<str:action>/', StaffAccountActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:63` | `path('staff-invitations/<uuid:invitation_id>/<str:action>/', StaffInvitationActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:64` | `path('staff/roles/', StaffRoleListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:65` | `path('knowledge-reviews/', KnowledgeReviewListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:66` | `path('knowledge-reviews/<uuid:document_id>/', KnowledgeReviewAdminDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:67` | `path('knowledge-reviews/<uuid:document_id>/<str:decision>/', KnowledgeReviewDecisionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:68` | `path('knowledge-documents/<uuid:document_id>/<str:action>/', KnowledgeDocumentAdminActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:69` | `path('knowledge-chunk-drafts/<uuid:chunk_id>/', KnowledgeChunkDraftAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:70` | `path('knowledge-chunk-drafts/<uuid:chunk_id>/<str:action>/', KnowledgeChunkDraftActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:71` | `path('interviews/', InterviewSessionAdminListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:72` | `path('interviews/<uuid:session_id>/', InterviewSessionAdminDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:73` | `path('interviews/<uuid:session_id>/<str:action>/', InterviewSessionAdminActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:74` | `path('agent-runs/', AgentRunListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:75` | `path('agent-runs/<uuid:run_id>/', AgentRunAdminDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:76` | `path('interview-config/<str:resource>/', InterviewConfigAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:77` | `path('agent-config/profiles/', AgentConfigProfileView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:78` | `path('agent-config/profiles/<uuid:profile_id>/revisions/', AgentConfigProfileRevisionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:79` | `path('agent-config/revisions/<uuid:revision_id>/', AgentConfigRevisionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:80` | `path('agent-config/revisions/<uuid:revision_id>/resolved-preview/', AgentConfigResolvedPreviewView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:81` | `path('agent-config/revisions/<uuid:revision_id>/<str:action>/', AgentConfigRevisionActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:82` | `path('agent-config/prompts/<path:task_key>/preview/', AgentPromptPreviewView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:83` | `path('agent-config/experiments/retrieval/', AgentConfigExperimentView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:84` | `path('agent-config/evaluation-datasets/', AgentConfigEvaluationDatasetView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:85` | `path('knowledge-bases/', KnowledgeBaseView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:86` | `path('knowledge-bases/revisions/<uuid:revision_id>/', KnowledgeBaseRevisionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:87` | `path('retrieval-profiles/', RetrievalProfileView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:88` | `path('retrieval-profiles/revisions/<uuid:revision_id>/<str:action>/', RetrievalProfileActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:89` | `path('model-gateway/summary/', ModelGatewaySummaryView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:90` | `path('model-gateway/<str:resource>/', GatewayResourceAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:91` | `path('model-gateway/<str:resource>/<int:object_id>/', GatewayResourceAdminDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:92` | `path('tasks/', AdminTaskListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:93` | `path('tasks/<uuid:operation_id>/<str:action>/', AdminTaskActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:94` | `path('system/readiness/', AdminSystemHealthView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:95` | `path('system/resilience/', ResilienceMetricsAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:96` | `path('candidates/', CandidateAccountListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:97` | `path('candidates/<int:candidate_id>/', CandidateAccountDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:98` | `path('candidates/<int:candidate_id>/break-glass/', CandidateBreakGlassView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:99` | `path('candidates/<int:candidate_id>/<str:action>/', CandidateAccountActionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:100` | `path('privacy-requests/', PrivacyRequestListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:101` | `path('privacy-requests/<int:request_id>/<str:decision>/', PrivacyRequestDecisionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:102` | `path('moderation/reports/', ModerationReportListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:103` | `path('moderation/reports/<int:report_id>/<str:decision>/', ModerationReportDecisionView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:104` | `path('content/operations/', ContentOperationsAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:105` | `path('notifications/operations/', NotificationOperationsAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:106` | `path('analytics/', AnalyticsAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:107` | `path('feature-flags/', FeatureFlagAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:108` | `path('feature-flags/<int:flag_id>/', FeatureFlagAdminDetailView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:109` | `path('maintenance-notices/', MaintenanceNoticeAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:110` | `path('audit-logs/', AdminAuditListView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:111` | `path('career-config/', CareerConfigAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:112` | `path('resume-config/', ResumeConfigAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:113` | `path('companies/', CompanyReviewAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:114` | `path('companies/<uuid:company_id>/<str:decision>/', CompanyReviewAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:115` | `path('jobs/', JobReviewAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:116` | `path('jobs/<uuid:job_id>/<str:decision>/', JobReviewAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:117` | `path('community/moderation/', CommunityModerationAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:118` | `path('community/moderation/<uuid:case_id>/<str:decision>/', CommunityModerationAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:119` | `path('operations/events/', PlatformEventsAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:120` | `path('operations/broker-dlq/', BrokerDLQAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:121` | `path('operations/events/<uuid:event_id>/replay/', PlatformEventsAdminView.as_view())` |
+| `ai_interview_backend/staff_admin/urls.py:122` | `path('reliability/', ReliabilityAdminView.as_view())` |
 | `ai_interview_backend/system/urls.py:21` | `router.register('gateway/credentials', ProviderCredentialViewSet, basename='gateway-credential')` |
 | `ai_interview_backend/system/urls.py:22` | `router.register('gateway/deployments', ModelDeploymentViewSet, basename='gateway-deployment')` |
 | `ai_interview_backend/system/urls.py:23` | `router.register('gateway/aliases', ModelAliasViewSet, basename='gateway-alias')` |
@@ -290,6 +291,7 @@ tags:
 | `ai-interview-frontend/src/router/index.ts` | `interview/:id?` |
 | `ai-interview-frontend/src/router/index.ts` | `resumes` |
 | `ai-interview-frontend/src/router/index.ts` | `resumes/:id` |
+| `ai-interview-frontend/src/router/index.ts` | `resume-templates` |
 | `ai-interview-frontend/src/router/index.ts` | `knowledge` |
 | `ai-interview-frontend/src/router/index.ts` | `interview-admin` |
 | `ai-interview-frontend/src/router/index.ts` | `history` |
@@ -298,11 +300,7 @@ tags:
 | `ai-interview-frontend/src/router/index.ts` | `settings` |
 | `ai-interview-frontend/src/router/index.ts` | `model-gateway` |
 | `ai-interview-frontend/src/router/index.ts` | `profile` |
-| `ai-interview-frontend/src/router/index.ts` | `resume/edit/:id` |
-| `ai-interview-frontend/src/router/index.ts` | `resume/preview/:id` |
 | `ai-interview-frontend/src/router/index.ts` | `analysis/:reportId` |
-| `ai-interview-frontend/src/router/index.ts` | `ai-diagnosis` |
-| `ai-interview-frontend/src/router/index.ts` | `generate-resume` |
 | `ai-interview-frontend/src/router/index.ts` | `blog` |
 | `ai-interview-frontend/src/router/index.ts` | `blog/:id` |
 | `ai-interview-frontend/src/router/index.ts` | `blog/edit/:id?` |
@@ -411,8 +409,10 @@ tags:
 - `ai_interview_backend/community/tests.py`
 - `ai_interview_backend/core/test_correlation.py`
 - `ai_interview_backend/core/test_database.py`
+- `ai_interview_backend/core/test_deterministic_measurements.py`
 - `ai_interview_backend/core/test_operations.py`
 - `ai_interview_backend/core/test_redis_resilience.py`
+- `ai_interview_backend/core/test_worker_isolation.py`
 - `ai_interview_backend/core/tests.py`
 - `ai_interview_backend/interactions/tests.py`
 - `ai_interview_backend/interviews/test_agent_config.py`
@@ -427,8 +427,11 @@ tags:
 - `ai_interview_backend/reports/tests.py`
 - `ai_interview_backend/resumes/test_migrations.py`
 - `ai_interview_backend/resumes/test_operations.py`
+- `ai_interview_backend/resumes/test_preview_scheduling.py`
+- `ai_interview_backend/resumes/test_render_matrix_evaluation.py`
 - `ai_interview_backend/resumes/tests.py`
 - `ai_interview_backend/staff_admin/test_authoritative_operation_dispatch.py`
+- `ai_interview_backend/staff_admin/test_broker_dlq.py`
 - `ai_interview_backend/staff_admin/test_idempotency_claims.py`
 - `ai_interview_backend/staff_admin/test_platform_reliability.py`
 - `ai_interview_backend/staff_admin/tests.py`
@@ -440,6 +443,7 @@ tags:
 - `ai_interview_backend/video_uploads/test_operation_integration.py`
 - `scripts/tests/test_build_project_facts.py`
 - `scripts/tests/test_check_docs_sync.py`
+- `scripts/tests/test_deterministic_evaluation.py`
 - `scripts/tests/test_interview_book.py`
 - `ai-interview-frontend/tests/e2e/critical-flows.spec.ts`
 - `ai-interview-frontend/tests/e2e/documentation-screenshots.spec.ts`

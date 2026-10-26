@@ -4,9 +4,9 @@ type: volume
 order: 5
 status: current
 implementation_status: mixed
-updated: 2026-08-12
-last_verified: 2026-08-12
-verified_commit: 89313f8268e96d79b6968b39846f319c0892f50c
+updated: 2026-10-06
+last_verified: 2026-10-06
+verified_commit: 30379b689e2e815a1eb633a64c5ba0946265001e
 audience:
   - ai-engineer
   - backend-engineer
@@ -155,6 +155,8 @@ erDiagram
 
 观察重点：Dispatch 解决“数据库有执行但消息未发”，Execution 解决 claim/recovery，NodeRun/Trace 解决解释与定位。
 
+Execution、Dispatch 和 Session 的发布/认领事务只锁各自主表，不在同一 `FOR UPDATE（行锁）` 查询中 `select_related()` 可空的 Resume/Operation 关系。否则 PostgreSQL 会拒绝锁定 outer join（外连接）的可空侧，导致 Dispatch 在 Broker 已恢复后仍反复发布失败。修复后历史 Dispatch 1 成功发布，关联 Execution 与统一 Operation 均进入 succeeded（成功）终态。
+
 面试时如何讲：用 Worker 在 broker 消息确认前后宕机的两个例子说明四层对象不是过度设计。
 
 ## 6. 提交一轮回答
@@ -222,26 +224,36 @@ sequenceDiagram
 
 ## 9. 媒体与语音
 
-`InterviewSpeechConsumer` 提供 WebSocket 语音交互边界；`speech_services.py` 的 ASR/TTS 已统一经过 `ModelGateway.transcribe_audio/synthesize_speech`，账本只保存字节数/字符数和安全元数据，不保存音频或正文。`InterviewMediaArtifact` 保存会话/问题/类型、对象、时长、hash、处理状态和保留信息。`video_uploads` 处理分片上传与 FFmpeg 转码。
+`InterviewSpeechConsumer` 提供 WebSocket 语音交互边界；`speech_services.py` 的 ASR/TTS 已统一经过 `ModelGateway.transcribe_audio/synthesize_speech_stream`，账本只保存字节数/字符数和安全元数据，不保存音频或正文。`InterviewMediaArtifact` 保存会话/问题/类型、对象、时长、hash、处理状态和保留信息。`video_uploads` 处理分片上传与 FFmpeg 转码。
+
+录像上传采用 Init → Chunk → Merge/Transcode Operation（初始化 → 分片 → 合并/转码异步操作）。分片只是暂存；Merge 是高成本异步写，必须携带 `Idempotency-Key`。同一个 upload task（上传任务）的前端重试使用稳定键 `video.merge.<task_id>`，后端返回同一个 Operation UUID，避免网络重试生成第二个转码任务。
+
+语音链现在明确分成“临时字幕”和“最终事实”两条通道：浏览器 `SpeechRecognition` 只在当前回答框展示临时字幕，永远不追加到最终答案；WebSocket 按 `utterance_id（发言标识）` 返回 `asr.partial（部分转写）` 与 `asr.final（最终转写）`，只有后端 Final（最终结果）可以替换本次发言对应文本。这样即使浏览器和后端都识别出同一句，也不会形成双重追加。
 
 媒体流程：
 
 ```mermaid
 flowchart LR
-    CAM["getUserMedia（浏览器媒体采集）"] --> UI["InterviewRoom（面试房）"]
-    UI -->|"音频分片与控制"| WS["Speech WebSocket（语音双向通道）"]
-    WS --> ASR["ASR/Gateway（语音识别/模型网关）"]
-    ASR --> TXT["transcript draft（转写草稿）"]
-    TXT --> CONF["候选人确认/编辑"]
-    CONF --> ANS["Answer record（回答记录）"]
-    UI --> UP["chunk upload（分片上传）"]
-    UP --> SCAN["scan/validate（扫描/校验）"]
-    SCAN --> FF["FFmpeg transcode（媒体转码）"]
-    FF --> MA["InterviewMediaArtifact（面试媒体制品）"]
-    MA --> RET["retention cleanup（保留期清理）"]
+    MIC["麦克风音频"] --> BROWSER["浏览器临时字幕"]
+    MIC --> CHUNK["250 毫秒音频块"]
+    BROWSER --> PREVIEW["回答框临时预览<br/>不写最终答案"]
+    CHUNK --> WS["语音 WebSocket（双向通道）"]
+    WS --> PARTIAL["ASR Partial（部分转写）"]
+    WS --> FINAL["ASR Final（最终转写）"]
+    PARTIAL --> PREVIEW
+    FINAL --> TRUTH["唯一最终转写事实"]
+    TRUTH --> CONF["候选人确认或编辑"]
+    CONF --> ANS["回答记录"]
+    WS --> METRIC["SpeechLatencyMetric（语音延迟指标）"]
 ```
 
-观察重点：ASR 文本先作为 transcript draft，候选人能确认；视频/面部信号不直接成为能力分数；媒体有独立保留和清理。
+当前 Partial（部分转写）是对滚动音频前缀进行节流识别，已经具备 Partial/Final 协议与迟到结果取消，但不是供应商原生长连接流式 ASR。它把原 2 秒块缩到 250 毫秒，并能改善界面反馈；是否达到 500 毫秒首部分文本必须由真实供应商、真实网络和长回答压测决定，单元测试不能证明。
+
+TTS 使用 PCM/Opus（脉冲编码调制/低延迟音频编码）流式输出。浏览器收到首个音频块即可用 Web Audio 播放，不等待完整 MP3；用户开始说话时取消读取、停止 AudioBufferSource（音频播放源）并记录 barge-in（用户插话）停止延迟。Gateway 在首音频块之前允许按错误分类故障转移，一旦输出首块就锁定部署，禁止切换后产生拼接语音。
+
+真实验收指标由 `SpeechLatencyMetric` 按类型记录并通过内部 metrics API 汇总 p95：ASR 首部分文本 ≤500ms、停止说话到 Final ≤1200ms、TTS 首音频 ≤700ms、插话到停止 ≤200ms、重复率为 0。没有样本时返回 `pending-verification（待验证）`，不会把空样本标成通过。
+
+观察重点：浏览器字幕只改善感知延迟，后端 Final 才是事实；视频/面部信号不直接成为能力分数；媒体有独立保留和清理。
 
 面试时如何讲：说明浏览器权限拒绝、网络断开、分片重复、转码失败、ASR 置信度低分别怎样降级。
 
@@ -339,6 +351,14 @@ stateDiagram-v2
 
 ## 16. 可靠性与容量
 
+### 2026-10-06：慢任务隔离与视频终止边界
+
+**implemented（已实现）**：开发入口不再用一个全队列 solo（串行池）进程消费所有任务。简历渲染、简历智能分析、面试回合和视频分别有消费进程；背压按对应命令队列计算。首题与部分报告入口仍有同步模型调用；摄像头录制也不由 Celery 执行，不能认为所有“录制失败”都是消息队列问题。
+
+FFmpeg（音视频处理器）新增禁用标准输入、结构化进度、有界错误输出读取和真实截止时间。默认 FFmpeg 执行最多 600 秒，120 秒无时间轴推进判停滞；日志反复输出同一时间点不能续命。取消、租约过期或 fencing（栅栏）失效时停止本次创建的进程组，进度与完成写入前也检查处理权。续租线程结束关闭自己的数据库连接，续租不能代替外部进程截止。
+
+合成静默子进程测试验证超时后进程确实退出，不只是修改失败状态。真实录像合并、转码、用户取消和弱网摄像头为 pending-verification（待验证）；生产强杀 Worker 后的孤儿进程治理仍需容器运行时验收。
+
 一次异步回答在同一主库事务中保存 Answer（回答）、`InterviewAgentExecution`、`InterviewQuestionGenerationJob`、专用 Agent Dispatch（智能体派发）和一对一公共 `Operation`（异步操作）。外部 API 只暴露 Operation UUID；Agent execution/run ID 仅保留作领域诊断。专用 Dispatch 继续承担 LangGraph 的命令发件箱，公共 Operation 提供统一进度、取消、重试、事件游标和任务中心投影，两者不重复执行外部任务。
 
 Worker 同时 claim（认领）Execution 与 Operation，二者都有 lease owner（租约持有者）、lease expiry（到期时间）、heartbeat（心跳）和 fencing token（栅栏令牌）。Question、GenerationJob、Execution、Operation result/status 和耐久事件在主库事务内完成；取消先成功会提高 Operation fence，迟到 Worker 即使恢复也不能提交新题。Publisher 只向 `ifaceoff.v2.agent.interactive` 发布 execution ID，并使用 Publisher Confirm（发布确认）和 Mandatory Routing（强制路由）。
@@ -349,7 +369,11 @@ SLO 建议分层：提交回答 API 延迟、Execution 排队、首个 SSE 事�
 
 ## 17. 测试证据与缺口
 
-本轮 Django 全量 295 项测试通过（2 项外部 PostgreSQL Checkpoint 集成测试显式跳过）。`interviews/test_agent_v4.py` 新增 Execution lease/fencing、公共 Operation 投影、幂等提交、取消栅栏、过期版本拒绝写题；`interviews/test_evaluation_operation.py` 覆盖离线评估同事务 Operation/Dispatch、幂等和 Handler（处理器）回载；语音用例验证无部署时不伪造转写或音频。Candidate/Admin 构建通过。
+2026-08-21 的日志驱动增量验证覆盖 PostgreSQL 可空关联锁回归、Agent Dispatch publisher（调度发布器）、视频合并幂等契约和真实单机 Worker：`interviews.test_agent_v4` 与 GitHub OAuth 共 7 项通过，合并 Knowledge/Resume/Career/Agent/GitHub 聚焦回归共 85 项通过、2 项显式跳过。真实 Agent Dispatch/Execution/Operation 已完成；浏览器录像重新录制的全链 E2E（端到端）仍需用户在当前运行页面触发后确认最终转码制品。
+
+当前 Django 全量发现 304 项，其中 302 项通过、2 项外部 PostgreSQL Checkpoint 集成测试显式跳过。`interviews/test_agent_v4.py` 覆盖 Execution lease/fencing、公共 Operation 投影、幂等提交、取消栅栏、过期版本拒绝写题；`interviews/test_evaluation_operation.py` 覆盖离线评估同事务 Operation/Dispatch、幂等和 Handler（处理器）回载；语音用例验证无部署时不伪造转写或音频。Candidate/Admin 构建通过。
+
+2026-08-21 增量语音用例验证：Partial/Final 事件格式、发言标识隔离、Final 唯一持久化、延迟指标 p95/空样本状态、PCM/Opus 流式 TTS、首块后禁止供应商切换、取消与账本脱敏；它们包含在 47 项 Resume/Interview/Gateway 聚焦回归中。Candidate Vue 构建同时验证新的流式播放器和 InterviewRoom TypeScript 契约。
 
 当前真实缺口：
 
@@ -359,6 +383,9 @@ SLO 建议分层：提交回答 API 延迟、Execution 排队、首个 SSE 事�
 - WebSocket owner 与断线补消息；
 - 真实模型完成与取消竞态；
 - fake media E2E 的 ASR/上传降级；
+- 真实中英文、长回答、弱网、供应商切换的 ASR/TTS p95；
+- 供应商原生持续连接 Streaming ASR（流式语音识别），当前 Partial 为滚动前缀方案；
+- 真实浏览器插话停止、重复率与音频设备兼容；
 - Rubric fixture 与报告 UI 字段契约；
 - 更新后的 Staff Operations/Reliability 页面浏览器截图与真实 Broker 指标。
 

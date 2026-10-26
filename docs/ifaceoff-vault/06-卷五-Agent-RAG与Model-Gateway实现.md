@@ -4,9 +4,9 @@ type: volume
 order: 6
 status: current
 implementation_status: mixed
-updated: 2026-08-12
-last_verified: 2026-08-12
-verified_commit: 89313f8268e96d79b6968b39846f319c0892f50c
+updated: 2026-10-06
+last_verified: 2026-10-06
+verified_commit: 30379b689e2e815a1eb633a64c5ba0946265001e
 audience:
   - ai-engineer
   - backend-engineer
@@ -339,6 +339,8 @@ point payload 至少要含 chunk id、document/revision、user/visibility、岗�
 
 embedding 模型维度变更不能把新向量写进旧 collection。代码检查 vector size，重建新的物理集合后切 alias。源仍在 PostgreSQL。
 
+本地运行版本固定为 Qdrant Server 1.13.6 与 qdrant-client 1.14.x，相邻次版本避免 SDK（软件开发工具包）兼容告警；Python 依赖同时固定 `protobuf==3.20.2`，满足 Windows PaddleOCR/PaddlePaddle 上限。在线召回使用 `query_points(query=...).points`，不再调用 qdrant-client 1.19 已移除的 `search(query_vector=...)`。升级后 live info（实时信息）确认服务端 1.13.6、客户端 1.14.3，当前数据库尚无 collection，因此真实知识向量召回要在文档发布/索引后再验收，不能以空 collection 冒充检索成功。
+
 ## 13. Meilisearch 索引
 
 `_ensure_meili_knowledge_index()` 设置索引/过滤/排序属性；`_meili_chunk_document()` 生成文档；`_upsert_meili_chunks()` 批量写并用 `_wait_for_meili_task()` 等待异步任务；索引名由配置提供。
@@ -479,6 +481,8 @@ Policy 描述任务路由、重试/超时/结构化模式；Target 把 deploymen
 
 Ledger 是逻辑请求：user、task、idempotency、输入 hash、状态、token/cost、latency、错误。Attempt 是每次部署尝试，`(request, attempt_number)` 唯一，新增 deadline、provider request ID、输入/输出 token、预估成本、错误分类和只含摘要的 metadata。Chat（对话）、Embedding（向量化）、Rerank（重排）、ASR（语音识别）与 TTS（语音合成）均进入统一 Executor（执行器）和账本；音频与文本正文不写入账本。
 
+流式 TTS 的安全元数据只记录 alias（别名）、deployment（部署）、provider（供应商）、model（模型）、provider request id（供应商请求标识）、响应格式、字符数和已输出字节数。它既能回答“哪个部署产生了这段音频”，又不会把面试问题或候选人回答复制进可观测日志。
+
 ## 20. 一次模型请求
 
 ```mermaid
@@ -507,6 +511,8 @@ sequenceDiagram
 
 面试时如何讲：以主模型 429 或 timeout 为例，说明哪些错误可切换、如何避免重复计费和重复副作用。
 
+语音流式请求的关键差异是“首块边界”：TTS 在收到首个 PCM/Opus 音频块前仍可把可重试错误切换到下一个 Route Target（路由目标）；一旦将首块交给浏览器，就提交 Attempt 并锁定部署。取消会关闭供应商响应和本地生成器，账本记录 canceled/输出字节摘要，业务层不会保存半段音频为完整 Artifact（制品）。
+
 ## 21. 重试、降级和幂等
 
 Gateway 只对明确 retryable（可重试）的连接超时、临时网络、429 和临时 5xx 重试或切换；认证、权限、参数、Schema、无预算与内容安全错误为 terminal（终止）。所有 Fallback（故障转移）共享总 Deadline（截止时间），不会在每个 Provider（供应商）重新获得完整超时。流式响应一旦发出首个 Token（词元）就锁定部署，禁止切换模型制造重复文本。
@@ -520,6 +526,8 @@ idempotency key 将同一业务 execution/node 与 Ledger 关联。模型 Provid
 - Resume copy suggestion：模型不可用 → 返回稍后重试，不生成假建议；
 - embedding 不可用：required RAG fail，optional 可关键词/SQL fallback；
 - budget exhausted：429/业务错误，不绕过 Gateway 直调 Provider。
+
+流式 TTS 与流式文本采用同一条不可跨首块切换规则；ASR 的 Partial（部分结果）是可丢弃界面状态，Final（最终结果）才进入面试回答事实。浏览器中断播放不会反向修改已经生成的面试题，只停止当前音频消费并记录延迟指标。
 
 Deployment（部署）熔断器使用 Coordination Redis（协调域）保存 Closed/Open/Half-open（关闭/打开/半开）短期状态；半开只允许单探针。Redis 只保存短期 circuit（熔断状态），真实 Request/Attempt 与成本继续写 PostgreSQL。HTTP/SDK Client（客户端）按部署复用连接池，不为每次调用新建 OpenAI Client。
 
@@ -543,9 +551,17 @@ Prompt 模板要区分 system policy、task instruction、context、user content
 
 ## 24. 当前状态和真实缺口
 
-V4 engine、strict contracts、PostgreSQL checkpointer、Execution/Operation 双栅栏、专用 Dispatch/recovery、事件契约、RAG 双索引函数与统一 Gateway Executor 均有当前代码。面试文本、Embedding、Rerank、ASR/TTS 的直接 Provider 旁路已经收敛到 Model Gateway；系统记录共享 deadline、每次 Attempt、成本、错误分类、流式锁定和 Redis 熔断。Django 全量 295 项测试通过（2 项外部 PostgreSQL Checkpoint 集成测试跳过），两个 Vue 构建与四组 Compose 展开通过。
+**2026-10-06 增量证据**：本次 Docker/RabbitMQ 可用，下文“Docker daemon 不可用”是历史窗口。项目 `.venv` 的 Celery 5.6.3 合成隔离验证通过：8 秒简历任务期间，面试、媒体、发布短任务约 62 毫秒完成。简历评审移出面试队列，Agent 专用 Execution/Checkpoint/Dispatch（执行/检查点/派发）保持原引擎。
+
+运行能力新增简历渲染、简历智能分析、媒体、文档和岗位分析的独立消费者判断及缺失队列列表，不能只凭任意 Worker 的 ping（健康应答）认定全平台可执行。进程隔离不隔离共享模型 Deployment（部署）配额，不会使缺平台凭据的调用变成功。真实供应商故障、最终报告、浏览器录像端到端仍待验证。
+
+V4 engine、strict contracts、PostgreSQL checkpointer、Execution/Operation 双栅栏、专用 Dispatch/recovery、事件契约、RAG 双索引函数与统一 Gateway Executor 均有当前代码。面试文本、Embedding、Rerank、ASR/TTS 的直接 Provider 旁路已经收敛到 Model Gateway；系统记录共享 deadline、每次 Attempt、成本、错误分类、流式锁定和 Redis 熔断。当前 Django 全量发现 304 项，其中 302 项通过、2 项外部 PostgreSQL Checkpoint 集成测试跳过；两个 Vue 构建通过，四组 Compose 展开沿用基线验证。
 
 当前机器 Docker daemon 不可用，因此没有在真实 RabbitMQ/Worker 上跑完整 Agent 回合，也没有执行真实 Provider 429/partial stream（部分流）、三节点 Quorum、Checkpoint crash/restart、Qdrant/Meili 蓝绿或收费模型调用。历史默认 vhost 的 406 只作为迁移输入，当前代码使用 `ifaceoff.v2.*`，旧队列没有被删除。更新后的 Staff Agent Config/Gateway/Operations 页面未重拍截图。准确口径是：代码和本地自动测试为 `implemented`，外部依赖与生产 HA 验收为 `pending-verification`。
+
+本轮已增加 `synthesize_speech_stream()` 的 PCM/Opus 生成器、连接池复用、首块锁定、取消和安全账本，并让 InterviewRoom 以流式播放器消费。ASR 已有 250ms 音频块、Partial/Final 协议和最终结果去重，但 Partial 仍是滚动前缀识别，并非供应商原生持续连接流。实时指标能收集并判断 p95，却没有真实供应商样本，因此延迟目标仍为 `pending-verification（待验证）`。
+
+2026-08-21 真实 Worker 日志曾出现 `QdrantClient has no attribute search`，已通过依赖收敛、服务端相邻版本升级和 Query API（查询接口）迁移修复。相同日志中的 `no_available_deployment:chat.default` 不是 Python 依赖缺失：当前 Deployment（部署）未绑定平台 Credential（凭据），只有特定用户自己的 BYOK（用户自带密钥）；不得静默把个人密钥扩大为全局凭据。该项在管理员绑定平台凭据或当前用户配置 BYOK 前保持显式降级。
 
 ## 25. 测试
 
@@ -555,7 +571,9 @@ V4 engine、strict contracts、PostgreSQL checkpointer、Execution/Operation 双
 - Knowledge tests：切块、租户、RRF、rerank、fallback、index；
 - System/Gateway tests：credential、route、budget、ledger、attempt；
 - `system/test_gateway_reliability.py`：共享 Deadline、错误分类、连接池、流式首 Token 锁定、ASR/TTS 账本脱敏与 Closed/Open/Half-open 熔断；
-- 本轮全量结果：295 passed，2 skipped；`manage.py check`、migration drift、Candidate/Admin build、四组 Compose config 均通过；
+- 2026-08-21 增量：流式 TTS 首音频块、PCM/Opus、取消、首块后禁止故障转移，以及语音 p95 空样本/阈值契约；与 Resume/Speech 合计 47 项聚焦测试通过；
+- 2026-08-21 日志回归：Qdrant Query API、Resume/Agent 可空关联锁、RenderCV UTF-8/手机号、GitHub OAuth 与 Career 稳定分页合并为 85 项聚焦测试，全部通过，2 项按既有条件显式跳过；
+- 本轮全量结果：304 discovered（发现），302 passed（通过），2 skipped（跳过）；`manage.py check`、migration drift、Candidate/Admin build 均通过；四组 Compose config 沿用基线结果；
 - 缺口：真实 AsyncPostgresSaver crash/restart、RabbitMQ kill/replay、SSE gap、Qdrant/Meili 蓝绿、Provider 429/partial stream、跨租户攻击 E2E 和 500 用户容量验证。
 
 ## 26. 设计取舍
@@ -855,3 +873,127 @@ Agent Config 白屏根因与 Gateway fixture 可见性。这样能够把已存�
 发生漂移。两项均作为当前测试缺口记录，不能据此武断宣称 RAG 主流程全部失败，也不能用其他通过
 用例外推完整验收。修复时应分别确认 TestCase 数据来源/owner 查询条件，以及 Trace schema 的
 权威字段，再决定修实现还是修过期断言。
+
+## 39. 精讲：先判断问题在哪一层，再选择 Agent、RAG 与 Gateway
+
+### 39.1 三十秒选型回答
+
+iFaceoff 没有因为 Agent 热门就把所有 AI 逻辑都放进一个“会自主思考”的循环。固定的业务步骤、权限、状态转换和数据写入仍由 Django Service（服务）与 PostgreSQL 事务控制；只有“根据回答决定追问路径”这类有状态分支交给 LangGraph。知识难点由自研 Retrieval Gateway（检索网关）解决，模型供应商差异、路由、预算、熔断和账单由 Model Gateway（模型网关）解决。三个部件处在不同层：LangGraph 决定**下一步做什么**，Retrieval Gateway 决定**哪些证据可进入上下文**，Model Gateway 决定**这次模型请求由谁执行且怎样记账**。
+
+这个回答比“我会 LangChain、LangGraph 和向量数据库”更可核验，因为它先说业务难点，再说边界和本项目取舍。
+
+### 39.2 先问四个问题
+
+```mermaid
+flowchart TD
+    R["需求进入"] --> F{"步骤是否固定且规则明确？"}
+    F -->|是| D["普通函数、事务或任务编排"]
+    F -->|否| G{"是否需要循环、分支、暂停或恢复？"}
+    G -->|是| L["LangGraph（有状态图编排）"]
+    G -->|否| C["受控模型调用"]
+    D --> K{"是否依赖私有知识证据？"}
+    L --> K
+    C --> K
+    K -->|是| RAG["Retrieval Gateway（检索网关）"]
+    K -->|否| CTX["直接组装受控上下文"]
+    RAG --> MG["Model Gateway（模型网关）"]
+    CTX --> MG
+    MG --> O["结构化输出校验与业务提交"]
+```
+
+第一问排除“把 `if/else` 交给模型”的过度设计。简历 Schema 校验、Owner 权限、版本冲突和 Operation 状态转换都是确定性规则，模型无权决定是否绕过。第二问判断是否真的需要图：单次简历润色只需受控 Prompt + 输出校验；一轮面试要经历证据准备、回答评价、条件追问、暂停恢复和报告回流，图状态才有价值。第三问判断是否需要 RAG：用户自己的 Resume/Job snapshot 是业务上下文，不等于知识检索；只有题目必须依据已审批题库或岗位知识时才查询索引。第四问不再由业务自行选择 SDK：凡 Chat、Embedding、Rerank、ASR/TTS 都通过 Gateway，才能共享 deadline、账本和熔断。
+
+### 39.3 三层职责与“不负责什么”
+
+| 层 | 负责 | 不负责 | 当前主要代码证据 |
+|---|---|---|---|
+| LangGraph（图编排） | 节点、条件边、checkpoint、暂停/恢复 | 用户权限、租户隔离、业务唯一约束、外部副作用恰好一次 | `interviews/agent_v4/`、`CompositeV4InterviewAgentEngine`、Execution/NodeRun |
+| Retrieval Gateway（检索网关） | 查询规划、权限前置过滤、向量/关键词召回、RRF、重排、父块扩展、Trace | 知识审批真相、文档正文的最终版本、模型回答正确性 | `knowledge/services.py:search_knowledge_context()` 及 Qdrant/Meili helper |
+| Model Gateway（模型网关） | Alias、Deployment、路由、预算、Request/Attempt、错误分类、熔断、连接池 | Prompt 的业务含义、RAG 权限、模型输出自动成为业务事实 | `system/model_gateway.py` 与 Provider/Deployment/Route/Budget/Ledger 模型 |
+| Context/Prompt（上下文/提示词） | 信息区域、信任级别、token 预算、任务模板、输出契约 | 直接写业务终态、跳过版本/证据校验 | `ContextBudgetManager`、Prompt Registry、`GenerationContextEnvelope` |
+
+框架可以组合，但不应该重叠承担同一职责。引入 LlamaIndex 或其他 Agent 框架只有在它解决已量化的文档连接/索引问题时才有意义；仅为“技术栈完整”再加一层，会制造两套 chunk、trace 和 retry 语义。Dify 更接近低代码控制面，本项目已经有 Staff 配置、审计、发布/回滚与自研运行时，因此不替换核心 Agent。
+
+### 39.4 用“后端 Outbox 回答”逐层走一次
+
+候选人回答：“我用 Outbox 解决了异步一致性。”系统要判断他是否真正理解“数据库提交与消息发送的窗口”，并决定要不要追问 Publisher Confirm。执行链不是一句 `llm.invoke()`：
+
+1. **输入契约**：`AgentTurnInput` 固定 session/run/execution、当前问题、回答、阶段、配置 revision 和允许工具；超长或额外字段在入图前失败。
+2. **Context Assembler（上下文组装器）**：system policy、Rubric、当前问答不可裁剪；Resume/Job 只取任务相关字段；历史以最近轮次或摘要进入。每个 item 保留 source、trust level、revision 和 token count。
+3. **检索决策**：若模板要求 approved knowledge（已审批知识），query planner 把“Outbox”扩成有限多查询；若 `require_rag=false` 且索引故障，可以记录原因后降级；`require_rag=true` 无证据则暂停本轮，不能让模型裸答。
+4. **混合召回**：Qdrant 查询在召回前带 tenant、审批、revision、岗位、难度和 `chunk_level` Filter；Meilisearch 查关键词；两路排名经 RRF 融合，Rerank 后按 parent 去重并展开完整父块/相邻块。
+5. **预算裁剪**：父块展开可能把上下文放大，Context Assembler 按区域优先级和 RAG token 上限再次裁剪，并把 dropped reason 写 Trace。不能在检索函数里固定截成 700 字符后假装有完整语境。
+6. **模型执行**：业务只请求 alias，例如 `chat.default`；Gateway 选择 Deployment，预留预算并创建 Request/Attempt。429、timeout、暂时 5xx 才可重试/切换；鉴权和参数错误直接终止。流式首 Token 发出后不再切模型，避免用户看到两个答案拼接。
+7. **结构校验**：输出先解析为 `AnswerEvaluation`，再检查分数、evidence、follow-up 和题目长度。有限 repair 仍失败时走确定性 fallback，而不是把原始自然语言当合法 JSON。
+8. **业务提交**：Question、GenerationJob、Execution status/version/result 在 fence 校验后的主库事务完成；AgentEvent 追加序号。模型输出是候选计算结果，只有这一事务能把它升级为正式下一题。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant E as 面试执行（Execution）
+    participant C as 上下文组装器（Context Assembler）
+    participant R as 检索网关（Retrieval Gateway）
+    participant Q as 向量索引（Qdrant）
+    participant M as 关键词索引（Meilisearch）
+    participant G as 模型网关（Model Gateway）
+    participant D as 权威数据库（PostgreSQL）
+
+    E->>C: 固定问题、回答、Rubric（评估量表）与版本
+    C->>R: 受控查询 + 检索配置快照
+    par 双路召回
+        R->>Q: 权限 Filter（过滤）+ 向量查询
+        R->>M: 权限 Filter（过滤）+ 关键词查询
+    end
+    Q-->>R: 向量候选与排名
+    M-->>R: 关键词候选与排名
+    R->>R: RRF（倒数排名融合）+ 重排 + 父块展开
+    R-->>C: EvidenceItem（证据项）+ RetrievalTrace（检索轨迹）
+    C->>C: 按区域预算裁剪并记录丢弃原因
+    C->>G: Prompt（提示词）+ Envelope（上下文信封）
+    G->>D: 预算预留 + Request/Attempt（请求/尝试）
+    G-->>E: 结构化候选结果
+    E->>D: 输出校验 + 栅栏校验 + 下一题/事件同事务
+```
+
+### 39.5 混合检索不是“向量分数加 BM25 分数”
+
+向量 cosine score（余弦相似度）和关键词分数不在同一量纲，直接相加会让某一路因数值范围支配结果。RRF（Reciprocal Rank Fusion，倒数排名融合）只关心各路名次。例如取常数 `k=60`：
+
+| 知识块 | 向量名次 | 关键词名次 | 融合贡献 |
+|---|---:|---:|---:|
+| A：解释 Outbox 提交窗口 | 1 | 3 | `1/61 + 1/63 ≈ 0.0323` |
+| B：只含 RabbitMQ 定义 | 2 | 未命中 | `1/62 ≈ 0.0161` |
+| C：含 Publisher Confirm 术语 | 5 | 1 | `1/65 + 1/61 ≈ 0.0318` |
+
+A 与 C 会进入重排候选，B 虽有语义相似度，但因为缺少关键词路线支持而暂时靠后。随后 Rerank 模型比较“当前问题是否要求解释一致性窗口”，再选择 child chunk；最后按 parent id 去重展开，避免同一父段的三个 child 重复占满 Prompt。这个算例解释了为什么系统同时需要“召回覆盖”和“生成语境”，也说明父子块字段存在不等于运行时已经正确展开——必须由 `test_child_rerank_expands_full_parent_and_deduplicates` 这类测试固定行为。
+
+### 39.6 五个常见失败，以及安全答案
+
+| 失败 | 错误做法 | 当前安全行为 | 还要观察什么 |
+|---|---|---|---|
+| Qdrant 鉴权/超时 | 捕获所有异常后重建 collection | 仅明确不存在时建版本化物理 collection；传输错误不重建 | alias、vector size、索引状态与告警 |
+| Meilisearch 不可用 | 加载最近 500 块在 Python 临时 BM25 并假装等价 | 进入受审计、受限的 SQL fallback | `fallback_path`、候选量与质量影响 |
+| required RAG 无结果 | 去掉证据继续生成 | 返回可恢复错误并暂停本轮 | 过滤原因、revision ready 与 no-answer 样例 |
+| Rerank 超时 | 整轮失败或无记录跳过 | 按 Profile 允许退回融合顺序，并记录 degraded reason | 降级率、Recall@K 与重复父块率 |
+| Provider 首 Token 后断开 | 切另一个模型继续拼接 | 不切换；结束流并返回可恢复状态 | Request/Attempt、已发送标志和费用 |
+
+### 39.7 验证路线与证据边界
+
+```powershell
+cd ai_interview_backend
+python manage.py test knowledge.test_rag_control_plane --settings=ai_interview_backend.test_settings --noinput -v 2
+python manage.py test core.test_operations --settings=ai_interview_backend.test_settings --noinput -v 2
+python manage.py check
+```
+
+RAG 控制面测试已经覆盖 Qdrant 传输故障不重建、明确缺失才创建、alias 原子切换、父块去重展开、相邻块、RRF 权重和 PDF OCR 降级链。上一轮全量回归中的 Gateway 聚焦用例覆盖账本、共享 deadline、错误分类、首 Token 锁定、连接池与 Closed/Open/Half-open（关闭/打开/半开）熔断。它们仍不能替代真实供应商、真实文档集的 Recall@K/MRR/nDCG、跨租户攻击和长期容量测试。
+
+### 39.8 什么时候不使用 Graph 或 RAG
+
+- 固定三步、没有条件分支且无需断点恢复：普通 Service + Operation handler 更简单。
+- 只需把已冻结 ResumeVersion 送入一个结构化 Prompt：这是上下文读取，不必为了“像 Agent”再建图。
+- 确定性 Schema/权限/预算检查：永远放代码与数据库，不能让模型自行判断。
+- 没有受审批知识、问题只依赖当前回答：不要用无关 RAG 增加延迟和注入面。
+- 可用 SQL 精确查询的结构化事实：优先数据库条件查询，而不是 Embedding 模糊召回。
+
+面试时最后一句可以是：“我把 Graph Engineering（图式工程）当方法，不把 LangGraph 当万能答案。图用于显式状态和恢复，检索网关用于证据与权限，模型网关用于供应商执行和成本；固定规则仍在代码。这样既能解释为什么选，也能解释什么时候不选。”
