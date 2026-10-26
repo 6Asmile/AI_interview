@@ -6,7 +6,7 @@ status: generated
 implementation_status: implemented
 updated: 2026-08-12
 last_verified: 2026-08-12
-verified_commit: 30379b689e2e815a1eb633a64c5ba0946265001e
+verified_commit: 16c9dfcd6888d00b0fdb65b054749b77becfe941
 audience:
   - engineer
   - interviewer
@@ -27,14 +27,14 @@ tags:
 
 ## 基线
 
-- Commit：`30379b689e2e815a1eb633a64c5ba0946265001e`
-- 最近提交：2026-08-21T11:37:00+08:00 feat: 完善简历工作室与实时语音体验
+- Commit：`16c9dfcd6888d00b0fdb65b054749b77becfe941`
+- 最近提交：2026-10-26T19:55:06+08:00 fix: 恢复求职社区原有布局并完善浏览器验证
 - Django 数据模型应用：15
 - Django model classes：153
 - HTTP router/path declarations：210
 - Candidate/Staff route paths：59
 - Celery shared tasks：35
-- 测试入口文件：46
+- 测试入口文件：47
 
 ## Django 应用与模型
 
@@ -447,6 +447,7 @@ tags:
 - `scripts/tests/test_interview_book.py`
 - `ai-interview-frontend/tests/e2e/critical-flows.spec.ts`
 - `ai-interview-frontend/tests/e2e/documentation-screenshots.spec.ts`
+- `ai-interview-frontend/tests/e2e/resume-api.spec.ts`
 
 ## 使用规则
 
